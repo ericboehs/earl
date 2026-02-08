@@ -1,0 +1,13 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$stdout.sync = true
+$stderr.sync = true
+
+require "bundler/setup"
+require_relative "../lib/earl"
+
+Earl.logger.level = ENV["EARL_DEBUG"] ? Logger::DEBUG : Logger::INFO
+Earl.logger.info "Starting EARL..."
+runner = Earl::Runner.new
+runner.start

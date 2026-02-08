@@ -151,7 +151,7 @@ The axe-core configuration is in `test/application_system_test_case.rb`:
 
 ```ruby
 def assert_accessible(page = self.page,
-                     matcher = Axe::Matchers::BeAxeClean.new.according_to(:wcag21aa, "best-practice"))
+                    matcher = Axe::Matchers::BeAxeClean.new.according_to(:wcag21aa, "best-practice"))
   audit_result = matcher.audit(page)
   assert(audit_result.passed?, audit_result.failure_message)
 end
