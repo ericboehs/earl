@@ -33,7 +33,7 @@ module Earl
         "--dangerously-skip-permissions"
       ]
 
-      Earl.logger.info "Spawning Claude session #{@session_id[0..7]}"
+      Earl.logger.info "Spawning Claude session #{@session_id} — resume with: claude --resume #{@session_id}"
 
       @stdin, stdout, stderr, @wait_thread = Open3.popen3(*args)
       @process = @wait_thread
