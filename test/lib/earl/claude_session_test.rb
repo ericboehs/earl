@@ -280,6 +280,88 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     assert_nothing_raised { session.send(:read_stderr, stderr) }
   end
 
+  test "kill sends multiple signals to a live process" do
+    session = Earl::ClaudeSession.new
+
+    # Use Ruby process that traps INT and loops — sleep alone gets interrupted
+    stdin, stdout, stderr, wait_thread = Open3.popen3(
+      "ruby", "-e", "trap('INT'){}; loop { sleep 1 rescue nil }"
+    )
+    sleep 0.3 # let child process start and set up trap handler
+    session.instance_variable_set(:@process, wait_thread)
+    session.instance_variable_set(:@stdin, stdin)
+
+    assert wait_thread.alive?
+    session.kill
+    # Process may take a moment to exit after TERM
+    sleep 0.2
+    assert_not wait_thread.alive?
+  ensure
+    [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
+    wait_thread&.value rescue nil
+  end
+
+  test "kill handles process that dies from first INT" do
+    session = Earl::ClaudeSession.new
+
+    # sleep doesn't trap INT so it dies from the first signal
+    stdin, stdout, stderr, wait_thread = Open3.popen3("sleep", "60")
+    sleep 0.2
+    session.instance_variable_set(:@process, wait_thread)
+    session.instance_variable_set(:@stdin, stdin)
+
+    assert wait_thread.alive?
+    session.kill
+    sleep 0.1
+    assert_not wait_thread.alive?
+  ensure
+    [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
+    wait_thread&.value rescue nil
+  end
+
+  test "kill handles nil stdin and joins threads" do
+    session = Earl::ClaudeSession.new
+
+    stdin, _stdout, _stderr, wait_thread = Open3.popen3("true")
+    wait_thread.value
+
+    reader = Thread.new { }
+    stderr_t = Thread.new { }
+    reader.join
+    stderr_t.join
+
+    session.instance_variable_set(:@process, wait_thread)
+    # Leave @stdin as nil (default) to cover &. nil branch
+    session.instance_variable_set(:@reader_thread, reader)
+    session.instance_variable_set(:@stderr_thread, stderr_t)
+
+    assert_nothing_raised { session.kill }
+  ensure
+    [ stdin, _stdout, _stderr ].each { |io| io&.close rescue nil }
+  end
+
+  test "handle_event with assistant text but no on_text callback" do
+    session = Earl::ClaudeSession.new
+
+    event = {
+      "type" => "assistant",
+      "message" => {
+        "content" => [
+          { "type" => "text", "text" => "Hello world" }
+        ]
+      }
+    }
+    assert_nothing_raised { session.send(:handle_event, event) }
+  end
+
+  test "handle_event with result but no on_complete callback" do
+    session = Earl::ClaudeSession.new
+
+    event = { "type" => "result", "total_cost_usd" => 0.05, "subtype" => "success" }
+    assert_nothing_raised { session.send(:handle_event, event) }
+    assert_equal 0.05, session.total_cost
+  end
+
   private
 
   def scratchpad_dir

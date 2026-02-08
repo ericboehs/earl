@@ -232,6 +232,116 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_not thread.alive?
   end
 
+  test "on_complete without prior text does not update post" do
+    runner = Earl::Runner.new
+
+    on_text_callback = nil
+    on_complete_callback = nil
+
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
+    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:total_cost) { 0.0 }
+
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get_or_create) { |_thread_id| mock_session }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    updated_posts = []
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      updated_posts << { post_id: post_id, message: message }
+    end
+
+    runner.send(:handle_message, sender_name: "alice", thread_id: "thread-12345678", text: "test")
+    sleep 0.05
+
+    # Fire on_complete without any text received — no reply_post_id exists
+    on_complete_callback.call(mock_session)
+
+    assert_empty updated_posts
+  end
+
+  test "debounce timer already scheduled does not create another" do
+    runner = Earl::Runner.new
+
+    on_text_callback = nil
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_complete) { |&_block| }
+    mock_session.define_singleton_method(:send_message) { |_text| }
+
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get_or_create) { |_thread_id| mock_session }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    update_count = 0
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
+    mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      update_count += 1
+    end
+
+    runner.send(:handle_message, sender_name: "alice", thread_id: "thread-12345678", text: "test")
+    sleep 0.05
+
+    # First chunk creates post
+    on_text_callback.call("Part 1")
+
+    # Rapid second chunk — schedules debounce timer
+    on_text_callback.call("Part 1 Part 2")
+
+    # Rapid third chunk — timer already scheduled, should NOT create another
+    on_text_callback.call("Part 1 Part 2 Part 3")
+
+    # Wait for single debounce timer to fire
+    sleep 0.5
+
+    # Only one debounced update should have fired
+    assert_equal 1, update_count
+  end
+
+  test "start enters main loop before exiting" do
+    runner = Earl::Runner.new
+    mm = runner.instance_variable_get(:@mattermost)
+    mm.define_singleton_method(:connect) { }
+
+    # Set shutting_down after a brief delay so the loop runs at least once
+    Thread.new do
+      sleep 0.1
+      runner.instance_variable_set(:@shutting_down, true)
+    end
+
+    assert_nothing_raised { runner.start }
+  end
+
+  test "message handler calls handle_message for allowed users" do
+    runner = Earl::Runner.new
+
+    mm = runner.instance_variable_get(:@mattermost)
+    runner.send(:setup_message_handler)
+    callback = mm.instance_variable_get(:@on_message)
+
+    sent_text = nil
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_complete) { |&_block| }
+    mock_session.define_singleton_method(:send_message) { |text| sent_text = text }
+
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get_or_create) { |_thread_id| mock_session }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+    mm.define_singleton_method(:send_typing) { |**_args| }
+
+    callback.call(sender_name: "alice", thread_id: "thread-12345678", text: "Hi Earl", post_id: "post-1")
+    sleep 0.05
+
+    assert_equal "Hi Earl", sent_text
+  end
+
   test "message handler ignores non-allowed users" do
     runner = Earl::Runner.new
 

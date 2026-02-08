@@ -74,7 +74,7 @@ module Earl
           logger.warn "Failed to parse WebSocket message: #{e.message}"
         rescue => e
           logger.error "Error handling WebSocket message: #{e.class}: #{e.message}"
-          logger.error e.backtrace&.first(5)&.join("\n")
+          logger.error e.backtrace.first(5).join("\n")
         end
       end
 

@@ -288,6 +288,99 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_nothing_raised { fake_ws.fire(:close, close_event) }
   end
 
+  test "connect ignores non-hello non-posted events" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    received = nil
+    mm.on_message { |**kwargs| received = kwargs }
+    mm.connect
+
+    event = { "event" => "typing", "data" => {} }
+    fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+    assert_nil received
+  end
+
+  test "connect handles posted event with nil post data" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    received = nil
+    mm.on_message { |**kwargs| received = kwargs }
+    mm.connect
+
+    event = { "event" => "posted", "data" => {} }
+    fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+    assert_nil received
+  end
+
+  test "connect uses unknown for missing sender_name" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    received = nil
+    mm.on_message { |**kwargs| received = kwargs }
+    mm.connect
+
+    post_data = {
+      "id" => "post-1", "user_id" => "user-999",
+      "channel_id" => "channel-456", "root_id" => "", "message" => "Hi"
+    }
+    event = { "event" => "posted", "data" => { "post" => JSON.generate(post_data) } }
+    fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+    assert_equal "unknown", received[:sender_name]
+  end
+
+  test "connect handles posted event without on_message callback" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    # Don't set on_message callback
+    mm.connect
+
+    post_data = {
+      "id" => "post-1", "user_id" => "user-999",
+      "channel_id" => "channel-456", "root_id" => "", "message" => "Hi"
+    }
+    event = { "event" => "posted", "data" => { "post" => JSON.generate(post_data), "sender_name" => "@alice" } }
+
+    assert_nothing_raised { fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event))) }
+  end
+
+  test "connect handles generic errors in message handler" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    mm.on_message { |**_kwargs| raise "something broke" }
+    mm.connect
+
+    post_data = {
+      "id" => "post-1", "user_id" => "user-999",
+      "channel_id" => "channel-456", "root_id" => "", "message" => "Hi"
+    }
+    event = { "event" => "posted", "data" => { "post" => JSON.generate(post_data), "sender_name" => "@alice" } }
+
+    assert_nothing_raised { fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event))) }
+  end
+
+  test "connect handles close event with nil" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    mm.connect
+
+    assert_nothing_raised { fake_ws.fire(:close, nil) }
+  end
+
   private
 
   def build_testable_mattermost

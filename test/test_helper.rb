@@ -7,7 +7,7 @@ SimpleCov.start "rails" do
   enable_coverage :branch
 
   # Set minimum coverage percentage
-  minimum_coverage line: 95, branch: 75
+  minimum_coverage line: 95, branch: 90
 
   # Set coverage percentage precision
   minimum_coverage_by_file 80
