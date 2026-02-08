@@ -21,7 +21,7 @@ module Earl
       bot_id = config.bot_id
       channel_id = config.channel_id
       logger = Earl.logger
-      on_msg = @on_message
+      mm = self # reference for reading @on_message at call time
 
       @ws = WebSocket::Client::Simple.connect(ws_url)
 
@@ -56,15 +56,16 @@ module Earl
                 post = JSON.parse(post_data)
 
                 if post["user_id"] == bot_id
-                  # Ignore our own messages
+                  # Skip: bot's own message
                 elsif post["channel_id"] != channel_id
-                  # Not our channel
+                  # Skip: message from another channel
                 else
                   sender_name = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
                   thread_id = post["root_id"].to_s.empty? ? post["id"] : post["root_id"]
                   message_text = post["message"] || ""
 
                   logger.info "Message from @#{sender_name} in thread #{thread_id[0..7]}: #{message_text[0..80]}"
+                  on_msg = mm.instance_variable_get(:@on_message)
                   on_msg&.call(sender_name: sender_name, thread_id: thread_id, text: message_text, post_id: post["id"])
                 end
               end
@@ -83,7 +84,9 @@ module Earl
       end
 
       @ws.on :close do |e|
-        logger.info "WebSocket closed: #{e&.code} #{e&.reason}"
+        logger.warn "WebSocket closed: #{e&.code} #{e&.reason}"
+        logger.warn "EARL will exit — restart process to reconnect"
+        exit 1
       end
     end
 
@@ -107,28 +110,32 @@ module Earl
 
     private
 
-    def api_post(path, body)
+    def api_request(method_class, path, body)
       uri = URI.parse(config.api_url(path))
-      req = Net::HTTP::Post.new(uri)
+      req = method_class.new(uri)
       req["Authorization"] = "Bearer #{config.bot_token}"
       req["Content-Type"] = "application/json"
       req.body = JSON.generate(body)
 
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"
-      http.request(req)
+      http.open_timeout = 10
+      http.read_timeout = 15
+      response = http.request(req)
+
+      unless response.is_a?(Net::HTTPSuccess)
+        Earl.logger.error "Mattermost API #{req.method} #{path} failed: #{response.code} #{response.body[0..200]}"
+      end
+
+      response
+    end
+
+    def api_post(path, body)
+      api_request(Net::HTTP::Post, path, body)
     end
 
     def api_put(path, body)
-      uri = URI.parse(config.api_url(path))
-      req = Net::HTTP::Put.new(uri)
-      req["Authorization"] = "Bearer #{config.bot_token}"
-      req["Content-Type"] = "application/json"
-      req.body = JSON.generate(body)
-
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = uri.scheme == "https"
-      http.request(req)
+      api_request(Net::HTTP::Put, path, body)
     end
   end
 end

@@ -78,7 +78,11 @@ module Earl
         # Process already gone
       end
 
-      @stdin&.close rescue nil
+      begin
+        @stdin&.close
+      rescue IOError
+        # Already closed
+      end
       @reader_thread&.join(3)
       @stderr_thread&.join(1)
     end
@@ -86,21 +90,21 @@ module Earl
     private
 
     def read_stdout(stdout)
-      buffer = ""
       stdout.each_line do |line|
         line = line.strip
         next if line.empty?
 
         begin
           event = JSON.parse(line)
-        rescue JSON::ParserError
+        rescue JSON::ParserError => e
+          Earl.logger.warn "Unparsable Claude stdout (session #{@session_id[0..7]}): #{line[0..200]}"
           next
         end
 
         handle_event(event)
       end
     rescue IOError
-      # Stream closed
+      Earl.logger.debug "Claude stdout stream closed (session #{@session_id[0..7]})"
     end
 
     def read_stderr(stderr)
@@ -108,7 +112,7 @@ module Earl
         Earl.logger.debug "Claude stderr: #{line.strip}"
       end
     rescue IOError
-      # Stream closed
+      Earl.logger.debug "Claude stderr stream closed (session #{@session_id[0..7]})"
     end
 
     def handle_event(event)

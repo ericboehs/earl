@@ -271,7 +271,7 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     end
   end
 
-  test "connect handles error and close events" do
+  test "connect handles error events" do
     fake_ws = build_fake_ws
     install_fake_ws(fake_ws)
 
@@ -281,11 +281,19 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     error = Object.new
     error.define_singleton_method(:message) { "test error" }
     assert_nothing_raised { fake_ws.fire(:error, error) }
+  end
+
+  test "connect exits on close event" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    mm.connect
 
     close_event = Object.new
     close_event.define_singleton_method(:code) { 1000 }
     close_event.define_singleton_method(:reason) { "normal" }
-    assert_nothing_raised { fake_ws.fire(:close, close_event) }
+    assert_raises(SystemExit) { fake_ws.fire(:close, close_event) }
   end
 
   test "connect ignores non-hello non-posted events" do
@@ -371,14 +379,14 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_nothing_raised { fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event))) }
   end
 
-  test "connect handles close event with nil" do
+  test "connect exits on close event with nil" do
     fake_ws = build_fake_ws
     install_fake_ws(fake_ws)
 
     mm = Earl::Mattermost.new(@config)
     mm.connect
 
-    assert_nothing_raised { fake_ws.fire(:close, nil) }
+    assert_raises(SystemExit) { fake_ws.fire(:close, nil) }
   end
 
   private
@@ -406,10 +414,17 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     original = Net::HTTP.method(:new)
     mock = Object.new
     mock.define_singleton_method(:use_ssl=) { |v| on_ssl&.call(v) }
+    mock.define_singleton_method(:open_timeout=) { |_v| }
+    mock.define_singleton_method(:read_timeout=) { |_v| }
     mock.define_singleton_method(:request) do |req|
       on_request&.call(req)
       resp = Object.new
-      resp.define_singleton_method(:body) { response_body }
+      rb = response_body
+      resp.define_singleton_method(:body) { rb }
+      resp.define_singleton_method(:code) { "200" }
+      resp.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
       resp
     end
 
@@ -449,11 +464,9 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     end
 
     # Override send to capture messages (like WS client's send)
-    # rubocop:disable Style/MethodMissingSuper, Style/MissingRespondToMissing
     def send(data = nil, **opts)
       @sent_messages << { data: data, opts: opts }
     end
-    # rubocop:enable Style/MethodMissingSuper, Style/MissingRespondToMissing
 
     def fire(event, *args)
       block = @handlers[event]

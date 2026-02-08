@@ -59,7 +59,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_nothing_raised { runner.send(:stop_typing, nil) }
   end
 
-  test "handle_message sends text to session" do
+  test "process_message sends text to session" do
     runner = Earl::Runner.new
 
     sent_text = nil
@@ -76,7 +76,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm = runner.instance_variable_get(:@mattermost)
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
-    runner.send(:handle_message, sender_name: "alice", thread_id: "thread-12345678", text: "Hello Earl")
+    runner.send(:process_message, thread_id: "thread-12345678", text: "Hello Earl")
     sleep 0.05
 
     assert_equal "Hello Earl", sent_text
@@ -110,7 +110,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       updated_posts << { post_id: post_id, message: message }
     end
 
-    runner.send(:handle_message, sender_name: "alice", thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
     sleep 0.05
 
     # First chunk creates a post
@@ -190,7 +190,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       updated_posts << { post_id: post_id, message: message }
     end
 
-    runner.send(:handle_message, sender_name: "alice", thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
     sleep 0.05
 
     # First chunk creates post
@@ -255,7 +255,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       updated_posts << { post_id: post_id, message: message }
     end
 
-    runner.send(:handle_message, sender_name: "alice", thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
     sleep 0.05
 
     # Fire on_complete without any text received — no reply_post_id exists
@@ -285,7 +285,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       update_count += 1
     end
 
-    runner.send(:handle_message, sender_name: "alice", thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
     sleep 0.05
 
     # First chunk creates post
@@ -318,7 +318,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_nothing_raised { runner.start }
   end
 
-  test "message handler calls handle_message for allowed users" do
+  test "message handler calls enqueue_message for allowed users" do
     runner = Earl::Runner.new
 
     mm = runner.instance_variable_get(:@mattermost)
@@ -340,6 +340,89 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     sleep 0.05
 
     assert_equal "Hi Earl", sent_text
+  end
+
+  test "enqueue_message queues messages when thread is busy" do
+    runner = Earl::Runner.new
+
+    on_complete_callback = nil
+    sent_messages = []
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
+    mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
+    mock_session.define_singleton_method(:total_cost) { 0.0 }
+
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get_or_create) { |_thread_id| mock_session }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+
+    # First message starts processing
+    runner.send(:enqueue_message, thread_id: "thread-12345678", text: "first")
+    sleep 0.05
+
+    # Second message should be queued (thread is busy)
+    runner.send(:enqueue_message, thread_id: "thread-12345678", text: "second")
+
+    assert_equal [ "first" ], sent_messages
+
+    # Complete first message — should process queued "second"
+    on_complete_callback.call(mock_session)
+    sleep 0.05
+
+    assert_equal [ "first", "second" ], sent_messages
+  end
+
+  test "enqueue_message processes immediately for new thread" do
+    runner = Earl::Runner.new
+
+    sent_text = nil
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_complete) { |&_block| }
+    mock_session.define_singleton_method(:send_message) { |text| sent_text = text }
+
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get_or_create) { |_thread_id| mock_session }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+
+    runner.send(:enqueue_message, thread_id: "thread-12345678", text: "hello")
+    sleep 0.05
+
+    assert_equal "hello", sent_text
+  end
+
+  test "on_complete drains queue and releases thread when empty" do
+    runner = Earl::Runner.new
+
+    on_complete_callback = nil
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
+    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:total_cost) { 0.0 }
+
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get_or_create) { |_thread_id| mock_session }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+
+    runner.send(:enqueue_message, thread_id: "thread-12345678", text: "hello")
+    sleep 0.05
+
+    # Complete — no queued messages, should remove from processing_threads
+    on_complete_callback.call(mock_session)
+
+    processing = runner.instance_variable_get(:@processing_threads)
+    assert_not processing.include?("thread-12345678")
   end
 
   test "message handler ignores non-allowed users" do

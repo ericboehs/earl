@@ -3,13 +3,13 @@ require "simplecov"
 
 # SimpleCov configuration
 SimpleCov.start "rails" do
-  # Enable coverage for branches (Ruby 2.5+) - must come before minimum_coverage
+  # Enable branch coverage tracking - must come before minimum_coverage
   enable_coverage :branch
 
   # Set minimum coverage percentage
   minimum_coverage line: 95, branch: 90
 
-  # Set coverage percentage precision
+  # Set minimum coverage per file
   minimum_coverage_by_file 80
 
   # Add filters for files/directories to exclude from coverage

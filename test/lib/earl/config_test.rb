@@ -72,4 +72,18 @@ class Earl::ConfigTest < ActiveSupport::TestCase
     assert_equal "https://mattermost.example.com/api/v4/posts", config.api_url("/posts")
     assert_equal "https://mattermost.example.com/api/v4/users/me/typing", config.api_url("/users/me/typing")
   end
+
+  test "raises on non-HTTP URL" do
+    ENV["MATTERMOST_URL"] = "ftp://mattermost.example.com"
+
+    error = assert_raises(RuntimeError) { Earl::Config.new }
+    assert_match(/must be an HTTP/, error.message)
+  end
+
+  test "raises on invalid URL" do
+    ENV["MATTERMOST_URL"] = "not a url at all %%"
+
+    error = assert_raises(RuntimeError) { Earl::Config.new }
+    assert_match(/not a valid URL/, error.message)
+  end
 end

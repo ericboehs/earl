@@ -9,6 +9,9 @@ module Earl
       @session_manager = SessionManager.new
       @mattermost = Mattermost.new(@config)
       @shutting_down = false
+      @processing_threads = Set.new
+      @pending_messages = {}
+      @queue_mutex = Mutex.new
     end
 
     def start
@@ -44,7 +47,7 @@ module Earl
     def setup_message_handler
       @mattermost.on_message do |sender_name:, thread_id:, text:, post_id:|
         if allowed_user?(sender_name)
-          handle_message(sender_name: sender_name, thread_id: thread_id, text: text)
+          enqueue_message(thread_id: thread_id, text: text)
         end
       end
     end
@@ -60,13 +63,29 @@ module Earl
       true
     end
 
-    def handle_message(sender_name:, thread_id:, text:)
+    def enqueue_message(thread_id:, text:)
+      @queue_mutex.synchronize do
+        if @processing_threads.include?(thread_id)
+          @pending_messages[thread_id] ||= []
+          @pending_messages[thread_id] << text
+          Earl.logger.debug "Queued message for busy thread #{thread_id[0..7]}"
+          return
+        end
+        @processing_threads << thread_id
+      end
+
+      process_message(thread_id: thread_id, text: text)
+    end
+
+    def process_message(thread_id:, text:)
       session = @session_manager.get_or_create(thread_id)
 
       # Start typing indicator (repeats every 3s until stopped)
       typing_thread = start_typing(thread_id)
 
-      # Per-message streaming state — shared across callbacks
+      # Per-message streaming state — shared across callbacks.
+      # Setting on_text/on_complete here overwrites previous callbacks,
+      # so we use enqueue_message to serialize messages per thread.
       state = {
         reply_post_id: nil,
         full_text: "",
@@ -91,7 +110,7 @@ module Earl
               message: accumulated_text,
               root_id: thread_id
             )
-            state[:reply_post_id] = result["id"]
+            state[:reply_post_id] = result["id"] if result["id"]
             state[:last_update_at] = Time.now
           else
             elapsed_ms = (Time.now - state[:last_update_at]) * 1000
@@ -115,18 +134,34 @@ module Earl
             # If timer already scheduled, it will pick up the latest full_text when it fires
           end
         end
+      rescue => e
+        Earl.logger.error "Error streaming response (thread #{thread_id[0..7]}): #{e.class}: #{e.message}"
+        Earl.logger.error e.backtrace.first(5).join("\n")
       end
 
       session.on_complete do |_sess|
-        stop_typing(state[:typing_thread])
-        state[:typing_thread] = nil
-
         state[:mutex].synchronize do
+          stop_typing(state[:typing_thread])
+          state[:typing_thread] = nil
+
           if state[:reply_post_id] && !state[:full_text].empty?
             @mattermost.update_post(post_id: state[:reply_post_id], message: state[:full_text])
           end
         end
         Earl.logger.info "Response complete for thread #{thread_id[0..7]} (cost=$#{session.total_cost})"
+
+        # Process next queued message for this thread
+        next_text = @queue_mutex.synchronize do
+          msgs = @pending_messages[thread_id]
+          if msgs && !msgs.empty?
+            msgs.shift
+          else
+            @processing_threads.delete(thread_id)
+            nil
+          end
+        end
+
+        process_message(thread_id: thread_id, text: next_text) if next_text
       end
 
       session.send_message(text)
@@ -138,7 +173,7 @@ module Earl
           @mattermost.send_typing(channel_id: @config.channel_id, parent_id: thread_id)
           sleep 3
         rescue => e
-          Earl.logger.debug "Typing indicator error: #{e.message}"
+          Earl.logger.warn "Typing indicator error (thread #{thread_id[0..7]}): #{e.class}: #{e.message}"
           break
         end
       end
