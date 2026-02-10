@@ -3,7 +3,6 @@
 module Earl
   # Holds and validates environment-based configuration for Mattermost
   # connectivity, bot credentials, and channel targeting.
-  # :reek:TooManyInstanceVariables
   class Config
     attr_reader :mattermost_url, :bot_token, :bot_id, :channel_id, :allowed_users
 
@@ -16,7 +15,6 @@ module Earl
       @allowed_users  = ENV.fetch("EARL_ALLOWED_USERS", "").split(",").map(&:strip)
     end
 
-    # :reek:FeatureEnvy
     def websocket_url
       uri = URI.parse(@mattermost_url)
       scheme = uri.scheme == "https" ? "wss" : "ws"

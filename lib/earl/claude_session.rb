@@ -3,13 +3,10 @@
 module Earl
   # Manages a single Claude CLI subprocess, handling JSON-stream I/O
   # and emitting text/completion callbacks as responses arrive.
-  # :reek:TooManyInstanceVariables
-  # :reek:TooManyMethods
   class ClaudeSession
     include Logging
     attr_reader :session_id, :total_cost
 
-    # :reek:ControlParameter
     def initialize(session_id: nil)
       @session_id = session_id || SecureRandom.uuid
       @process = nil
@@ -31,15 +28,12 @@ module Earl
       @on_complete = block
     end
 
-    # :reek:TooManyStatements
     def start
       @stdin, stdout, stderr, @wait_thread = Open3.popen3(*cli_args)
       @process = @wait_thread
 
       log(:info, "Spawning Claude session #{@session_id} — resume with: claude --resume #{@session_id}")
-
-      @reader_thread = Thread.new { read_stdout(stdout) }
-      @stderr_thread = Thread.new { read_stderr(stderr) }
+      spawn_io_threads(stdout, stderr)
     end
 
     def send_message(text)
@@ -55,15 +49,13 @@ module Earl
       @process&.alive?
     end
 
-    # :reek:TooManyStatements
     def kill
       return unless @process
 
       log(:info, "Killing Claude session #{short_id} (pid=#{@process.pid})")
       terminate_process
       close_stdin
-      @reader_thread&.join(3)
-      @stderr_thread&.join(1)
+      join_threads
     end
 
     private
@@ -83,22 +75,37 @@ module Earl
       ]
     end
 
+    def spawn_io_threads(stdout, stderr)
+      @reader_thread = Thread.new { read_stdout(stdout) }
+      @stderr_thread = Thread.new { read_stderr(stderr) }
+    end
+
+    def join_threads
+      @reader_thread&.join(3)
+      @stderr_thread&.join(1)
+    end
+
     def write_stdin(payload)
       @stdin.write(payload)
       @stdin.flush
     end
 
-    # :reek:TooManyStatements
-    # :reek:DuplicateMethodCall
     def terminate_process
       pid = @process.pid
       Process.kill("INT", pid)
       sleep 0.1
-      Process.kill("INT", pid) if @process.alive?
-      sleep 2
-      Process.kill("TERM", pid) if @process.alive?
+      escalate_signal(pid)
     rescue Errno::ESRCH
       # Process already gone
+    end
+
+    def escalate_signal(pid)
+      return unless @process.alive?
+
+      sleep 2
+      return unless @process.alive?
+
+      Process.kill("TERM", pid)
     end
 
     def close_stdin
@@ -107,17 +114,19 @@ module Earl
       # Already closed
     end
 
-    # :reek:TooManyStatements
     def read_stdout(stdout)
       stdout.each_line do |line|
-        line = line.strip
-        next if line.empty?
-
-        event = parse_json(line)
-        handle_event(event) if event
+        process_line(line.strip)
       end
     rescue IOError
       log(:debug, "Claude stdout stream closed (session #{short_id})")
+    end
+
+    def process_line(line)
+      return if line.empty?
+
+      event = parse_json(line)
+      handle_event(event) if event
     end
 
     def parse_json(line)
@@ -135,7 +144,6 @@ module Earl
       log(:debug, "Claude stderr stream closed (session #{short_id})")
     end
 
-    # :reek:FeatureEnvy
     def handle_event(event)
       case event["type"]
       when "system"
@@ -147,18 +155,19 @@ module Earl
       end
     end
 
-    # :reek:TooManyStatements
-    # :reek:FeatureEnvy
     def handle_assistant_event(event)
-      content = event.dig("message", "content")
-      return unless content.is_a?(Array)
-
-      text = content
-        .select { |content_block| content_block["type"] == "text" }
-        .map { |content_block| content_block["text"] }
-        .join
-
+      text = extract_text(event)
       @on_text&.call(text) unless text.empty?
+    end
+
+    def extract_text(event)
+      content = event.dig("message", "content")
+      return "" unless content.is_a?(Array)
+
+      content
+        .select { |block| block["type"] == "text" }
+        .map { |block| block["text"] }
+        .join
     end
 
     def handle_result_event(event)

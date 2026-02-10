@@ -11,22 +11,13 @@ module Earl
       @mutex = Mutex.new
     end
 
-    # :reek:TooManyStatements
     def get_or_create(thread_id)
       short_id = thread_id[0..7]
       @mutex.synchronize do
         session = @sessions[thread_id]
+        return reuse_session(session, short_id) if session&.alive?
 
-        if session&.alive?
-          log(:debug, "Reusing session for thread #{short_id}")
-          return session
-        end
-
-        log(:info, "Creating new session for thread #{short_id}")
-        session = ClaudeSession.new
-        session.start
-        @sessions[thread_id] = session
-        session
+        create_session(thread_id, short_id)
       end
     end
 
@@ -36,6 +27,21 @@ module Earl
         @sessions.each_value(&:kill)
         @sessions.clear
       end
+    end
+
+    private
+
+    def reuse_session(session, short_id)
+      log(:debug, "Reusing session for thread #{short_id}")
+      session
+    end
+
+    def create_session(thread_id, short_id)
+      log(:info, "Creating new session for thread #{short_id}")
+      session = ClaudeSession.new
+      session.start
+      @sessions[thread_id] = session
+      session
     end
   end
 end

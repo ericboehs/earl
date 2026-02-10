@@ -3,7 +3,6 @@
 module Earl
   # Manages the lifecycle of a single streamed response to Mattermost,
   # including post creation, debounced updates, and typing indicators.
-  # :reek:TooManyInstanceVariables
   class StreamingResponse
     include Logging
     DEBOUNCE_MS = 300
@@ -37,10 +36,9 @@ module Earl
 
     private
 
-    # :reek:TooManyStatements
     def typing_loop
       loop do
-        @mattermost.send_typing(channel_id: @channel_id, parent_id: @thread_id)
+        send_typing_indicator
         sleep 3
       rescue StandardError => error
         log(:warn, "Typing error (thread #{short_id}): #{error.class}: #{error.message}")
@@ -48,16 +46,17 @@ module Earl
       end
     end
 
-    # :reek:NilCheck
+    def send_typing_indicator
+      @mattermost.send_typing(channel_id: @channel_id, parent_id: @thread_id)
+    end
+
     def handle_text(text)
       @full_text = text
       stop_typing
 
-      if @reply_post_id
-        schedule_update
-      else
-        create_initial_post(text)
-      end
+      return create_initial_post(text) unless @reply_post_id
+
+      schedule_update
     end
 
     def create_initial_post(text)
@@ -66,18 +65,22 @@ module Earl
       @last_update_at = Time.now
     end
 
-    # :reek:TooManyStatements
-    # :reek:NilCheck
     def schedule_update
       elapsed_ms = (Time.now - @last_update_at) * 1000
 
       if elapsed_ms >= DEBOUNCE_MS
         update_post
-      elsif @debounce_timer.nil?
-        @debounce_timer = Thread.new do
-          sleep DEBOUNCE_MS / 1000.0
-          @mutex.synchronize { update_post }
-        end
+      else
+        start_debounce_timer
+      end
+    end
+
+    def start_debounce_timer
+      return if @debounce_timer
+
+      @debounce_timer = Thread.new do
+        sleep DEBOUNCE_MS / 1000.0
+        @mutex.synchronize { update_post }
       end
     end
 

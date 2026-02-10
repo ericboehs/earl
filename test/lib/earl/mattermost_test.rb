@@ -1,6 +1,6 @@
 require "test_helper"
 
-# :reek:TooManyMethods
+# Tests Mattermost REST API, WebSocket connection, and event dispatch
 class Earl::MattermostTest < ActiveSupport::TestCase
   setup do
     Earl.logger = Logger.new(File::NULL)

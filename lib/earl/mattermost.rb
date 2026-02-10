@@ -5,8 +5,6 @@ require "websocket-client-simple"
 module Earl
   # Connects to the Mattermost WebSocket API for real-time messaging and
   # provides REST helpers for creating, updating posts and typing indicators.
-  # :reek:TooManyMethods
-  # :reek:DataClump
   class Mattermost
     include Logging
     attr_reader :config
@@ -46,13 +44,12 @@ module Earl
 
     private
 
-    # :reek:TooManyStatements
-    # :reek:DuplicateMethodCall
     def setup_websocket_handlers
       mattermost = self
+      logger = Earl.logger
 
       @ws.on(:open) do
-        Earl.logger.info "WebSocket connected, sending auth challenge"
+        logger.info "WebSocket connected, sending auth challenge"
         send(JSON.generate({
           seq: 1,
           action: "authentication_challenge",
@@ -61,27 +58,27 @@ module Earl
       end
 
       @ws.on(:message) { |msg| mattermost.send(:handle_websocket_message, msg) }
-      @ws.on(:error) { |error| Earl.logger.error "WebSocket error: #{error.message}" }
+      @ws.on(:error) { |error| logger.error "WebSocket error: #{error.message}" }
       @ws.on(:close) { |event| mattermost.send(:handle_websocket_close, event) }
     end
 
-    # :reek:FeatureEnvy
-    # :reek:TooManyStatements
-    # :reek:DuplicateMethodCall
     def handle_websocket_message(msg)
       handle_ping if msg.type == :ping
+      parse_and_dispatch(msg.data)
+    rescue JSON::ParserError => error
+      log(:warn, "Failed to parse WebSocket message: #{error.message}")
+    rescue StandardError => error
+      error_msg = error.message
+      log(:error, "Error handling WebSocket message: #{error.class}: #{error_msg}")
+      log(:error, error.backtrace.first(5).join("\n"))
+    end
 
-      data = msg.data
+    def parse_and_dispatch(data)
       return unless data && !data.empty?
 
       event = JSON.parse(data)
       log(:debug, "WS event: #{event['event'] || event.keys.first}")
       dispatch_event(event)
-    rescue JSON::ParserError => error
-      log(:warn, "Failed to parse WebSocket message: #{error.message}")
-    rescue StandardError => error
-      log(:error, "Error handling WebSocket message: #{error.class}: #{error.message}")
-      log(:error, error.backtrace.first(5).join("\n"))
     end
 
     def handle_ping
@@ -98,8 +95,6 @@ module Earl
       end
     end
 
-    # :reek:FeatureEnvy
-    # :reek:TooManyStatements
     def handle_posted_event(event)
       post_data = event.dig("data", "post")
       return unless post_data
@@ -111,16 +106,15 @@ module Earl
       deliver_message(event, post)
     end
 
-    # :reek:TooManyStatements
-    # :reek:FeatureEnvy
-    # :reek:DuplicateMethodCall
     def deliver_message(event, post)
       sender_name = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
-      thread_id = post["root_id"].to_s.empty? ? post["id"] : post["root_id"]
+      post_id = post["id"]
+      root_id = post["root_id"]
+      thread_id = root_id.to_s.empty? ? post_id : root_id
       message_text = post["message"] || ""
 
       log(:info, "Message from @#{sender_name} in thread #{thread_id[0..7]}: #{message_text[0..80]}")
-      @on_message&.call(sender_name: sender_name, thread_id: thread_id, text: message_text, post_id: post["id"])
+      @on_message&.call(sender_name: sender_name, thread_id: thread_id, text: message_text, post_id: post_id)
     end
 
     def handle_websocket_close(event)
@@ -129,7 +123,6 @@ module Earl
       exit 1
     end
 
-    # :reek:FeatureEnvy
     def api_request(method_class, path, body)
       uri = URI.parse(config.api_url(path))
       req = build_request(method_class, uri, body)
@@ -142,7 +135,6 @@ module Earl
       response
     end
 
-    # :reek:FeatureEnvy
     def build_request(method_class, uri, body)
       req = method_class.new(uri)
       req["Authorization"] = "Bearer #{config.bot_token}"
@@ -151,7 +143,6 @@ module Earl
       req
     end
 
-    # :reek:UtilityFunction
     def execute_request(uri, req)
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"

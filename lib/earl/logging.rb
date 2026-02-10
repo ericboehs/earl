@@ -5,7 +5,6 @@ module Earl
   module Logging
     private
 
-    # :reek:UtilityFunction
     def log(level, message)
       Earl.logger.public_send(level, message)
     end

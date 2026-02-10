@@ -3,7 +3,6 @@
 module Earl
   # Main event loop that connects Mattermost messages to Claude sessions,
   # managing per-thread message queuing and streaming response delivery.
-  # :reek:TooManyInstanceVariables
   class Runner
     include Logging
 
@@ -32,7 +31,6 @@ module Earl
       log(:info, "Allowed users: #{@config.allowed_users.join(', ')}")
     end
 
-    # :reek:TooManyStatements
     def setup_signal_handlers
       %w[INT TERM].each do |signal|
         trap(signal) do
@@ -69,13 +67,10 @@ module Earl
       true
     end
 
-    # :reek:TooManyStatements
     def enqueue_message(thread_id:, text:)
       @queue_mutex.synchronize do
         if @processing_threads.include?(thread_id)
-          queue = (@pending_messages[thread_id] ||= [])
-          queue << text
-          log(:debug, "Queued message for busy thread #{thread_id[0..7]}")
+          queue_for_later(thread_id, text)
           return
         end
         @processing_threads << thread_id
@@ -84,7 +79,12 @@ module Earl
       process_message(thread_id: thread_id, text: text)
     end
 
-    # :reek:TooManyStatements
+    def queue_for_later(thread_id, text)
+      queue = (@pending_messages[thread_id] ||= [])
+      queue << text
+      log(:debug, "Queued message for busy thread #{thread_id[0..7]}")
+    end
+
     def process_message(thread_id:, text:)
       session = @session_manager.get_or_create(thread_id)
       response = StreamingResponse.new(
@@ -92,14 +92,17 @@ module Earl
       )
       response.start_typing
 
+      setup_callbacks(session, response, thread_id)
+      session.send_message(text)
+    end
+
+    def setup_callbacks(session, response, thread_id)
       session.on_text { |accumulated_text| response.on_text(accumulated_text) }
       session.on_complete do |_sess|
         response.on_complete
         log(:info, "Response complete for thread #{thread_id[0..7]} (cost=$#{session.total_cost})")
         process_next_queued(thread_id)
       end
-
-      session.send_message(text)
     end
 
     def process_next_queued(thread_id)
