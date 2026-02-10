@@ -44,21 +44,6 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert runner.send(:allowed_user?, "anyone")
   end
 
-  test "stop_typing kills the thread" do
-    runner = Earl::Runner.new
-    thread = Thread.new { sleep 60 }
-
-    runner.send(:stop_typing, thread)
-    sleep 0.05
-
-    assert_not thread.alive?
-  end
-
-  test "stop_typing handles nil thread" do
-    runner = Earl::Runner.new
-    assert_nothing_raised { runner.send(:stop_typing, nil) }
-  end
-
   test "process_message sends text to session" do
     runner = Earl::Runner.new
 
@@ -145,30 +130,6 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_not_nil mm.instance_variable_get(:@on_message)
   end
 
-  test "start_typing creates a thread" do
-    runner = Earl::Runner.new
-
-    # Stub send_typing to not make real HTTP calls
-    mm = runner.instance_variable_get(:@mattermost)
-    typing_calls = []
-    mm.define_singleton_method(:send_typing) { |**args| typing_calls << args }
-
-    thread = runner.send(:start_typing, "thread-123")
-
-    sleep 0.1
-    assert thread.alive?
-    assert typing_calls.any?
-
-    runner.send(:stop_typing, thread)
-    sleep 0.1
-    assert_not thread.alive?
-  end
-
-  test "setup_signal_handlers can be called without error" do
-    runner = Earl::Runner.new
-    assert_nothing_raised { runner.send(:setup_signal_handlers) }
-  end
-
   test "debounce timer fires when time has not elapsed" do
     runner = Earl::Runner.new
 
@@ -205,6 +166,11 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert updated_posts.any? { |u| u[:message] == "Part 1 Part 2" }
   end
 
+  test "setup_signal_handlers can be called without error" do
+    runner = Earl::Runner.new
+    assert_nothing_raised { runner.send(:setup_signal_handlers) }
+  end
+
   test "start method calls setup methods and enters main loop" do
     runner = Earl::Runner.new
     mm = runner.instance_variable_get(:@mattermost)
@@ -216,20 +182,6 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     runner.instance_variable_set(:@shutting_down, true)
 
     assert_nothing_raised { runner.start }
-  end
-
-  test "start_typing rescues errors in typing loop" do
-    runner = Earl::Runner.new
-    mm = runner.instance_variable_get(:@mattermost)
-
-    # Make send_typing raise an error
-    mm.define_singleton_method(:send_typing) { |**_args| raise "connection lost" }
-
-    thread = runner.send(:start_typing, "thread-123")
-    sleep 0.1
-
-    # Thread should have exited due to the rescue/break
-    assert_not thread.alive?
   end
 
   test "on_complete without prior text does not update post" do
