@@ -12,6 +12,7 @@ module Earl
       @mattermost = mattermost
       @channel_id = channel_id
       @reply_post_id = nil
+      @create_failed = false
       @full_text = ""
       @last_update_at = Time.now
       @debounce_timer = nil
@@ -32,6 +33,9 @@ module Earl
 
     def on_complete
       @mutex.synchronize { finalize }
+    rescue StandardError => error
+      log(:error, "Completion error (thread #{short_id}): #{error.class}: #{error.message}")
+      log(:error, error.backtrace.first(5).join("\n"))
     end
 
     private
@@ -54,14 +58,23 @@ module Earl
       @full_text = text
       stop_typing
 
+      return if @create_failed
       return create_initial_post(text) unless @reply_post_id
 
       schedule_update
     end
 
     def create_initial_post(text)
-      post_id = @mattermost.create_post(channel_id: @channel_id, message: text, root_id: @thread_id)["id"]
-      @reply_post_id = post_id if post_id
+      result = @mattermost.create_post(channel_id: @channel_id, message: text, root_id: @thread_id)
+      post_id = result["id"]
+
+      unless post_id
+        @create_failed = true
+        log(:error, "Failed to create post for thread #{short_id} — subsequent text will be dropped")
+        return
+      end
+
+      @reply_post_id = post_id
       @last_update_at = Time.now
     end
 

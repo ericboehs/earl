@@ -106,6 +106,8 @@ module Earl
       return unless @process.alive?
 
       Process.kill("TERM", pid)
+    rescue Errno::ESRCH
+      # Process exited between alive? check and kill
     end
 
     def close_stdin

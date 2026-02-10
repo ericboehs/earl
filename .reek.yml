@@ -26,6 +26,7 @@ detectors:
       - Earl::ClaudeSession#handle_event      # event dispatch by design
       - Earl::Config#websocket_url            # URI parsing of own state
       - Earl::Mattermost#build_request        # builder pattern
+      - Earl::Mattermost#create_post          # checks response before parsing
       - Earl::Mattermost#deliver_message      # event data extraction
       - Earl::Runner#setup_callbacks          # wiring session callbacks
   InstanceVariableAssumption:
@@ -55,6 +56,7 @@ detectors:
       - Earl::Runner#setup_callbacks           # wiring session callbacks
       - Earl::Runner#setup_signal_handlers     # signal trap setup
       - Earl::StreamingResponse#initialize     # streaming lifecycle setup
+      - Earl::StreamingResponse#create_initial_post  # error handling with early return
       - Earl::StreamingResponse#typing_loop    # loop with error handling
   UtilityFunction:
     exclude:

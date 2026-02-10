@@ -91,6 +91,15 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_not called
   end
 
+  test "create_post returns empty hash on non-success response" do
+    mm = Earl::Mattermost.new(@config)
+
+    with_http_mock(response_body: '{"error":"unauthorized"}', success: false) do
+      result = mm.create_post(channel_id: "ch-1", message: "Hello")
+      assert_equal({}, result)
+    end
+  end
+
   # --- Private HTTP method tests ---
 
   test "api_post builds correct HTTP request with auth and SSL" do
@@ -399,6 +408,9 @@ class Earl::MattermostTest < ActiveSupport::TestCase
       requests << { method: :post, path: path, body: body, auth: "Bearer #{config.bot_token}" }
       response = Object.new
       response.define_singleton_method(:body) { JSON.generate({ "id" => "fake-post-id" }) }
+      response.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
       response
     end
 
@@ -410,20 +422,21 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     mm
   end
 
-  def with_http_mock(on_request: nil, on_ssl: nil, response_body: "{}")
+  def with_http_mock(on_request: nil, on_ssl: nil, response_body: "{}", success: true)
     original = Net::HTTP.method(:new)
     mock = Object.new
     mock.define_singleton_method(:use_ssl=) { |v| on_ssl&.call(v) }
     mock.define_singleton_method(:open_timeout=) { |_v| }
     mock.define_singleton_method(:read_timeout=) { |_v| }
+    is_success = success
     mock.define_singleton_method(:request) do |req|
       on_request&.call(req)
       resp = Object.new
       rb = response_body
       resp.define_singleton_method(:body) { rb }
-      resp.define_singleton_method(:code) { "200" }
+      resp.define_singleton_method(:code) { is_success ? "200" : "401" }
       resp.define_singleton_method(:is_a?) do |klass|
-        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+        (is_success && klass == Net::HTTPSuccess) || Object.instance_method(:is_a?).bind_call(self, klass)
       end
       resp
     end

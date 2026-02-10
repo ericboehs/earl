@@ -28,6 +28,8 @@ module Earl
       body = { channel_id: channel_id, message: message }
       body[:root_id] = root_id if root_id
       response = api_post("/posts", body)
+      return {} unless response.is_a?(Net::HTTPSuccess)
+
       JSON.parse(response.body)
     end
 

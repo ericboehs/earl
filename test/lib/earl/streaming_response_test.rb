@@ -161,4 +161,34 @@ class Earl::StreamingResponseTest < ActiveSupport::TestCase
 
     assert_nothing_raised { response.on_text("Hello") }
   end
+
+  test "on_text stops retrying when create_post returns no id" do
+    create_count = 0
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) do |**_args|
+      create_count += 1
+      {} # No "id" key — simulates API error response
+    end
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    # First call should attempt create_post and set failure flag
+    response.on_text("Part 1")
+    assert_equal 1, create_count
+
+    # Second call should NOT retry create_post
+    response.on_text("Part 2")
+    assert_equal 1, create_count
+  end
+
+  test "on_complete handles errors gracefully" do
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
+    mock_mm.define_singleton_method(:update_post) { |**_args| raise "network error" }
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+    response.on_text("Some text")
+
+    assert_nothing_raised { response.on_complete }
+  end
 end
