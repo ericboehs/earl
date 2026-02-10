@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 module Earl
+  # Manages a single Claude CLI subprocess, handling JSON-stream I/O
+  # and emitting text/completion callbacks as responses arrive.
   class ClaudeSession
+    include Logging
     attr_reader :session_id, :total_cost
 
     def initialize(session_id: nil)
@@ -9,6 +12,8 @@ module Earl
       @process = nil
       @stdin = nil
       @reader_thread = nil
+      @stderr_thread = nil
+      @wait_thread = nil
       @on_text = nil
       @on_complete = nil
       @total_cost = 0.0
@@ -24,38 +29,20 @@ module Earl
     end
 
     def start
-      args = [
-        "claude",
-        "--input-format", "stream-json",
-        "--output-format", "stream-json",
-        "--verbose",
-        "--session-id", @session_id,
-        "--dangerously-skip-permissions"
-      ]
-
-      Earl.logger.info "Spawning Claude session #{@session_id} — resume with: claude --resume #{@session_id}"
-
-      @stdin, stdout, stderr, @wait_thread = Open3.popen3(*args)
+      @stdin, stdout, stderr, @wait_thread = Open3.popen3(*cli_args)
       @process = @wait_thread
 
-      @reader_thread = Thread.new { read_stdout(stdout) }
-      @stderr_thread = Thread.new { read_stderr(stderr) }
+      log(:info, "Spawning Claude session #{@session_id} — resume with: claude --resume #{@session_id}")
+      spawn_io_threads(stdout, stderr)
     end
 
     def send_message(text)
       return unless alive?
 
-      msg = JSON.generate({
-        type: "user",
-        message: { role: "user", content: text }
-      }) + "\n"
+      payload = JSON.generate({ type: "user", message: { role: "user", content: text } }) + "\n"
+      @mutex.synchronize { write_stdin(payload) }
 
-      @mutex.synchronize do
-        @stdin.write(msg)
-        @stdin.flush
-      end
-
-      Earl.logger.debug "Sent message to Claude #{@session_id[0..7]}: #{text[0..60]}"
+      log(:debug, "Sent message to Claude #{short_id}: #{text[0..60]}")
     end
 
     def alive?
@@ -65,76 +52,131 @@ module Earl
     def kill
       return unless @process
 
-      pid = @process.pid
-      Earl.logger.info "Killing Claude session #{@session_id[0..7]} (pid=#{pid})"
-
-      begin
-        Process.kill("INT", pid)
-        sleep 0.1
-        Process.kill("INT", pid) if @process.alive?
-        sleep 2
-        Process.kill("TERM", pid) if @process.alive?
-      rescue Errno::ESRCH
-        # Process already gone
-      end
-
-      begin
-        @stdin&.close
-      rescue IOError
-        # Already closed
-      end
-      @reader_thread&.join(3)
-      @stderr_thread&.join(1)
+      log(:info, "Killing Claude session #{short_id} (pid=#{@process.pid})")
+      terminate_process
+      close_stdin
+      join_threads
     end
 
     private
 
+    def short_id
+      @session_id[0..7]
+    end
+
+    def cli_args
+      [
+        "claude",
+        "--input-format", "stream-json",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--session-id", @session_id,
+        "--dangerously-skip-permissions"
+      ]
+    end
+
+    def spawn_io_threads(stdout, stderr)
+      @reader_thread = Thread.new { read_stdout(stdout) }
+      @stderr_thread = Thread.new { read_stderr(stderr) }
+    end
+
+    def join_threads
+      @reader_thread&.join(3)
+      @stderr_thread&.join(1)
+    end
+
+    def write_stdin(payload)
+      @stdin.write(payload)
+      @stdin.flush
+    end
+
+    def terminate_process
+      pid = @process.pid
+      Process.kill("INT", pid)
+      sleep 0.1
+      escalate_signal(pid)
+    rescue Errno::ESRCH
+      # Process already gone
+    end
+
+    def escalate_signal(pid)
+      return unless @process.alive?
+
+      sleep 2
+      return unless @process.alive?
+
+      Process.kill("TERM", pid)
+    rescue Errno::ESRCH
+      # Process exited between alive? check and kill
+    end
+
+    def close_stdin
+      @stdin&.close
+    rescue IOError
+      # Already closed
+    end
+
     def read_stdout(stdout)
       stdout.each_line do |line|
-        line = line.strip
-        next if line.empty?
-
-        begin
-          event = JSON.parse(line)
-        rescue JSON::ParserError => e
-          Earl.logger.warn "Unparsable Claude stdout (session #{@session_id[0..7]}): #{line[0..200]}"
-          next
-        end
-
-        handle_event(event)
+        process_line(line.strip)
       end
     rescue IOError
-      Earl.logger.debug "Claude stdout stream closed (session #{@session_id[0..7]})"
+      log(:debug, "Claude stdout stream closed (session #{short_id})")
+    end
+
+    def process_line(line)
+      return if line.empty?
+
+      event = parse_json(line)
+      handle_event(event) if event
+    end
+
+    def parse_json(line)
+      JSON.parse(line)
+    rescue JSON::ParserError => error
+      log(:warn, "Unparsable Claude stdout (session #{short_id}): #{line[0..200]} — #{error.message}")
+      nil
     end
 
     def read_stderr(stderr)
       stderr.each_line do |line|
-        Earl.logger.debug "Claude stderr: #{line.strip}"
+        log(:debug, "Claude stderr: #{line.strip}")
       end
     rescue IOError
-      Earl.logger.debug "Claude stderr stream closed (session #{@session_id[0..7]})"
+      log(:debug, "Claude stderr stream closed (session #{short_id})")
     end
 
     def handle_event(event)
       case event["type"]
       when "system"
-        Earl.logger.debug "Claude system: #{event['subtype']}"
+        log(:debug, "Claude system: #{event['subtype']}")
       when "assistant"
-        content = event.dig("message", "content")
-        return unless content.is_a?(Array)
-
-        text = content
-          .select { |c| c["type"] == "text" }
-          .map { |c| c["text"] }
-          .join
-
-        @on_text&.call(text) unless text.empty?
+        handle_assistant_event(event)
       when "result"
-        cost = event["total_cost_usd"]
-        @total_cost = cost if cost
-        Earl.logger.info "Claude result: cost=$#{cost} subtype=#{event['subtype']}"
-        @on_complete&.call(self)
+        handle_result_event(event)
       end
+    end
+
+    def handle_assistant_event(event)
+      text = extract_text(event)
+      @on_text&.call(text) unless text.empty?
+    end
+
+    def extract_text(event)
+      content = event.dig("message", "content")
+      return "" unless content.is_a?(Array)
+
+      content
+        .select { |block| block["type"] == "text" }
+        .map { |block| block["text"] }
+        .join
+    end
+
+    def handle_result_event(event)
+      cost = event["total_cost_usd"]
+      @total_cost = cost if cost
+      log(:info, "Claude result: cost=$#{cost} subtype=#{event['subtype']}")
+      @on_complete&.call(self)
     end
   end
 end

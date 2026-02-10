@@ -365,7 +365,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
   private
 
   def scratchpad_dir
-    dir = "/private/tmp/claude-501/earl-tests"
+    dir = File.join(Dir.tmpdir, "earl-tests")
     FileUtils.mkdir_p(dir)
     dir
   end
