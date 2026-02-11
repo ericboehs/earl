@@ -11,9 +11,7 @@ module Earl
       @session_manager = SessionManager.new
       @mattermost = Mattermost.new(@config)
       @shutting_down = false
-      @processing_threads = Set.new
-      @pending_messages = {}
-      @queue_mutex = Mutex.new
+      @message_queue = MessageQueue.new
     end
 
     def start
@@ -32,14 +30,14 @@ module Earl
     end
 
     def setup_signal_handlers
-      %w[INT TERM].each do |signal|
-        trap(signal) do
-          return if @shutting_down
-          @shutting_down = true
+      %w[INT TERM].each { |signal| trap(signal) { handle_shutdown_signal } }
+    end
 
-          Thread.new { shutdown }
-        end
-      end
+    def handle_shutdown_signal
+      return if @shutting_down
+
+      @shutting_down = true
+      Thread.new { shutdown }
     end
 
     def shutdown
@@ -68,21 +66,11 @@ module Earl
     end
 
     def enqueue_message(thread_id:, text:)
-      @queue_mutex.synchronize do
-        if @processing_threads.include?(thread_id)
-          queue_for_later(thread_id, text)
-          return
-        end
-        @processing_threads << thread_id
+      if @message_queue.try_claim(thread_id)
+        process_message(thread_id: thread_id, text: text)
+      else
+        @message_queue.enqueue(thread_id, text)
       end
-
-      process_message(thread_id: thread_id, text: text)
-    end
-
-    def queue_for_later(thread_id, text)
-      queue = (@pending_messages[thread_id] ||= [])
-      queue << text
-      log(:debug, "Queued message for busy thread #{thread_id[0..7]}")
     end
 
     def process_message(thread_id:, text:)
@@ -98,28 +86,18 @@ module Earl
 
     def setup_callbacks(session, response, thread_id)
       session.on_text { |accumulated_text| response.on_text(accumulated_text) }
-      session.on_complete do |_sess|
-        response.on_complete
-        log(:info, "Response complete for thread #{thread_id[0..7]} (cost=$#{session.total_cost})")
-        process_next_queued(thread_id)
-      end
+      session.on_complete { |_| handle_response_complete(session, response, thread_id) }
+    end
+
+    def handle_response_complete(session, response, thread_id)
+      response.on_complete
+      log(:info, "Response complete for thread #{thread_id[0..7]} (cost=$#{session.total_cost})")
+      process_next_queued(thread_id)
     end
 
     def process_next_queued(thread_id)
-      next_text = dequeue_message(thread_id)
+      next_text = @message_queue.dequeue(thread_id)
       process_message(thread_id: thread_id, text: next_text) if next_text
-    end
-
-    def dequeue_message(thread_id)
-      @queue_mutex.synchronize do
-        msgs = @pending_messages[thread_id]
-        if msgs && !msgs.empty?
-          msgs.shift
-        else
-          @processing_threads.delete(thread_id)
-          nil
-        end
-      end
     end
   end
 end

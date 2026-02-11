@@ -56,7 +56,7 @@ class Earl::ConfigTest < ActiveSupport::TestCase
   test "websocket_url converts https to wss" do
     config = Earl::Config.new
 
-    assert_equal "wss://mattermost.example.com:443/api/v4/websocket", config.websocket_url
+    assert_equal "wss://mattermost.example.com/api/v4/websocket", config.websocket_url
   end
 
   test "websocket_url converts http to ws" do

@@ -1,9 +1,9 @@
 # Renders styled text links for authentication pages
 class Auth::LinkComponent < ViewComponent::Base
-  def initialize(text:, url:, centered: true)
+  def initialize(text:, url:, centered: nil)
     @text = text
     @url = url
-    @centered = centered
+    @centered = centered != false
   end
 
   private

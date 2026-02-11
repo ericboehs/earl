@@ -373,7 +373,8 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     # Complete — no queued messages, should remove from processing_threads
     on_complete_callback.call(mock_session)
 
-    processing = runner.instance_variable_get(:@processing_threads)
+    message_queue = runner.instance_variable_get(:@message_queue)
+    processing = message_queue.instance_variable_get(:@processing_threads)
     assert_not processing.include?("thread-12345678")
   end
 

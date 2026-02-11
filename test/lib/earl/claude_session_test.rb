@@ -195,8 +195,9 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
     # Use cat as a process that stays alive and echoes back
     stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
-    session.instance_variable_set(:@stdin, stdin)
-    session.instance_variable_set(:@process, wait_thread)
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.stdin = stdin
+    process_state.process = wait_thread
 
     session.send_message("Hello")
     stdin.close
@@ -219,8 +220,9 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     stdin, _stdout, _stderr, wait_thread = Open3.popen3("true")
     wait_thread.value # wait for it to exit
 
-    session.instance_variable_set(:@process, wait_thread)
-    session.instance_variable_set(:@stdin, stdin)
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.process = wait_thread
+    process_state.stdin = stdin
 
     assert_nothing_raised { session.kill }
   ensure
@@ -288,8 +290,9 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
       "ruby", "-e", "trap('INT'){}; loop { sleep 1 rescue nil }"
     )
     sleep 0.3 # let child process start and set up trap handler
-    session.instance_variable_set(:@process, wait_thread)
-    session.instance_variable_set(:@stdin, stdin)
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.process = wait_thread
+    process_state.stdin = stdin
 
     assert wait_thread.alive?
     session.kill
@@ -307,8 +310,9 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     # sleep doesn't trap INT so it dies from the first signal
     stdin, stdout, stderr, wait_thread = Open3.popen3("sleep", "60")
     sleep 0.2
-    session.instance_variable_set(:@process, wait_thread)
-    session.instance_variable_set(:@stdin, stdin)
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.process = wait_thread
+    process_state.stdin = stdin
 
     assert wait_thread.alive?
     session.kill
@@ -330,10 +334,11 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     reader.join
     stderr_t.join
 
-    session.instance_variable_set(:@process, wait_thread)
-    # Leave @stdin as nil (default) to cover &. nil branch
-    session.instance_variable_set(:@reader_thread, reader)
-    session.instance_variable_set(:@stderr_thread, stderr_t)
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.process = wait_thread
+    # Leave stdin as nil (default) to cover &. nil branch
+    process_state.reader_thread = reader
+    process_state.stderr_thread = stderr_t
 
     assert_nothing_raised { session.kill }
   ensure
