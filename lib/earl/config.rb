@@ -4,6 +4,7 @@ module Earl
   # Holds and validates environment-based configuration for Mattermost
   # connectivity, bot credentials, and channel targeting.
   class Config
+    # Groups Mattermost server URL and bot authentication credentials.
     MattermostCredentials = Struct.new(:url, :bot_token, :bot_id, keyword_init: true)
 
     attr_reader :credentials, :channel_id, :allowed_users

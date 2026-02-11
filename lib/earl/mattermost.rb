@@ -44,55 +44,68 @@ module Earl
 
     private
 
-    def setup_websocket_handlers
-      mattermost = self
+    # WebSocket lifecycle methods extracted to reduce class method count.
+    module WebSocketHandling
+      private
 
-      @ws.on(:open) { send(JSON.generate(mattermost.send(:auth_payload))) }
-      @ws.on(:message) { |msg| mattermost.send(:handle_websocket_message, msg) }
-      @ws.on(:error) { |error| Earl.logger.error "WebSocket error: #{error.message}" }
-      @ws.on(:close) { |event| mattermost.send(:handle_websocket_close, event) }
-    end
+      def setup_websocket_handlers
+        ws_ref = self
+        websocket_handler_map(ws_ref).each { |event, handler| @ws.on(event, &handler) }
+      end
 
-    def auth_payload
-      Earl.logger.info "WebSocket connected, sending auth challenge"
-      { seq: 1, action: "authentication_challenge", data: { token: config.bot_token } }
-    end
+      # :reek:FeatureEnvy
+      def websocket_handler_map(ws_ref)
+        {
+          open: -> { send(JSON.generate(ws_ref.send(:auth_payload))) },
+          message: ->(msg) { ws_ref.send(:handle_websocket_message, msg) },
+          error: ->(error) { Earl.logger.error "WebSocket error: #{error.message}" },
+          close: ->(event) { ws_ref.send(:handle_websocket_close, event) }
+        }
+      end
 
-    def handle_websocket_message(msg)
-      handle_ping if msg.type == :ping
-      parse_and_dispatch(msg.data)
-    rescue JSON::ParserError => error
-      log(:warn, "Failed to parse WebSocket message: #{error.message}")
-    rescue StandardError => error
-      log_error("Error handling WebSocket message", error)
-    end
+      def auth_payload
+        Earl.logger.info "WebSocket connected, sending auth challenge"
+        { seq: 1, action: "authentication_challenge", data: { token: config.bot_token } }
+      end
 
-    def log_error(context, error)
-      log(:error, "#{context}: #{error.class}: #{error.message}")
-      log(:error, error.backtrace&.first(5)&.join("\n"))
-    end
+      def handle_websocket_message(msg)
+        handle_ping if msg.type == :ping
+        parse_and_dispatch(msg.data)
+      rescue StandardError => error
+        log(:error, "WebSocket message error: #{error.class}: #{error.message}")
+        log(:error, error.backtrace&.first(5)&.join("\n"))
+      end
 
-    def parse_and_dispatch(data)
-      return unless data && !data.empty?
+      def parse_and_dispatch(data)
+        return unless data && !data.empty?
 
-      event = JSON.parse(data)
-      log(:debug, "WS event: #{event['event'] || event.keys.first}")
-      dispatch_event(event)
-    end
+        event = JSON.parse(data)
+        log(:debug, "WS event: #{event['event'] || event.keys.first}")
+        dispatch_event(event)
+      end
 
-    def handle_ping
-      log(:debug, "WS ping received, sending pong")
-      @ws.send(nil, type: :pong)
-    end
+      def handle_ping
+        log(:debug, "WS ping received, sending pong")
+        @ws.send(nil, type: :pong)
+      end
 
-    def dispatch_event(event)
-      case event["event"]
-      when "hello"
-        log(:info, "Authenticated to Mattermost")
-      when "posted"
-        handle_posted_event(event)
+      def dispatch_event(event)
+        case event["event"]
+        when "hello"
+          log(:info, "Authenticated to Mattermost")
+        when "posted"
+          handle_posted_event(event)
+        end
+      end
+
+      def handle_websocket_close(event)
+        log(:warn, "WebSocket closed: #{event&.code} #{event&.reason}")
+        log(:warn, "EARL will exit — restart process to reconnect")
+        exit 1
       end
     end
+
+    include WebSocketHandling
 
     def handle_posted_event(event)
       post = parse_post_data(event)
@@ -104,33 +117,28 @@ module Earl
       return unless post_data
 
       post = JSON.parse(post_data)
-      return if post["user_id"] == config.bot_id
-      return if post["channel_id"] != config.channel_id
+      return if post["user_id"] == config.bot_id || post["channel_id"] != config.channel_id
 
       post
     end
 
     def deliver_message(event, post)
-      root_id = post["root_id"]
-      post_id = post["id"]
-      sender_name = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
-      thread_id = root_id.to_s.empty? ? post_id : root_id
-      text = post["message"] || ""
+      params = build_message_params(event, post)
+      log(:info, "Message from @#{params[:sender_name]} in thread #{params[:thread_id][0..7]}: #{params[:text][0..80]}")
+      @on_message&.call(**params)
+    end
 
-      log(:info, "Message from @#{sender_name} in thread #{thread_id[0..7]}: #{text[0..80]}")
-      @on_message&.call(sender_name: sender_name, thread_id: thread_id, text: text, post_id: post_id)
+    def build_message_params(event, post)
+      post_id = post["id"]
+      root_id = post["root_id"]
+      sender = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
+      { sender_name: sender, thread_id: root_id.to_s.empty? ? post_id : root_id, text: post["message"] || "", post_id: post_id }
     end
 
     def parse_post_response(response)
       return {} unless response.is_a?(Net::HTTPSuccess)
 
       JSON.parse(response.body)
-    end
-
-    def handle_websocket_close(event)
-      log(:warn, "WebSocket closed: #{event&.code} #{event&.reason}")
-      log(:warn, "EARL will exit — restart process to reconnect")
-      exit 1
     end
   end
 end

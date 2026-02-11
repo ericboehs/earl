@@ -6,12 +6,14 @@ module Earl
   class Runner
     include Logging
 
+    # Tracks runtime state: shutdown flag and per-thread message queue.
+    AppState = Struct.new(:shutting_down, :message_queue, keyword_init: true)
+
     def initialize
       @config = Config.new
       @session_manager = SessionManager.new
       @mattermost = Mattermost.new(@config)
-      @shutting_down = false
-      @message_queue = MessageQueue.new
+      @app_state = AppState.new(shutting_down: false, message_queue: MessageQueue.new)
     end
 
     def start
@@ -19,7 +21,7 @@ module Earl
       setup_message_handler
       @mattermost.connect
       log_startup
-      sleep 0.5 until @shutting_down
+      sleep 0.5 until @app_state.shutting_down
     end
 
     private
@@ -34,9 +36,9 @@ module Earl
     end
 
     def handle_shutdown_signal
-      return if @shutting_down
+      return if @app_state.shutting_down
 
-      @shutting_down = true
+      @app_state.shutting_down = true
       Thread.new { shutdown }
     end
 
@@ -66,10 +68,11 @@ module Earl
     end
 
     def enqueue_message(thread_id:, text:)
-      if @message_queue.try_claim(thread_id)
+      queue = @app_state.message_queue
+      if queue.try_claim(thread_id)
         process_message(thread_id: thread_id, text: text)
       else
-        @message_queue.enqueue(thread_id, text)
+        queue.enqueue(thread_id, text)
       end
     end
 
@@ -84,6 +87,7 @@ module Earl
       session.send_message(text)
     end
 
+    # :reek:FeatureEnvy
     def setup_callbacks(session, response, thread_id)
       session.on_text { |accumulated_text| response.on_text(accumulated_text) }
       session.on_complete { |_| handle_response_complete(session, response, thread_id) }
@@ -96,7 +100,7 @@ module Earl
     end
 
     def process_next_queued(thread_id)
-      next_text = @message_queue.dequeue(thread_id)
+      next_text = @app_state.message_queue.dequeue(thread_id)
       process_message(thread_id: thread_id, text: next_text) if next_text
     end
   end

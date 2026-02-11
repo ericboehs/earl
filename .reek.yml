@@ -7,45 +7,5 @@ exclude_paths:
   - test
 
 detectors:
-  TooManyInstanceVariables:
-    max_instance_variables: 5
-
-  TooManyMethods:
-    max_methods: 25
-
-  TooManyStatements:
-    max_statements: 9
-
-  IrresponsibleModule:
-    exclude:
-      - PasswordsController
-      - UsersController
-      - Earl::ClaudeSession::ProcessState
-      - Earl::ClaudeSession::Callbacks
-      - Earl::Config::MattermostCredentials
-      - Earl::StreamingResponse::Context
-      - Earl::StreamingResponse::PostState
-
-  InstanceVariableAssumption:
-    exclude:
-      - PasswordsController
-      - UsersController
-
-  FeatureEnvy:
-    exclude:
-      - Earl::ClaudeSession#write_stdin
-      - Earl::Mattermost#log_error
-      - Earl::Mattermost#deliver_message
-      - Earl::Mattermost::ApiClient#build_request
-      - Earl::Mattermost::ApiClient#send_request
-      - Earl::Runner#setup_callbacks
-
   UtilityFunction:
-    exclude:
-      - Earl::Logging#log
-      - Earl::ClaudeSession#extract_text_content
-      - Earl::Mattermost#parse_post_response
-
-  DataClump:
-    exclude:
-      - Earl::Mattermost::ApiClient
+    public_methods_only: true

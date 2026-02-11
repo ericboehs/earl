@@ -179,7 +179,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mm.define_singleton_method(:connect) { }
 
     # Set shutting_down so the loop exits immediately
-    runner.instance_variable_set(:@shutting_down, true)
+    runner.instance_variable_get(:@app_state).shutting_down = true
 
     assert_nothing_raised { runner.start }
   end
@@ -264,7 +264,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     # Set shutting_down after a brief delay so the loop runs at least once
     Thread.new do
       sleep 0.1
-      runner.instance_variable_set(:@shutting_down, true)
+      runner.instance_variable_get(:@app_state).shutting_down = true
     end
 
     assert_nothing_raised { runner.start }
@@ -373,7 +373,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     # Complete — no queued messages, should remove from processing_threads
     on_complete_callback.call(mock_session)
 
-    message_queue = runner.instance_variable_get(:@message_queue)
+    message_queue = runner.instance_variable_get(:@app_state).message_queue
     processing = message_queue.instance_variable_get(:@processing_threads)
     assert_not processing.include?("thread-12345678")
   end

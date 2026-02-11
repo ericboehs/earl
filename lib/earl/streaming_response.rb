@@ -7,7 +7,9 @@ module Earl
     include Logging
     DEBOUNCE_MS = 300
 
+    # Holds the Mattermost thread and channel context for posting.
     Context = Struct.new(:thread_id, :mattermost, :channel_id, keyword_init: true)
+    # Tracks the reply post lifecycle: ID, failure state, text, and debounce timing.
     PostState = Struct.new(:reply_post_id, :create_failed, :full_text, :last_update_at, :debounce_timer, keyword_init: true)
 
     def initialize(thread_id:, mattermost:, channel_id:)
@@ -38,14 +40,12 @@ module Earl
     private
 
     def typing_loop
-      loop { send_typing_and_wait }
+      loop do
+        send_typing_indicator
+        sleep 3
+      end
     rescue StandardError => error
       log(:warn, "Typing error (thread #{short_id}): #{error.class}: #{error.message}")
-    end
-
-    def send_typing_and_wait
-      send_typing_indicator
-      sleep 3
     end
 
     def send_typing_indicator
