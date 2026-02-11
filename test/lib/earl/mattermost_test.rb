@@ -150,6 +150,35 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_equal "123", body["id"]
   end
 
+  test "api_client execute logs error on non-success response" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+    logged_errors = []
+
+    Earl.logger.define_singleton_method(:error) do |msg|
+      logged_errors << msg
+    end
+
+    with_http_mock(response_body: '{"error":"forbidden"}', success: false) do
+      api.post("/failing/path", { key: "value" })
+    end
+
+    error_log = logged_errors.find { |m| m.include?("failing/path") }
+    assert_not_nil error_log, "Expected an error log for failed API call"
+    assert_includes error_log, "401"
+  end
+
+  test "api_client execute returns response even on failure" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+
+    with_http_mock(response_body: '{"error":"forbidden"}', success: false) do
+      response = api.post("/failing/path", { key: "value" })
+      assert_not_nil response
+      assert_equal "401", response.code
+    end
+  end
+
   # --- WebSocket connect tests ---
 
   test "connect sets up WebSocket with auth challenge" do

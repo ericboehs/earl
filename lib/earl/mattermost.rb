@@ -79,9 +79,18 @@ module Earl
       def parse_and_dispatch(data)
         return unless data && !data.empty?
 
-        event = JSON.parse(data)
+        event = parse_ws_json(data)
+        return unless event
+
         log(:debug, "WS event: #{event['event'] || event.keys.first}")
         dispatch_event(event)
+      end
+
+      def parse_ws_json(data)
+        JSON.parse(data)
+      rescue JSON::ParserError => error
+        log(:warn, "Failed to parse WebSocket message: #{error.message}")
+        nil
       end
 
       def handle_ping
