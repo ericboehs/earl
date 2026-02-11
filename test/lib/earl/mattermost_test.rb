@@ -93,17 +93,27 @@ class Earl::MattermostTest < ActiveSupport::TestCase
 
   test "create_post returns empty hash on non-success response" do
     mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
 
-    with_http_mock(response_body: '{"error":"unauthorized"}', success: false) do
-      result = mm.create_post(channel_id: "ch-1", message: "Hello")
-      assert_equal({}, result)
+    api.define_singleton_method(:post) do |_path, _body|
+      response = Object.new
+      response.define_singleton_method(:body) { '{"error":"unauthorized"}' }
+      response.define_singleton_method(:code) { "401" }
+      response.define_singleton_method(:is_a?) do |klass|
+        Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
     end
+
+    result = mm.create_post(channel_id: "ch-1", message: "Hello")
+    assert_equal({}, result)
   end
 
-  # --- Private HTTP method tests ---
+  # --- Private HTTP method tests (via ApiClient) ---
 
-  test "api_post builds correct HTTP request with auth and SSL" do
+  test "api_client post builds correct HTTP request with auth and SSL" do
     mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
     captured_req = nil
     ssl_set = nil
 
@@ -112,7 +122,7 @@ class Earl::MattermostTest < ActiveSupport::TestCase
       on_ssl: ->(v) { ssl_set = v },
       response_body: '{"ok":true}'
     ) do
-      mm.send(:api_post, "/test/path", { key: "value" })
+      api.post("/test/path", { key: "value" })
     end
 
     assert_instance_of Net::HTTP::Post, captured_req
@@ -124,12 +134,13 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_equal "value", body["key"]
   end
 
-  test "api_put builds correct HTTP request" do
+  test "api_client put builds correct HTTP request" do
     mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
     captured_req = nil
 
     with_http_mock(on_request: ->(req) { captured_req = req }) do
-      mm.send(:api_put, "/test/path", { id: "123" })
+      api.put("/test/path", { id: "123" })
     end
 
     assert_instance_of Net::HTTP::Put, captured_req
@@ -403,9 +414,10 @@ class Earl::MattermostTest < ActiveSupport::TestCase
   def build_testable_mattermost
     requests = @requests
     mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
 
-    mm.define_singleton_method(:api_post) do |path, body|
-      requests << { method: :post, path: path, body: body, auth: "Bearer #{config.bot_token}" }
+    api.define_singleton_method(:post) do |path, body|
+      requests << { method: :post, path: path, body: body, auth: "Bearer test-token" }
       response = Object.new
       response.define_singleton_method(:body) { JSON.generate({ "id" => "fake-post-id" }) }
       response.define_singleton_method(:is_a?) do |klass|
@@ -414,8 +426,8 @@ class Earl::MattermostTest < ActiveSupport::TestCase
       response
     end
 
-    mm.define_singleton_method(:api_put) do |path, body|
-      requests << { method: :put, path: path, body: body, auth: "Bearer #{config.bot_token}" }
+    api.define_singleton_method(:put) do |path, body|
+      requests << { method: :put, path: path, body: body, auth: "Bearer test-token" }
       Object.new
     end
 

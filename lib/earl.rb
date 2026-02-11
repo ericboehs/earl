@@ -13,6 +13,7 @@ require_relative "earl/mattermost"
 require_relative "earl/claude_session"
 require_relative "earl/session_manager"
 require_relative "earl/streaming_response"
+require_relative "earl/message_queue"
 require_relative "earl/runner"
 
 # Top-level module for EARL (Extensible AI Response Layer), a Mattermost bot

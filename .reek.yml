@@ -1,65 +1,11 @@
 # Reek configuration. See https://github.com/troessner/reek
 
 exclude_paths:
+  - .bundle
+  - .git-hooks
   - db/migrate
   - test
-  - .git-hooks
 
 detectors:
-  BooleanParameter:
-    exclude:
-      - AlertComponent#initialize        # dismissible flag for optional close button
-      - Auth::LinkComponent#initialize    # centered flag for optional layout styling
-  ControlParameter:
-    exclude:
-      - Earl::ClaudeSession#initialize   # session_id: nil is a keyword arg default
-  DataClump:
-    exclude:
-      - Earl::Mattermost                 # (path, body) is a clean REST API pattern
-      - Earl::Runner                     # (thread_id, text) is the message dispatch pair
-  DuplicateMethodCall:
-    exclude:
-      - Earl::ClaudeSession#escalate_signal   # guard-then-act pattern on process.alive?
-      - Earl::Mattermost#handle_websocket_message  # error.message in separate rescue clauses
-  FeatureEnvy:
-    exclude:
-      - Earl::ClaudeSession#handle_event      # event dispatch by design
-      - Earl::Config#websocket_url            # URI parsing of own state
-      - Earl::Mattermost#build_request        # builder pattern
-      - Earl::Mattermost#create_post          # checks response before parsing
-      - Earl::Mattermost#deliver_message      # event data extraction
-      - Earl::Runner#setup_callbacks          # wiring session callbacks
-  InstanceVariableAssumption:
-    exclude:
-      - PasswordsController              # @user set by before_action
-      - UsersController                   # @user set in actions for views
-  TooManyInstanceVariables:
-    exclude:
-      - Earl::ClaudeSession              # subprocess state needs many ivars
-      - Earl::Config                     # 5 config attrs are natural
-      - Earl::Runner                     # event loop coordination state
-      - Earl::StreamingResponse          # streaming lifecycle state
-  TooManyMethods:
-    exclude:
-      - Earl::ClaudeSession              # lifecycle + event handling + threading
-      - Earl::Mattermost                 # WebSocket + REST API + event dispatch
-  TooManyStatements:
-    exclude:
-      - Earl::ClaudeSession#initialize         # subprocess needs many ivars
-      - Earl::ClaudeSession#read_stdout        # I/O loop with error handling
-      - Earl::Config#initialize                # loading 5 env vars
-      - Earl::Mattermost#deliver_message       # event data extraction
-      - Earl::Mattermost#handle_posted_event   # guard clauses + dispatch
-      - Earl::Mattermost#handle_websocket_message  # dispatch + dual rescue
-      - Earl::Mattermost#setup_websocket_handlers  # WS callback registration
-      - Earl::Runner#initialize                # event loop coordination setup
-      - Earl::Runner#setup_callbacks           # wiring session callbacks
-      - Earl::Runner#setup_signal_handlers     # signal trap setup
-      - Earl::StreamingResponse#initialize     # streaming lifecycle setup
-      - Earl::StreamingResponse#create_initial_post  # error handling with early return
-      - Earl::StreamingResponse#typing_loop    # loop with error handling
   UtilityFunction:
-    exclude:
-      - Earl::ClaudeSession#extract_text      # pure text extraction helper
-      - Earl::Logging#log                     # mixin wrapper by design
-      - Earl::Mattermost#execute_request      # intentionally stateless HTTP helper
+    public_methods_only: true
