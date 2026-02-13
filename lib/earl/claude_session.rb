@@ -7,6 +7,10 @@ module Earl
     include Logging
     attr_reader :session_id
 
+    def process_pid
+      @process_state.process&.pid
+    end
+
     # Tracks the Claude CLI subprocess and its I/O threads.
     ProcessState = Struct.new(:process, :stdin, :reader_thread, :stderr_thread, :wait_thread, keyword_init: true) do
       def write(payload)
@@ -14,18 +18,87 @@ module Earl
         stdin.flush
       end
     end
-    # Holds text-streaming and completion callback procs, plus accumulated cost.
-    Callbacks = Struct.new(:on_text, :on_complete, :total_cost, keyword_init: true)
+    # Holds text-streaming and completion callback procs.
+    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, keyword_init: true)
+    # Groups session launch options to keep instance variable count low.
+    Options = Struct.new(:permission_config, :resume, :working_dir, keyword_init: true)
 
-    def initialize(session_id: SecureRandom.uuid)
+    # Tracks usage statistics, timing, and cost across the session.
+    # rubocop:disable Metrics/BlockLength
+    Stats = Struct.new(
+      :total_cost, :total_input_tokens, :total_output_tokens,
+      :turn_input_tokens, :turn_output_tokens,
+      :cache_read_tokens, :cache_creation_tokens,
+      :context_window, :model_id,
+      :message_sent_at, :first_token_at, :complete_at,
+      keyword_init: true
+    ) do
+      def time_to_first_token
+        return nil unless message_sent_at && first_token_at
+
+        first_token_at - message_sent_at
+      end
+
+      def tokens_per_second
+        return nil unless first_token_at && complete_at && turn_output_tokens&.positive?
+
+        duration = complete_at - first_token_at
+        return nil unless duration.positive?
+
+        turn_output_tokens / duration
+      end
+
+      def context_percent
+        return nil unless context_window&.positive? && total_input_tokens
+
+        (total_input_tokens.to_f / context_window * 100)
+      end
+
+      def reset_turn
+        self.turn_input_tokens = 0
+        self.turn_output_tokens = 0
+        self.cache_read_tokens = 0
+        self.cache_creation_tokens = 0
+        self.message_sent_at = nil
+        self.first_token_at = nil
+        self.complete_at = nil
+      end
+
+      def format_summary(prefix)
+        parts = [ "#{prefix}:" ]
+        total = total_input_tokens + total_output_tokens
+        parts << "#{total} tokens (turn: in:#{turn_input_tokens} out:#{turn_output_tokens})"
+        pct = context_percent
+        parts << format("%.0f%% context", pct) if pct
+        ttft = time_to_first_token
+        parts << format("TTFT: %.1fs", ttft) if ttft
+        tps = tokens_per_second
+        parts << format("%.0f tok/s", tps) if tps
+        parts << "model=#{model_id}" if model_id
+        parts.join(" | ")
+      end
+    end
+    # rubocop:enable Metrics/BlockLength
+
+    def initialize(session_id: SecureRandom.uuid, permission_config: nil, mode: :new, working_dir: nil)
       @session_id = session_id
+      @options = Options.new(permission_config: permission_config, resume: mode == :resume, working_dir: working_dir)
       @process_state = ProcessState.new
-      @callbacks = Callbacks.new(total_cost: 0.0)
+      @callbacks = Callbacks.new
+      @stats = Stats.new(
+        total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
+        turn_input_tokens: 0, turn_output_tokens: 0,
+        cache_read_tokens: 0, cache_creation_tokens: 0
+      )
       @mutex = Mutex.new
     end
 
+    def stats
+      @stats
+    end
+
     def total_cost
-      @callbacks.total_cost
+      @stats.total_cost
     end
 
     def on_text(&block)
@@ -36,11 +109,13 @@ module Earl
       @callbacks.on_complete = block
     end
 
+    def on_tool_use(&block)
+      @callbacks.on_tool_use = block
+    end
+
     def start
-      stdin, stdout, stderr, wait_thread = Open3.popen3(*cli_args)
-      @process_state = ProcessState.new(
-        process: wait_thread, stdin: stdin, wait_thread: wait_thread
-      )
+      stdin, stdout, stderr, wait_thread = open_process
+      @process_state = ProcessState.new(process: wait_thread, stdin: stdin, wait_thread: wait_thread)
 
       log(:info, "Spawning Claude session #{@session_id} — resume with: claude --resume #{@session_id}")
       spawn_io_threads(stdout, stderr)
@@ -48,6 +123,9 @@ module Earl
 
     def send_message(text)
       return unless alive?
+
+      @stats.reset_turn
+      @stats.message_sent_at = Time.now
 
       payload = JSON.generate({ type: "user", message: { role: "user", content: text } }) + "\n"
       @mutex.synchronize { @process_state.write(payload) }
@@ -74,15 +152,11 @@ module Earl
       @session_id[0..7]
     end
 
-    def cli_args
-      [
-        "claude",
-        "--input-format", "stream-json",
-        "--output-format", "stream-json",
-        "--verbose",
-        "--session-id", @session_id,
-        "--dangerously-skip-permissions"
-      ]
+    def open_process
+      working_dir = @options.working_dir
+      popen_opts = working_dir ? { chdir: working_dir } : {}
+      env = { "TMUX" => nil, "TMUX_PANE" => nil }
+      Open3.popen3(env, *cli_args, **popen_opts)
     end
 
     def join_threads
@@ -114,6 +188,48 @@ module Earl
     rescue IOError
       # Already closed
     end
+
+    # Builds the CLI argument list for spawning the Claude process.
+    module CliArgBuilder
+      private
+
+      def cli_args
+        [ "claude", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+         *session_args, *permission_args ]
+      end
+
+      def session_args
+        @options.resume ? [ "--resume", @session_id ] : [ "--session-id", @session_id ]
+      end
+
+      def permission_args
+        return [ "--dangerously-skip-permissions" ] unless @options.permission_config
+
+        [ "--permission-prompt-tool", "mcp__earl_permissions__permission_prompt",
+         "--mcp-config", mcp_config_path ]
+      end
+
+      def mcp_config_path
+        @mcp_config_path ||= write_mcp_config
+      end
+
+      def write_mcp_config
+        config = {
+          mcpServers: {
+            earl_permissions: {
+              command: File.expand_path("../../bin/earl-permission-server", __dir__),
+              args: [],
+              env: @options.permission_config
+            }
+          }
+        }
+        path = File.join(Dir.tmpdir, "earl-mcp-#{@session_id}.json")
+        File.write(path, JSON.generate(config))
+        path
+      end
+    end
+
+    include CliArgBuilder
 
     # Event/IO processing methods extracted to reduce class method count.
     module EventProcessing
@@ -167,22 +283,103 @@ module Earl
       end
 
       def handle_assistant_event(event)
-        text = extract_text_content(event)
-        @callbacks.on_text&.call(text) unless text.empty?
+        content = event.dig("message", "content")
+        return unless content.is_a?(Array)
+
+        emit_text_content(content)
+        emit_tool_use_blocks(content)
       end
 
-      def extract_text_content(event)
-        content = event.dig("message", "content")
-        return "" unless content.is_a?(Array)
+      def emit_text_content(content)
+        text = content.filter_map { |item| item["text"] if item["type"] == "text" }.join
+        return if text.empty?
 
-        content.select { |block| block["type"] == "text" }.map { |block| block["text"] }.join
+        @stats.first_token_at ||= Time.now
+        @callbacks.on_text&.call(text)
+      end
+
+      def emit_tool_use_blocks(content)
+        content.each do |item|
+          next unless item["type"] == "tool_use"
+
+          @callbacks.on_tool_use&.call(id: item["id"], name: item["name"], input: item["input"])
+        end
       end
 
       def handle_result_event(event)
-        cost = event["total_cost_usd"]
-        @callbacks.total_cost = cost if cost
-        log(:info, "Claude result: cost=$#{cost} subtype=#{event['subtype']}")
+        @stats.complete_at = Time.now
+        update_stats_from_result(event)
+        log(:info, format_result_log)
         @callbacks.on_complete&.call(self)
+      end
+
+      def update_stats_from_result(event)
+        cost = event["total_cost_usd"]
+        @stats.total_cost = cost if cost
+        extract_usage(event["usage"])
+        extract_model_usage(event["modelUsage"])
+      end
+
+      # :reek:FeatureEnvy
+      def extract_usage(usage)
+        return unless usage.is_a?(Hash)
+
+        @stats.turn_input_tokens = usage["input_tokens"] || 0
+        @stats.turn_output_tokens = usage["output_tokens"] || 0
+        @stats.cache_read_tokens = usage["cache_read_input_tokens"] || 0
+        @stats.cache_creation_tokens = usage["cache_creation_input_tokens"] || 0
+      end
+
+      # :reek:FeatureEnvy
+      def extract_model_usage(model_usage)
+        return unless model_usage.is_a?(Hash)
+
+        model_id, data = model_usage.first
+        return unless data.is_a?(Hash)
+
+        @stats.model_id = model_id
+        @stats.total_input_tokens = data["inputTokens"] || 0
+        @stats.total_output_tokens = data["outputTokens"] || 0
+        context = data["contextWindow"]
+        @stats.context_window = context if context
+      end
+
+      def format_result_log
+        parts = [ "Claude result:" ]
+        parts << format_token_counts
+        parts << format_context_usage
+        parts << format_timing
+        parts << format_cost
+        model = @stats.model_id
+        parts << "model=#{model}" if model
+        parts.compact.join(" | ")
+      end
+
+      def format_token_counts
+        turn_in = @stats.turn_input_tokens
+        turn_out = @stats.turn_output_tokens
+        total = @stats.total_input_tokens + @stats.total_output_tokens
+        "#{total} total tokens (turn: in:#{turn_in} out:#{turn_out})"
+      end
+
+      def format_context_usage
+        pct = @stats.context_percent
+        return nil unless pct
+
+        format("%.0f%% context used", pct)
+      end
+
+      def format_timing
+        ttft = @stats.time_to_first_token
+        tps = @stats.tokens_per_second
+        parts = []
+        parts << format("TTFT: %.1fs", ttft) if ttft
+        parts << format("%.0f tok/s", tps) if tps
+        parts.empty? ? nil : parts.join(" ")
+      end
+
+      def format_cost
+        format("cost=$%.4f", @stats.total_cost)
       end
     end
 

@@ -1,0 +1,18 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$stdout.sync = true
+$stderr.sync = true
+
+require "bundler/setup"
+require_relative "../lib/earl"
+
+Earl.logger.level = Logger::WARN
+
+config = Earl::Mcp::Config.new
+api_config = config.to_api_config
+api_client = Earl::Mattermost::ApiClient.new(api_config)
+handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api_client)
+server = Earl::Mcp::Server.new(handler: handler)
+
+server.run

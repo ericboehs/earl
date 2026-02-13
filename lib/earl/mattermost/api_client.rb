@@ -14,12 +14,20 @@ module Earl
         @config = config
       end
 
+      def get(path)
+        execute(Request.new(method_class: Net::HTTP::Get, path: path, body: nil))
+      end
+
       def post(path, body)
         execute(Request.new(method_class: Net::HTTP::Post, path: path, body: body))
       end
 
       def put(path, body)
         execute(Request.new(method_class: Net::HTTP::Put, path: path, body: body))
+      end
+
+      def delete(path)
+        execute(Request.new(method_class: Net::HTTP::Delete, path: path, body: nil))
       end
 
       private
@@ -40,8 +48,10 @@ module Earl
       def build_request(method_class, uri, body)
         req = method_class.new(uri)
         req["Authorization"] = "Bearer #{@config.bot_token}"
-        req["Content-Type"] = "application/json"
-        req.body = JSON.generate(body)
+        if body
+          req["Content-Type"] = "application/json"
+          req.body = JSON.generate(body)
+        end
         req
       end
 

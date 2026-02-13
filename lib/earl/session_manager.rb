@@ -2,22 +2,36 @@
 
 module Earl
   # Thread-safe registry of active Claude sessions, keyed by Mattermost
-  # thread ID, with lazy creation and coordinated shutdown.
+  # thread ID, with lazy creation, coordinated shutdown, and optional persistence.
   class SessionManager
     include Logging
 
-    def initialize
+    def initialize(config: nil, session_store: nil)
+      @config = config
+      @session_store = session_store
       @sessions = {}
       @mutex = Mutex.new
     end
 
-    def get_or_create(thread_id)
+    def get_or_create(thread_id, channel_id: nil, working_dir: nil)
       short_id = thread_id[0..7]
       @mutex.synchronize do
         session = @sessions[thread_id]
         return reuse_session(session, short_id) if session&.alive?
 
-        create_session(thread_id, short_id)
+        create_session(thread_id, short_id, channel_id: channel_id, working_dir: working_dir)
+      end
+    end
+
+    def get(thread_id)
+      @mutex.synchronize { @sessions[thread_id] }
+    end
+
+    def stop_session(thread_id)
+      @mutex.synchronize do
+        session = @sessions.delete(thread_id)
+        session&.kill
+        @session_store&.remove(thread_id)
       end
     end
 
@@ -29,6 +43,28 @@ module Earl
       end
     end
 
+    def touch(thread_id)
+      @session_store&.touch(thread_id)
+    end
+
+    def resume_all
+      return unless @session_store
+
+      @session_store.load.each do |thread_id, persisted|
+        resume_session(thread_id, persisted) unless persisted.is_paused
+      end
+    end
+
+    def pause_all
+      @mutex.synchronize do
+        @sessions.each do |thread_id, session|
+          @session_store&.save(thread_id, build_persisted(session, paused: :paused))
+          session.kill
+        end
+        @sessions.clear
+      end
+    end
+
     private
 
     def reuse_session(session, short_id)
@@ -36,12 +72,54 @@ module Earl
       session
     end
 
-    def create_session(thread_id, short_id)
+    def resume_session(thread_id, persisted)
+      log(:info, "Resuming session for thread #{thread_id[0..7]}")
+      session = ClaudeSession.new(
+        session_id: persisted.claude_session_id,
+        permission_config: build_permission_config(thread_id, persisted.channel_id),
+        mode: :resume,
+        working_dir: persisted.working_dir
+      )
+      session.start
+      @mutex.synchronize { @sessions[thread_id] = session }
+    end
+
+    def create_session(thread_id, short_id, channel_id: nil, working_dir: nil)
       log(:info, "Creating new session for thread #{short_id}")
-      session = ClaudeSession.new
+      session = ClaudeSession.new(
+        permission_config: build_permission_config(thread_id, channel_id),
+        working_dir: working_dir
+      )
       session.start
       @sessions[thread_id] = session
+      @session_store&.save(thread_id, build_persisted(session, channel_id: channel_id, working_dir: working_dir))
       session
+    end
+
+    def build_permission_config(thread_id, channel_id)
+      return nil unless @config && !@config.skip_permissions?
+
+      {
+        "PLATFORM_URL" => @config.mattermost_url,
+        "PLATFORM_TOKEN" => @config.bot_token,
+        "PLATFORM_CHANNEL_ID" => channel_id || @config.channel_id,
+        "PLATFORM_THREAD_ID" => thread_id,
+        "PLATFORM_BOT_ID" => @config.bot_id,
+        "ALLOWED_USERS" => @config.allowed_users.join(",")
+      }
+    end
+
+    def build_persisted(session, channel_id: nil, working_dir: nil, paused: :active)
+      now = Time.now.iso8601
+      SessionStore::PersistedSession.new(
+        claude_session_id: session.session_id,
+        channel_id: channel_id,
+        working_dir: working_dir,
+        started_at: now,
+        last_activity_at: now,
+        is_paused: paused == :paused,
+        message_count: 0
+      )
     end
   end
 end

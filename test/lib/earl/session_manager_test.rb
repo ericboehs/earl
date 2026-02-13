@@ -3,10 +3,29 @@ require "test_helper"
 class Earl::SessionManagerTest < ActiveSupport::TestCase
   setup do
     Earl.logger = Logger.new(File::NULL)
+
+    @original_env = ENV.to_h.slice(
+      "MATTERMOST_URL", "MATTERMOST_BOT_TOKEN", "MATTERMOST_BOT_ID",
+      "EARL_CHANNEL_ID", "EARL_ALLOWED_USERS", "EARL_SKIP_PERMISSIONS"
+    )
+
+    ENV["MATTERMOST_URL"] = "https://mattermost.example.com"
+    ENV["MATTERMOST_BOT_TOKEN"] = "test-token"
+    ENV["MATTERMOST_BOT_ID"] = "bot-123"
+    ENV["EARL_CHANNEL_ID"] = "channel-456"
+    ENV["EARL_ALLOWED_USERS"] = ""
+    ENV["EARL_SKIP_PERMISSIONS"] = "true"
   end
 
   teardown do
     Earl.logger = nil
+    %w[MATTERMOST_URL MATTERMOST_BOT_TOKEN MATTERMOST_BOT_ID EARL_CHANNEL_ID EARL_ALLOWED_USERS EARL_SKIP_PERMISSIONS].each do |key|
+      if @original_env.key?(key)
+        ENV[key] = @original_env[key]
+      else
+        ENV.delete(key)
+      end
+    end
   end
 
   test "get_or_create creates new session for unknown thread" do
@@ -51,6 +70,137 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
     assert_not_same s1, fresh
   end
 
+  test "get returns session for known thread" do
+    manager = Earl::SessionManager.new
+    session = create_with_fake_session(manager, "thread-abc12345", alive: true)
+
+    assert_same session, manager.get("thread-abc12345")
+  end
+
+  test "get returns nil for unknown thread" do
+    manager = Earl::SessionManager.new
+    assert_nil manager.get("thread-unknown123")
+  end
+
+  test "stop_session kills and removes single session" do
+    manager = Earl::SessionManager.new
+    killed = false
+    create_with_fake_session(manager, "thread-abc12345") { killed = true }
+
+    manager.stop_session("thread-abc12345")
+
+    assert killed
+    assert_nil manager.get("thread-abc12345")
+  end
+
+  test "stop_session handles unknown thread gracefully" do
+    manager = Earl::SessionManager.new
+    assert_nothing_raised { manager.stop_session("thread-unknown123") }
+  end
+
+  test "get_or_create with permission config builds permission env" do
+    config = Earl::Config.new
+    manager = Earl::SessionManager.new(config: config)
+
+    session = create_with_fake_session(manager, "thread-abc12345")
+    assert_not_nil session
+  end
+
+  test "pause_all kills all sessions" do
+    manager = Earl::SessionManager.new
+    killed = []
+    create_with_fake_session(manager, "thread-aaa11111") { killed << :a }
+    create_with_fake_session(manager, "thread-bbb22222") { killed << :b }
+
+    manager.pause_all
+
+    assert_equal 2, killed.size
+    assert_nil manager.get("thread-aaa11111")
+  end
+
+  test "touch delegates to session_store" do
+    touched = []
+    mock_store = Object.new
+    mock_store.define_singleton_method(:touch) { |thread_id| touched << thread_id }
+    mock_store.define_singleton_method(:save) { |*_args| }
+
+    manager = Earl::SessionManager.new(session_store: mock_store)
+    manager.touch("thread-abc12345")
+
+    assert_equal [ "thread-abc12345" ], touched
+  end
+
+  test "touch does nothing without session_store" do
+    manager = Earl::SessionManager.new
+    assert_nothing_raised { manager.touch("thread-abc12345") }
+  end
+
+  test "resume_all does nothing without session_store" do
+    manager = Earl::SessionManager.new
+    assert_nothing_raised { manager.resume_all }
+  end
+
+  test "resume_all resumes non-paused sessions from store" do
+    # Create a store with a persisted session
+    store = Object.new
+    loaded_data = {
+      "thread-abc12345" => Earl::SessionStore::PersistedSession.new(
+        claude_session_id: "sess-123",
+        channel_id: "channel-1",
+        working_dir: "/tmp",
+        started_at: Time.now.iso8601,
+        last_activity_at: Time.now.iso8601,
+        is_paused: false,
+        message_count: 0
+      )
+    }
+    store.define_singleton_method(:load) { loaded_data }
+
+    config = Earl::Config.new
+    manager = Earl::SessionManager.new(config: config, session_store: store)
+
+    # Mock ClaudeSession to track creation
+    started = []
+    original_new = Earl::ClaudeSession.method(:new)
+    Earl::ClaudeSession.define_singleton_method(:new) do |**args|
+      session = Object.new
+      session.define_singleton_method(:start) { started << args }
+      session.define_singleton_method(:alive?) { true }
+      session.define_singleton_method(:session_id) { args[:session_id] }
+      session.define_singleton_method(:kill) { }
+      session
+    end
+
+    manager.resume_all
+
+    assert_equal 1, started.size
+    assert_equal "sess-123", started.first[:session_id]
+    assert_equal :resume, started.first[:mode]
+  ensure
+    Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) } if original_new
+  end
+
+  test "resume_all skips paused sessions" do
+    store = Object.new
+    loaded_data = {
+      "thread-paused" => Earl::SessionStore::PersistedSession.new(
+        claude_session_id: "sess-456",
+        channel_id: "channel-1",
+        working_dir: "/tmp",
+        started_at: Time.now.iso8601,
+        last_activity_at: Time.now.iso8601,
+        is_paused: true,
+        message_count: 0
+      )
+    }
+    store.define_singleton_method(:load) { loaded_data }
+
+    manager = Earl::SessionManager.new(session_store: store)
+    manager.resume_all
+
+    assert_nil manager.get("thread-paused")
+  end
+
   private
 
   def create_with_fake_session(manager, thread_id, alive: true, &on_kill)
@@ -74,6 +224,8 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
     session.define_singleton_method(:start) { }
     session.define_singleton_method(:alive?) { alive }
     session.define_singleton_method(:kill) { on_kill&.call }
+    session.define_singleton_method(:session_id) { "fake-session-id" }
+    session.define_singleton_method(:total_cost) { 0.0 }
     session
   end
 end

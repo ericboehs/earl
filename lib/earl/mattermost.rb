@@ -14,11 +14,21 @@ module Earl
       @config = config
       @api = ApiClient.new(config)
       @on_message = nil
+      @on_reaction = nil
+      @channel_ids = Set.new([ config.channel_id ])
       @ws = nil
+    end
+
+    def configure_channels(channel_ids)
+      @channel_ids = channel_ids
     end
 
     def on_message(&block)
       @on_message = block
+    end
+
+    def on_reaction(&block)
+      @on_reaction = block
     end
 
     def connect
@@ -40,6 +50,18 @@ module Earl
       body = { channel_id: channel_id }
       body[:parent_id] = parent_id if parent_id
       @api.post("/users/me/typing", body)
+    end
+
+    def add_reaction(post_id:, emoji_name:)
+      @api.post("/reactions", { user_id: config.bot_id, post_id: post_id, emoji_name: emoji_name })
+    end
+
+    def delete_post(post_id:)
+      @api.delete("/posts/#{post_id}")
+    end
+
+    def get_user(user_id:)
+      parse_post_response(@api.get("/users/#{user_id}"))
     end
 
     private
@@ -104,6 +126,8 @@ module Earl
           log(:info, "Authenticated to Mattermost")
         when "posted"
           handle_posted_event(event)
+        when "reaction_added"
+          handle_reaction_event(event)
         end
       end
 
@@ -121,12 +145,29 @@ module Earl
       deliver_message(event, post) if post
     end
 
+    def handle_reaction_event(event)
+      reaction_data = event.dig("data", "reaction")
+      return unless reaction_data
+
+      reaction = JSON.parse(reaction_data)
+      user_id = reaction["user_id"]
+      return if user_id == config.bot_id
+
+      @on_reaction&.call(
+        user_id: user_id,
+        post_id: reaction["post_id"],
+        emoji_name: reaction["emoji_name"]
+      )
+    rescue JSON::ParserError => error
+      log(:warn, "Failed to parse reaction data: #{error.message}")
+    end
+
     def parse_post_data(event)
       post_data = event.dig("data", "post")
       return unless post_data
 
       post = JSON.parse(post_data)
-      return if post["user_id"] == config.bot_id || post["channel_id"] != config.channel_id
+      return if post["user_id"] == config.bot_id || !@channel_ids.include?(post["channel_id"])
 
       post
     end
@@ -141,7 +182,13 @@ module Earl
       post_id = post["id"]
       root_id = post["root_id"]
       sender = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
-      { sender_name: sender, thread_id: root_id.to_s.empty? ? post_id : root_id, text: post["message"] || "", post_id: post_id }
+      {
+        sender_name: sender,
+        thread_id: root_id.to_s.empty? ? post_id : root_id,
+        text: post["message"] || "",
+        post_id: post_id,
+        channel_id: post["channel_id"]
+      }
     end
 
     def parse_post_response(response)

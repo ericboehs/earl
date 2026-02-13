@@ -4,7 +4,7 @@ class Earl::ConfigTest < ActiveSupport::TestCase
   setup do
     @original_env = ENV.to_h.slice(
       "MATTERMOST_URL", "MATTERMOST_BOT_TOKEN", "MATTERMOST_BOT_ID",
-      "EARL_CHANNEL_ID", "EARL_ALLOWED_USERS"
+      "EARL_CHANNEL_ID", "EARL_ALLOWED_USERS", "EARL_SKIP_PERMISSIONS", "EARL_CHANNELS"
     )
 
     ENV["MATTERMOST_URL"] = "https://mattermost.example.com"
@@ -15,7 +15,7 @@ class Earl::ConfigTest < ActiveSupport::TestCase
   end
 
   teardown do
-    %w[MATTERMOST_URL MATTERMOST_BOT_TOKEN MATTERMOST_BOT_ID EARL_CHANNEL_ID EARL_ALLOWED_USERS].each do |key|
+    %w[MATTERMOST_URL MATTERMOST_BOT_TOKEN MATTERMOST_BOT_ID EARL_CHANNEL_ID EARL_ALLOWED_USERS EARL_SKIP_PERMISSIONS EARL_CHANNELS].each do |key|
       if @original_env.key?(key)
         ENV[key] = @original_env[key]
       else
@@ -85,5 +85,60 @@ class Earl::ConfigTest < ActiveSupport::TestCase
 
     error = assert_raises(RuntimeError) { Earl::Config.new }
     assert_match(/not a valid URL/, error.message)
+  end
+
+  # --- skip_permissions? tests ---
+
+  test "skip_permissions? returns false by default" do
+    ENV.delete("EARL_SKIP_PERMISSIONS")
+    config = Earl::Config.new
+    assert_not config.skip_permissions?
+  end
+
+  test "skip_permissions? returns true when set" do
+    ENV["EARL_SKIP_PERMISSIONS"] = "true"
+    config = Earl::Config.new
+    assert config.skip_permissions?
+  end
+
+  test "skip_permissions? is case insensitive" do
+    ENV["EARL_SKIP_PERMISSIONS"] = "TRUE"
+    config = Earl::Config.new
+    assert config.skip_permissions?
+  end
+
+  test "skip_permissions? returns false for non-true values" do
+    ENV["EARL_SKIP_PERMISSIONS"] = "yes"
+    config = Earl::Config.new
+    assert_not config.skip_permissions?
+  end
+
+  # --- channels tests ---
+
+  test "channels returns default channel with cwd when EARL_CHANNELS not set" do
+    ENV.delete("EARL_CHANNELS")
+    config = Earl::Config.new
+
+    channels = config.channels
+    assert_equal 1, channels.size
+    assert_equal Dir.pwd, channels["channel-789"]
+  end
+
+  test "channels parses EARL_CHANNELS with paths" do
+    ENV["EARL_CHANNELS"] = "ch-1:/tmp/project1,ch-2:/tmp/project2"
+    config = Earl::Config.new
+
+    channels = config.channels
+    assert_equal 2, channels.size
+    assert_equal "/tmp/project1", channels["ch-1"]
+    assert_equal "/tmp/project2", channels["ch-2"]
+  end
+
+  test "channels defaults path to cwd for entries without path" do
+    ENV["EARL_CHANNELS"] = "ch-1"
+    config = Earl::Config.new
+
+    channels = config.channels
+    assert_equal Dir.pwd, channels["ch-1"]
   end
 end
