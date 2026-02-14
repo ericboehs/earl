@@ -390,6 +390,38 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
     assert_equal "bot-123", result["PLATFORM_BOT_ID"]
   end
 
+  test "claude_session_id_for returns active session id" do
+    manager = Earl::SessionManager.new
+    session = create_with_fake_session(manager, "thread-abc12345", alive: true)
+
+    assert_equal "fake-session-id", manager.claude_session_id_for("thread-abc12345")
+  end
+
+  test "claude_session_id_for falls back to session store" do
+    store = Object.new
+    loaded_data = {
+      "thread-abc12345" => Earl::SessionStore::PersistedSession.new(
+        claude_session_id: "stored-sess-456",
+        channel_id: "channel-1",
+        working_dir: "/tmp",
+        started_at: Time.now.iso8601,
+        last_activity_at: Time.now.iso8601,
+        is_paused: true,
+        message_count: 5
+      )
+    }
+    store.define_singleton_method(:load) { loaded_data }
+
+    manager = Earl::SessionManager.new(session_store: store)
+
+    assert_equal "stored-sess-456", manager.claude_session_id_for("thread-abc12345")
+  end
+
+  test "claude_session_id_for returns nil for unknown thread" do
+    manager = Earl::SessionManager.new
+    assert_nil manager.claude_session_id_for("thread-unknown123")
+  end
+
   private
 
   def create_with_fake_session(manager, thread_id, alive: true, &on_kill)

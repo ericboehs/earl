@@ -36,7 +36,7 @@ sleep 3
 OUTPUT=$(tmux capture-pane -t "$SESSION" -p 2>/dev/null)
 
 # Exit Claude cleanly
-tmux send-keys -t "$SESSION" Escape
+tmux send-keys -t "$SESSION" C-u
 sleep 0.5
 tmux send-keys -t "$SESSION" '/exit' Enter
 sleep 1

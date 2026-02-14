@@ -34,6 +34,17 @@ module Earl
       @mutex.synchronize { @sessions[thread_id] }
     end
 
+    # Returns the Claude session ID for a thread, checking active sessions
+    # first, then falling back to the persisted session store.
+    def claude_session_id_for(thread_id)
+      @mutex.synchronize do
+        session = @sessions[thread_id]
+        return session.session_id if session
+
+        @session_store&.load&.dig(thread_id)&.claude_session_id
+      end
+    end
+
     def stop_session(thread_id)
       @mutex.synchronize do
         session = @sessions.delete(thread_id)
