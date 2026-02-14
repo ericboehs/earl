@@ -1,0 +1,6 @@
+heartbeats:
+  no_schedule:
+    description: "Missing schedule"
+    channel_id: "abc123"
+    prompt: "Should not load."
+    enabled: true

@@ -131,10 +131,12 @@ module Earl
         result || deny_result("Timed out waiting for approval")
       end
 
+      # :reek:TooManyStatements
       def connect_websocket
         ws = WebSocket::Client::Simple.connect(@config.websocket_url)
         token = @config.platform_token
-        ws.on(:open) { send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
+        ws_ref = ws
+        ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
         ws
       rescue StandardError => error
         log(:error, "MCP WebSocket connect failed: #{error.message}")

@@ -18,22 +18,29 @@ module Earl
       @session_store = SessionStore.new
       @session_manager = SessionManager.new(config: @config, session_store: @session_store)
       @mattermost = Mattermost.new(@config)
+      @heartbeat_scheduler = HeartbeatScheduler.new(
+        config: @config, session_manager: @session_manager, mattermost: @mattermost
+      )
       @command_executor = CommandExecutor.new(
-        session_manager: @session_manager, mattermost: @mattermost, config: @config
+        session_manager: @session_manager, mattermost: @mattermost, config: @config,
+        heartbeat_scheduler: @heartbeat_scheduler
       )
       @question_handler = QuestionHandler.new(mattermost: @mattermost)
       @app_state = AppState.new(shutting_down: false, message_queue: MessageQueue.new)
+      @question_threads = {} # tool_use_id -> thread_id
       @idle_checker_thread = nil
 
       configure_channels
     end
 
+    # :reek:TooManyStatements
     def start
       setup_signal_handlers
       setup_message_handler
       setup_reaction_handler
       @session_manager.resume_all
       start_idle_checker
+      @heartbeat_scheduler.start
       @mattermost.connect
       log_startup
       sleep 0.5 until @app_state.shutting_down
@@ -65,6 +72,7 @@ module Earl
     def shutdown
       log(:info, "Shutting down...")
       @idle_checker_thread&.kill
+      @heartbeat_scheduler.stop
       @session_manager.pause_all
       log(:info, "Goodbye!")
       exit 0
@@ -126,6 +134,7 @@ module Earl
       end
     end
 
+    # :reek:TooManyStatements
     def process_message(thread_id:, text:, channel_id: nil, sender_name: nil)
       effective_channel = channel_id || @config.channel_id
       working_dir = resolve_working_dir(thread_id, effective_channel)
@@ -141,6 +150,11 @@ module Earl
       setup_callbacks(session, response, thread_id)
       session.send_message(text)
       @session_manager.touch(thread_id)
+    rescue StandardError => error
+      log(:error, "Error processing message for thread #{thread_id[0..7]}: #{error.message}")
+      log(:error, error.backtrace&.first(5)&.join("\n"))
+      # Release the queue claim so future messages aren't permanently stuck
+      @app_state.message_queue.dequeue(thread_id)
     end
 
     def resolve_working_dir(thread_id, channel_id)
@@ -153,12 +167,15 @@ module Earl
       session.on_complete { |_| handle_response_complete(session, response, thread_id) }
       session.on_tool_use do |tool_use|
         response.on_tool_use(tool_use)
-        handle_tool_use(thread_id, tool_use)
+        handle_tool_use(thread_id, tool_use, response.channel_id)
       end
     end
 
-    def handle_tool_use(thread_id, tool_use)
-      @question_handler.handle_tool_use(thread_id: thread_id, tool_use: tool_use)
+    # :reek:FeatureEnvy
+    def handle_tool_use(thread_id, tool_use, channel_id)
+      result = @question_handler.handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: channel_id)
+      tool_use_id = result[:tool_use_id] if result.is_a?(Hash)
+      @question_threads[tool_use_id] = thread_id if tool_use_id
     end
 
     def handle_response_complete(session, response, thread_id)
@@ -190,8 +207,8 @@ module Earl
       process_message(thread_id: thread_id, text: next_text) if next_text
     end
 
-    def find_thread_for_question(_tool_use_id)
-      nil
+    def find_thread_for_question(tool_use_id)
+      @question_threads[tool_use_id]
     end
 
     def format_number(num)
@@ -209,9 +226,9 @@ module Earl
           loop do
             sleep IDLE_CHECK_INTERVAL
             check_idle_sessions
+          rescue StandardError => error
+            log(:error, "Idle checker error: #{error.message}")
           end
-        rescue StandardError => error
-          log(:error, "Idle checker error: #{error.message}")
         end
       end
 

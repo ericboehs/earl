@@ -691,10 +691,84 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     handler = runner.instance_variable_get(:@question_handler)
     handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
-    # find_thread_for_question always returns nil currently
+    # @question_threads is empty, so find_thread_for_question returns nil
     assert_nothing_raised do
       runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
     end
+  end
+
+  test "handle_tool_use stores question_threads mapping for AskUserQuestion" do
+    runner = Earl::Runner.new
+
+    on_tool_use_callback = nil
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_complete) { |&_block| }
+    mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
+    mock_session.define_singleton_method(:send_message) { |_text| }
+
+    mock_manager = build_mock_manager(mock_session)
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      { "id" => "question-post-1" }
+    end
+    mock_mm.define_singleton_method(:add_reaction) { |**_args| }
+
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    sleep 0.05
+
+    on_tool_use_callback.call({
+      id: "tu-99",
+      name: "AskUserQuestion",
+      input: {
+        "questions" => [
+          {
+            "question" => "Which option?",
+            "options" => [
+              { "label" => "A" },
+              { "label" => "B" }
+            ]
+          }
+        ]
+      }
+    })
+
+    # Verify that question_threads was populated
+    question_threads = runner.instance_variable_get(:@question_threads)
+    assert_equal "thread-12345678", question_threads["tu-99"]
+  end
+
+  test "process_message releases queue claim on error" do
+    runner = Earl::Runner.new
+
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| raise "session creation failed" }
+    mock_manager.define_singleton_method(:touch) { |_id| }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+
+    # Claim the thread first
+    queue = runner.instance_variable_get(:@app_state).message_queue
+    queue.try_claim("thread-12345678")
+
+    # process_message should catch the error and release the claim
+    assert_nothing_raised do
+      runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    end
+
+    # Queue claim should be released so a new message can be processed
+    assert queue.try_claim("thread-12345678"), "Queue claim should have been released after error"
+  end
+
+  test "find_thread_for_question returns thread_id for known tool_use_id" do
+    runner = Earl::Runner.new
+    runner.instance_variable_get(:@question_threads)["tu-42"] = "thread-abcd1234"
+    assert_equal "thread-abcd1234", runner.send(:find_thread_for_question, "tu-42")
   end
 
   test "pause_if_idle skips paused sessions" do
@@ -747,8 +821,8 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     handler = runner.instance_variable_get(:@question_handler)
     handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
-    # Override find_thread_for_question to return a thread_id
-    runner.define_singleton_method(:find_thread_for_question) { |_id| "thread-12345678" }
+    # Populate @question_threads to simulate a prior tool_use capture
+    runner.instance_variable_get(:@question_threads)["tu-1"] = "thread-12345678"
 
     sent_messages = []
     mock_session = Object.new
@@ -766,8 +840,8 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     handler = runner.instance_variable_get(:@question_handler)
     handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
-    # Override find_thread_for_question to return a thread_id
-    runner.define_singleton_method(:find_thread_for_question) { |_id| "thread-12345678" }
+    # Populate @question_threads to simulate a prior tool_use capture
+    runner.instance_variable_get(:@question_threads)["tu-1"] = "thread-12345678"
 
     # session_manager.get returns nil
     manager = runner.instance_variable_get(:@session_manager)

@@ -479,6 +479,46 @@ class Earl::StreamingResponseTest < ActiveSupport::TestCase
     assert created_posts.any? { |p| p[:message].include?("Answer here") }
   end
 
+  test "remove_last_text skips update_post when result is empty" do
+    created_posts = []
+    updated_posts = []
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) do |**args|
+      created_posts << args
+      { "id" => "reply-1" }
+    end
+    mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      updated_posts << { post_id: post_id, message: message }
+    end
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    # Only a single text segment (no tool segments)
+    response.on_text("Only text here")
+
+    # Manually inject a tool-like segment so it's multi-segment but tool check fails
+    # Actually, we need a scenario where removing the text leaves segments empty.
+    # Single text, then we manually make it look like multi-segment for finalize:
+    segments = response.instance_variable_get(:@segments)
+    segments.clear
+    segments << "Just text"
+
+    # Make full_text match
+    post_state = response.instance_variable_get(:@post_state)
+    post_state.full_text = "Just text"
+
+    created_posts.clear
+    updated_posts.clear
+
+    # Directly call remove_last_text_from_streamed_post
+    response.send(:remove_last_text_from_streamed_post)
+
+    # After removing the only text segment, full_text is empty
+    # So update_post should NOT be called (the else branch of L157)
+    assert_empty updated_posts
+    assert_equal "", post_state.full_text
+  end
+
   test "on_complete multi-segment with create_failed has no reply_post_id" do
     mock_mm = build_mock_mattermost
     mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No id — failure

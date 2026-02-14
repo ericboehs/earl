@@ -1,0 +1,16 @@
+heartbeats:
+  no_channel:
+    description: "Missing channel_id"
+    schedule:
+      interval: 60
+    prompt: "Hello."
+    enabled: true
+
+  no_prompt:
+    description: "Missing prompt"
+    schedule:
+      interval: 60
+    channel_id: "abc123"
+    enabled: true
+
+  not_a_hash: "just a string"

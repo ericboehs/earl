@@ -1,0 +1,236 @@
+# frozen_string_literal: true
+
+module Earl
+  # Runs heartbeat tasks on cron/interval schedules. Spawns Claude sessions
+  # and posts results to Mattermost channels without waiting for user messages.
+  # :reek:TooManyInstanceVariables :reek:TooManyMethods
+  class HeartbeatScheduler
+    include Logging
+
+    CHECK_INTERVAL = 30 # seconds between scheduler checks
+
+    # Per-heartbeat runtime state.
+    HeartbeatState = Struct.new(
+      :definition, :next_run_at, :running, :run_thread, :last_run_at,
+      :last_completed_at, :last_error, :run_count, :session_id,
+      keyword_init: true
+    )
+
+    def initialize(config:, session_manager:, mattermost:)
+      @config = config
+      @session_manager = session_manager
+      @mattermost = mattermost
+      @heartbeat_config = HeartbeatConfig.new
+      @states = {}
+      @mutex = Mutex.new
+      @scheduler_thread = nil
+    end
+
+    def start
+      definitions = @heartbeat_config.definitions
+      return if definitions.empty?
+
+      initialize_states(definitions)
+      log(:info, "Heartbeat scheduler starting with #{definitions.size} heartbeat(s)")
+
+      @scheduler_thread = Thread.new { scheduler_loop }
+    end
+
+    def stop
+      @scheduler_thread&.kill
+      @scheduler_thread = nil
+
+      @mutex.synchronize do
+        @states.each_value do |state|
+          state.run_thread&.kill
+        end
+      end
+    end
+
+    def status
+      @mutex.synchronize do
+        @states.values.map { |state| build_status(state) }
+      end
+    end
+
+    private
+
+    def initialize_states(definitions)
+      now = Time.now
+      @mutex.synchronize do
+        definitions.each do |definition|
+          @states[definition.name] = HeartbeatState.new(
+            definition: definition,
+            next_run_at: compute_next_run(definition, now),
+            running: false,
+            run_count: 0
+          )
+        end
+      end
+    end
+
+    def scheduler_loop
+      loop do
+        check_and_dispatch
+        sleep CHECK_INTERVAL
+      rescue StandardError => error
+        log(:error, "Heartbeat scheduler error: #{error.message}")
+        log(:error, error.backtrace&.first(5)&.join("\n"))
+      end
+    end
+
+    def check_and_dispatch
+      now = Time.now
+      @mutex.synchronize do
+        @states.each_value do |state|
+          dispatch_heartbeat(state, now) if should_run?(state, now)
+        end
+      end
+    end
+
+    # :reek:DuplicateMethodCall
+    def should_run?(state, now)
+      !state.running && state.next_run_at && now >= state.next_run_at
+    end
+
+    # :reek:FeatureEnvy
+    def dispatch_heartbeat(state, now)
+      state.running = true
+      state.last_run_at = now
+      state.run_thread = Thread.new { execute_heartbeat(state) }
+    end
+
+    # :reek:TooManyStatements :reek:DuplicateMethodCall
+    def execute_heartbeat(state)
+      definition = state.definition
+      log(:info, "Heartbeat '#{definition.name}' starting")
+
+      header_post = create_header_post(definition)
+      return unless header_post
+
+      thread_id = header_post["id"]
+      session = create_heartbeat_session(definition, state)
+      run_session(session, definition, thread_id, state)
+    rescue StandardError => error
+      log(:error, "Heartbeat '#{definition.name}' error: #{error.message}")
+      log(:error, error.backtrace&.first(5)&.join("\n"))
+      @mutex.synchronize { state.last_error = error.message }
+    ensure
+      finalize_heartbeat(state)
+    end
+
+    # :reek:FeatureEnvy
+    def create_header_post(definition)
+      @mattermost.create_post(
+        channel_id: definition.channel_id,
+        message: "🫀 **#{definition.description}**"
+      )
+    end
+
+    # :reek:FeatureEnvy :reek:DuplicateMethodCall
+    def create_heartbeat_session(definition, state)
+      session_opts = {
+        permission_config: permission_config(definition),
+        working_dir: definition.working_dir
+      }
+
+      if definition.persistent && state.session_id
+        session_opts[:session_id] = state.session_id
+        session_opts[:mode] = :resume
+      end
+
+      session = ClaudeSession.new(**session_opts)
+      @mutex.synchronize { state.session_id = session.session_id } if definition.persistent
+      session
+    end
+
+    def permission_config(definition)
+      return nil if definition.permission_mode == :auto
+
+      {
+        "PLATFORM_URL" => @config.mattermost_url,
+        "PLATFORM_TOKEN" => @config.bot_token,
+        "PLATFORM_CHANNEL_ID" => definition.channel_id,
+        "PLATFORM_THREAD_ID" => "",
+        "PLATFORM_BOT_ID" => @config.bot_id,
+        "ALLOWED_USERS" => @config.allowed_users.join(",")
+      }
+    end
+
+    # :reek:LongParameterList :reek:TooManyStatements :reek:FeatureEnvy
+    def run_session(session, definition, thread_id, state)
+      completed = false
+      response = StreamingResponse.new(
+        thread_id: thread_id, mattermost: @mattermost, channel_id: definition.channel_id
+      )
+      response.start_typing
+
+      session.on_text { |text| response.on_text(text) }
+      session.on_complete do |_|
+        response.on_complete
+        completed = true
+      end
+      session.on_tool_use { |tool_use| response.on_tool_use(tool_use) }
+
+      session.start
+      session.send_message(definition.prompt)
+
+      wait_for_completion(session, definition, completed) { completed }
+      log(:info, "Heartbeat '#{definition.name}' completed (run ##{state.run_count + 1})")
+    end
+
+    # :reek:FeatureEnvy :reek:DuplicateMethodCall
+    def wait_for_completion(session, definition, _completed)
+      deadline = Time.now + definition.timeout
+      until yield
+        if Time.now >= deadline
+          log(:warn, "Heartbeat '#{definition.name}' timed out after #{definition.timeout}s")
+          session.kill
+          return
+        end
+        sleep 1
+      end
+    end
+
+    # :reek:FeatureEnvy :reek:DuplicateMethodCall
+    def finalize_heartbeat(state)
+      @mutex.synchronize do
+        state.running = false
+        state.last_completed_at = Time.now
+        state.run_count += 1
+        state.run_thread = nil
+        state.next_run_at = compute_next_run(state.definition, Time.now)
+      end
+    end
+
+    # :reek:DuplicateMethodCall :reek:FeatureEnvy
+    def compute_next_run(definition, from)
+      if definition.cron
+        CronParser.new(definition.cron).next_occurrence(from: from)
+      elsif definition.interval
+        from + definition.interval
+      end
+    end
+
+    # Builds a status hash for a single heartbeat for the !heartbeats command.
+    module StatusFormatting
+      private
+
+      # :reek:FeatureEnvy :reek:DuplicateMethodCall
+      def build_status(state)
+        {
+          name: state.definition.name,
+          description: state.definition.description,
+          next_run_at: state.next_run_at,
+          last_run_at: state.last_run_at,
+          last_completed_at: state.last_completed_at,
+          last_error: state.last_error,
+          run_count: state.run_count,
+          running: state.running
+        }
+      end
+    end
+
+    include StatusFormatting
+  end
+end

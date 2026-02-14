@@ -248,6 +248,147 @@ class Earl::QuestionHandlerTest < ActiveSupport::TestCase
     assert_includes result[:answer_text], "Y"
   end
 
+  test "handle_tool_use passes channel_id to post" do
+    posted = []
+    reactions = []
+    handler = build_handler(posted: posted, reactions: reactions)
+
+    handler.handle_tool_use(
+      thread_id: "thread-1",
+      channel_id: "channel-789",
+      tool_use: {
+        id: "tu-1",
+        name: "AskUserQuestion",
+        input: {
+          "questions" => [
+            {
+              "question" => "Which one?",
+              "options" => [
+                { "label" => "A" },
+                { "label" => "B" }
+              ]
+            }
+          ]
+        }
+      }
+    )
+
+    assert_equal 1, posted.size
+    assert_equal "channel-789", posted.first[:channel_id]
+  end
+
+  test "handle_tool_use returns tool_use_id hash" do
+    handler = build_handler
+    result = handler.handle_tool_use(
+      thread_id: "thread-1",
+      tool_use: {
+        id: "tu-42",
+        name: "AskUserQuestion",
+        input: {
+          "questions" => [
+            {
+              "question" => "Pick?",
+              "options" => [
+                { "label" => "X" },
+                { "label" => "Y" }
+              ]
+            }
+          ]
+        }
+      }
+    )
+
+    assert_equal({ tool_use_id: "tu-42" }, result)
+  end
+
+  test "options without descriptions display without dash" do
+    posted = []
+    handler = build_handler(posted: posted)
+
+    handler.handle_tool_use(
+      thread_id: "thread-1",
+      tool_use: {
+        id: "tu-1",
+        name: "AskUserQuestion",
+        input: {
+          "questions" => [
+            {
+              "question" => "Pick?",
+              "options" => [
+                { "label" => "NoDescript" }
+              ]
+            }
+          ]
+        }
+      }
+    )
+
+    message = posted.first[:message]
+    assert_includes message, "NoDescript"
+    assert_not_includes message, " — "
+  end
+
+  test "options with descriptions include dash separator" do
+    posted = []
+    handler = build_handler(posted: posted)
+
+    handler.handle_tool_use(
+      thread_id: "thread-1",
+      tool_use: {
+        id: "tu-1",
+        name: "AskUserQuestion",
+        input: {
+          "questions" => [
+            {
+              "question" => "Pick?",
+              "options" => [
+                { "label" => "Rails", "description" => "Ruby on Rails" }
+              ]
+            }
+          ]
+        }
+      }
+    )
+
+    message = posted.first[:message]
+    assert_includes message, "Rails — Ruby on Rails"
+  end
+
+  test "delete_question_post handles error gracefully" do
+    posted = []
+    reactions = []
+    handler = build_handler(posted: posted, reactions: reactions)
+
+    # Override delete_post to raise
+    mm = handler.instance_variable_get(:@mattermost)
+    mm.define_singleton_method(:delete_post) { |post_id:| raise "delete failed" }
+
+    handler.handle_tool_use(
+      thread_id: "thread-1",
+      tool_use: {
+        id: "tu-1",
+        name: "AskUserQuestion",
+        input: {
+          "questions" => [
+            {
+              "question" => "Pick?",
+              "options" => [
+                { "label" => "A" },
+                { "label" => "B" }
+              ]
+            }
+          ]
+        }
+      }
+    )
+
+    post_id = posted.last[:post_id]
+    # Should not raise despite delete_post raising
+    assert_nothing_raised do
+      handler.handle_reaction(post_id: post_id, emoji_name: "one")
+    end
+  end
+
   test "handle_tool_use handles create_post returning no id" do
     mock_mm = Object.new
     mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No "id"

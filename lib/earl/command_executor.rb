@@ -17,12 +17,14 @@ module Earl
       | `!compact` | Compact Claude's context |
       | `!cd <path>` | Set working directory for next session |
       | `!permissions auto\\|interactive` | Toggle permission mode |
+      | `!heartbeats` | Show heartbeat schedule status |
     HELP
 
-    def initialize(session_manager:, mattermost:, config:)
+    def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil)
       @session_manager = session_manager
       @mattermost = mattermost
       @config = config
+      @heartbeat_scheduler = heartbeat_scheduler
       @working_dirs = {} # thread_id -> path
       @permission_modes = {} # thread_id -> :auto | :interactive
     end
@@ -38,6 +40,7 @@ module Earl
       when :compact then handle_compact(thread_id)
       when :cd then handle_cd(thread_id, channel_id, arg)
       when :permissions then handle_permissions(thread_id, channel_id, arg)
+      when :heartbeats then handle_heartbeats(thread_id, channel_id)
       end
     end
 
@@ -135,6 +138,56 @@ module Earl
     def handle_permissions(thread_id, channel_id, mode)
       @permission_modes[thread_id] = mode.to_sym
       post_reply(channel_id, thread_id, ":lock: Permission mode set to `#{mode}` for this thread.")
+    end
+
+    def handle_heartbeats(thread_id, channel_id)
+      unless @heartbeat_scheduler
+        post_reply(channel_id, thread_id, "Heartbeat scheduler not configured.")
+        return
+      end
+
+      statuses = @heartbeat_scheduler.status
+      if statuses.empty?
+        post_reply(channel_id, thread_id, "No heartbeats configured.")
+        return
+      end
+
+      post_reply(channel_id, thread_id, format_heartbeats(statuses))
+    end
+
+    # :reek:FeatureEnvy
+    def format_heartbeats(statuses)
+      lines = [
+        "#### 🫀 Heartbeat Status",
+        "| Name | Next Run | Last Run | Runs | Status |",
+        "|------|----------|----------|------|--------|"
+      ]
+      statuses.each { |status| lines << format_heartbeat_row(status) }
+      lines.join("\n")
+    end
+
+    # :reek:FeatureEnvy
+    def format_heartbeat_row(status)
+      next_run = format_time(status[:next_run_at])
+      last_run = format_time(status[:last_run_at])
+      state = heartbeat_status_label(status)
+      "| #{status[:name]} | #{next_run} | #{last_run} | #{status[:run_count]} | #{state} |"
+    end
+
+    def heartbeat_status_label(status)
+      if status[:running]
+        "🟢 Running"
+      elsif status[:last_error]
+        "🔴 Error"
+      else
+        "⚪ Idle"
+      end
+    end
+
+    def format_time(time)
+      return "—" unless time
+
+      time.strftime("%Y-%m-%d %H:%M")
     end
 
     def post_reply(channel_id, thread_id, message)

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**EARL** (Engineering Assistant Relay for LLMs) is a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in `#earl`, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
+**EARL** (Engineering Assistant Relay for LLMs) is a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in configured channels, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
 
 This is a standalone CLI app — the Rails starter template provides Gemfile/test infrastructure but we don't use the web framework.
 
@@ -20,44 +20,84 @@ Requires env vars (see `.envrc`):
 - `MATTERMOST_URL` — Mattermost server URL
 - `MATTERMOST_BOT_TOKEN` — Bot authentication token
 - `MATTERMOST_BOT_ID` — Bot user ID (to ignore own messages)
-- `EARL_CHANNEL_ID` — Channel to listen in
+- `EARL_CHANNEL_ID` — Default channel to listen in
+- `EARL_CHANNELS` — Multi-channel config (JSON: `{"channel_id": "/working/dir", ...}`)
 - `EARL_ALLOWED_USERS` — Comma-separated usernames allowed to interact
+- `EARL_SKIP_PERMISSIONS` — Set to `true` to use `--dangerously-skip-permissions` instead of MCP approval
+
+Optional config files:
+- `~/.config/earl/heartbeats.yml` — Heartbeat schedule definitions
+- `~/.config/earl/memory/` — Persistent memory files (SOUL.md, USER.md, daily notes)
+- `~/.config/earl/sessions.json` — Session persistence store
+- `~/.config/earl/allowed_tools/` — Per-thread tool approval lists
 
 ## Architecture
 
 ```
-bin/earl                     # Entry point
+bin/earl                          # Entry point
+bin/earl-permission-server        # MCP permission server (spawned by Claude)
 lib/
-  earl.rb                    # Module root, requires, shared logger
+  earl.rb                         # Module root, requires, shared logger
   earl/
-    config.rb                # ENV-based configuration
-    mattermost.rb            # WebSocket + REST API client
-    claude_session.rb        # Single Claude CLI process wrapper
-    session_manager.rb       # Maps thread IDs → Claude sessions
-    runner.rb                # Main loop, wires everything together
+    config.rb                     # ENV-based configuration
+    logging.rb                    # Shared logging mixin
+    mattermost.rb                 # WebSocket + REST API client
+    mattermost/api_client.rb      # HTTP client with retry logic
+    claude_session.rb             # Single Claude CLI process wrapper
+    session_manager.rb            # Maps thread IDs -> Claude sessions
+    session_store.rb              # Persists session metadata to disk
+    streaming_response.rb         # Mattermost post lifecycle (create/update/debounce)
+    message_queue.rb              # Per-thread message queuing for busy sessions
+    command_parser.rb             # Parses !commands from message text
+    command_executor.rb           # Executes !help, !stats, !kill, !cd, etc.
+    question_handler.rb           # AskUserQuestion tool -> emoji reaction flow
+    runner.rb                     # Main event loop, wires everything together
+    cron_parser.rb                # Minimal 5-field cron expression parser
+    heartbeat_config.rb           # Loads heartbeat definitions from YAML
+    heartbeat_scheduler.rb        # Runs heartbeat tasks on cron/interval schedules
+    mcp/
+      config.rb                   # MCP server ENV-based config
+      server.rb                   # JSON-RPC 2.0 MCP server over stdio
+      approval_handler.rb         # Permission approval via Mattermost reactions
+      memory_handler.rb           # save_memory / search_memory MCP tools
+    memory/
+      store.rb                    # File I/O for persistent memory (markdown files)
+      prompt_builder.rb           # Builds system prompt from memory store
 ```
 
 ### Message Flow
 
 ```
-User posts in #earl
-  → Mattermost WebSocket 'posted' event
-  → Runner checks allowlist
-  → SessionManager gets/creates ClaudeSession for thread
-  → session.send_message(text) writes JSON to Claude stdin
-  → Claude stdout emits assistant event with response text
-  → on_text callback: POST new reply (or PUT update with debounce)
-  → on_complete callback: final PUT with complete text
-  → User sees threaded reply in Mattermost
+User posts in channel
+  -> Mattermost WebSocket 'posted' event
+  -> Runner checks allowlist
+  -> CommandParser checks for !commands
+     -> If command: CommandExecutor handles it (!help, !stats, !kill, !cd, etc.)
+     -> If message: MessageQueue serializes per-thread
+  -> SessionManager gets/creates ClaudeSession for thread
+     -> Resumes from session store if available
+     -> Builds MCP config for permission approval
+     -> Injects memory context via --append-system-prompt
+  -> session.send_message(text) writes JSON to Claude stdin
+  -> Claude stdout emits events (assistant, result, system)
+     -> on_text: StreamingResponse creates POST or debounced PUT
+     -> on_tool_use: StreamingResponse shows tool icon + detail
+     -> on_tool_use(AskUserQuestion): QuestionHandler posts options, waits for reaction
+     -> on_complete: final PUT with stats footer, process next queued message
+  -> User sees threaded reply in Mattermost
 ```
 
 ### Key Details
 
 - **WebSocket events**: `data.post` is a nested JSON string requiring double-parse
-- **Claude CLI**: spawned with `--input-format stream-json --output-format stream-json --verbose --session-id <uuid> --dangerously-skip-permissions`
+- **Claude CLI**: spawned with `--input-format stream-json --output-format stream-json --verbose`
+- **Permissions**: Default uses `--permission-prompt-tool mcp__earl__permission_prompt --mcp-config <path>` for interactive approval via Mattermost reactions. Set `EARL_SKIP_PERMISSIONS=true` for `--dangerously-skip-permissions`.
 - **Streaming**: first text chunk creates a POST, subsequent chunks do PUT with 300ms debounce
 - **Sessions**: follow-up messages in same thread reuse the same Claude process (same context window)
-- **Shutdown**: SIGINT × 2, then SIGTERM to kill Claude processes
+- **Session persistence**: sessions are saved to `~/.config/earl/sessions.json` and resumed on restart
+- **Shutdown**: SIGINT sends INT to Claude process, waits ~2s, then TERM. Runner calls `pause_all` to persist sessions before exit.
+- **Memory**: Persistent facts stored as markdown in `~/.config/earl/memory/`. Injected into Claude sessions via `--append-system-prompt`. Claude can save/search via MCP tools.
+- **Heartbeats**: Scheduled tasks that spawn Claude sessions on cron/interval, posting results to configured channels.
 
 ## Development Commands
 

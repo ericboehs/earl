@@ -1,0 +1,9 @@
+heartbeats:
+  tilde_beat:
+    description: "Tilde expansion test"
+    schedule:
+      interval: 60
+    channel_id: "abc123"
+    working_dir: "~/Code/ericboehs/earl"
+    prompt: "Test tilde expansion."
+    enabled: true

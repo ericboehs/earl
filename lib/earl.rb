@@ -27,9 +27,12 @@ require_relative "earl/mcp/memory_handler"
 require_relative "earl/mcp/server"
 require_relative "earl/memory/store"
 require_relative "earl/memory/prompt_builder"
+require_relative "earl/cron_parser"
+require_relative "earl/heartbeat_config"
+require_relative "earl/heartbeat_scheduler"
 require_relative "earl/runner"
 
-# Top-level module for EARL (Extensible AI Response Layer), a Mattermost bot
+# Top-level module for EARL (Engineering Assistant Relay for LLMs), a Mattermost bot
 # that bridges team chat with Claude AI sessions for interactive assistance.
 module Earl
   def self.logger

@@ -157,25 +157,18 @@ Give EARL long-term memory that survives across sessions and restarts, so it rem
 - `SOUL.md` — EARL's personality, tone, boundaries (injected as system prompt via `--system-prompt` or prepended to first message)
 - `USER.md` — Eric's preferences, identity, communication style
 
-### Phase 6: Heartbeats + Scheduled Tasks
+### Phase 6: Heartbeats + Scheduled Tasks ✅
 
 Let EARL proactively perform tasks on a schedule without waiting for a message.
 
-**Approach (from OpenClaw):**
-- `HEARTBEAT.md` — Lightweight checklist of recurring tasks
-- `rufus-scheduler` gem (or stdlib `Thread` + sleep loop) for cron-like scheduling
-- Each heartbeat spawns an isolated Claude session (separate from chat sessions)
-- Results posted to a designated Mattermost channel (e.g., `#earl-heartbeat`)
-
-**Example heartbeats:**
-- Morning briefing: summarize calendar, unread messages, open PRs
-- CI watcher: check GitHub Actions status for active branches
-- Reminder follow-ups: "you said you'd do X by Friday"
-
-**New files:**
-- `lib/earl/scheduler.rb` — Cron-like task runner
-- `lib/earl/heartbeat_session.rb` — Isolated Claude session for scheduled tasks
-- `~/.config/earl/heartbeat.yml` — Schedule configuration
+- `~/.config/earl/heartbeats.yml` — YAML-based heartbeat configuration (cron or interval schedule)
+- `CronParser` — Minimal 5-field cron parser (supports *, values, ranges, steps, lists)
+- `HeartbeatConfig` — Loads and validates heartbeat definitions from YAML
+- `HeartbeatScheduler` — Core scheduler with per-heartbeat threads, overlap protection, timeout handling
+- Header post in channel with Claude response as threaded reply
+- `!heartbeats` command to show status table
+- Persistent sessions (reuse Claude session across runs) or fresh sessions per run
+- Permission mode support (auto or interactive per heartbeat)
 
 ### Phase 7: Multi-Platform (Slack, Discord, etc.)
 
@@ -235,7 +228,7 @@ Smart context window management for long-running sessions.
 | 3 | Questions + Commands | AskUserQuestion + `!` commands | Phase 2 |
 | 4 | Persistence + Multi-Channel | Session resume, `#earl-*` channels | Phase 1 |
 | 5 | Memory | Long-term memory across sessions | Phase 2 |
-| 6 | Heartbeats | Scheduled autonomous tasks | Phase 5 |
+| 6 ✅ | Heartbeats | Scheduled autonomous tasks | Phase 5 |
 | 7 | Multi-Platform | Slack/Discord adapters | Phase 4 |
 | 8 | Skills | Self-authoring tool plugins | Phase 5 |
 | 9 | Multi-Agent | Agent routing + personalities | Phase 5, 7 |
@@ -248,7 +241,7 @@ Smart context window management for long-running sessions.
 3. Claude asks a question → numbered emojis → select answer → Claude continues
 4. Restart EARL → sessions resume where they left off
 5. "Remember that I prefer dark mode" → saved to memory → recalled next session
-6. 8am every morning → EARL posts a briefing to `#earl-heartbeat`
+6. ✅ Heartbeats: EARL posts scheduled tasks to configured channel on cron/interval
 7. Post in Slack → EARL responds, same memory as Mattermost
 8. "Create a skill for checking CI" → skill file created → usable next session
 9. `@research what is OpenClaw` → routes to research agent with web tools

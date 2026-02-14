@@ -331,6 +331,65 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
     Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) } if original_new
   end
 
+  test "stop_session calls remove on session_store when present" do
+    removed = []
+    mock_store = Object.new
+    mock_store.define_singleton_method(:remove) { |thread_id| removed << thread_id }
+    mock_store.define_singleton_method(:save) { |*_args| }
+    mock_store.define_singleton_method(:load) { {} }
+
+    manager = Earl::SessionManager.new(session_store: mock_store)
+    killed = false
+    session = fake_session { killed = true }
+
+    original_new = Earl::ClaudeSession.method(:new)
+    Earl::ClaudeSession.define_singleton_method(:new) { |**_args| session }
+    manager.get_or_create("thread-abc12345")
+    Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) }
+
+    manager.stop_session("thread-abc12345")
+
+    assert killed
+    assert_equal [ "thread-abc12345" ], removed
+  end
+
+  test "pause_all saves paused state to session_store" do
+    saved = []
+    mock_store = Object.new
+    mock_store.define_singleton_method(:save) { |thread_id, persisted| saved << { thread_id: thread_id, paused: persisted.is_paused } }
+    mock_store.define_singleton_method(:load) { {} }
+
+    manager = Earl::SessionManager.new(session_store: mock_store)
+
+    session = fake_session
+    original_new = Earl::ClaudeSession.method(:new)
+    Earl::ClaudeSession.define_singleton_method(:new) { |**_args| session }
+    manager.get_or_create("thread-abc12345")
+    Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) }
+
+    saved.clear
+    manager.pause_all
+
+    assert_equal 1, saved.size
+    assert_equal "thread-abc12345", saved.first[:thread_id]
+    assert saved.first[:paused], "Expected session to be saved as paused"
+  end
+
+  test "build_permission_config returns config hash when skip_permissions is false" do
+    ENV["EARL_SKIP_PERMISSIONS"] = nil
+    ENV.delete("EARL_SKIP_PERMISSIONS")
+    config = Earl::Config.new
+    manager = Earl::SessionManager.new(config: config)
+
+    result = manager.send(:build_permission_config, "thread-123", "channel-456")
+    assert_not_nil result
+    assert_equal "https://mattermost.example.com", result["PLATFORM_URL"]
+    assert_equal "test-token", result["PLATFORM_TOKEN"]
+    assert_equal "channel-456", result["PLATFORM_CHANNEL_ID"]
+    assert_equal "thread-123", result["PLATFORM_THREAD_ID"]
+    assert_equal "bot-123", result["PLATFORM_BOT_ID"]
+  end
+
   private
 
   def create_with_fake_session(manager, thread_id, alive: true, &on_kill)

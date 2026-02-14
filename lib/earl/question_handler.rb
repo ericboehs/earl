@@ -10,7 +10,7 @@ module Earl
     EMOJI_MAP = { "one" => 0, "two" => 1, "three" => 2, "four" => 3 }.freeze
 
     QuestionState = Struct.new(:tool_use_id, :questions, :answers, :current_index,
-                               :current_post_id, :thread_id, keyword_init: true)
+                               :current_post_id, :thread_id, :channel_id, keyword_init: true)
 
     def initialize(mattermost:)
       @mattermost = mattermost
@@ -18,7 +18,7 @@ module Earl
       @mutex = Mutex.new
     end
 
-    def handle_tool_use(thread_id:, tool_use:)
+    def handle_tool_use(thread_id:, tool_use:, channel_id: nil)
       return nil unless tool_use[:name] == "AskUserQuestion"
 
       input = tool_use[:input]
@@ -30,10 +30,12 @@ module Earl
         questions: questions,
         answers: {},
         current_index: 0,
-        thread_id: thread_id
+        thread_id: thread_id,
+        channel_id: channel_id
       )
 
       post_current_question(state)
+      { tool_use_id: state.tool_use_id }
     end
 
     def handle_reaction(post_id:, emoji_name:)
@@ -63,6 +65,7 @@ module Earl
 
     private
 
+    # :reek:FeatureEnvy
     def post_current_question(state)
       question = state.questions[state.current_index]
       options = question["options"] || []
@@ -76,7 +79,7 @@ module Earl
       end
 
       result = @mattermost.create_post(
-        channel_id: nil, # Will be set from thread context
+        channel_id: state.channel_id,
         message: lines.join("\n"),
         root_id: state.thread_id
       )

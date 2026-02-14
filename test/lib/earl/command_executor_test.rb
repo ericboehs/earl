@@ -194,6 +194,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
     # Stub Process.kill to avoid actually sending signals
     killed = []
+    original_kill = Process.method(:kill)
     Process.define_singleton_method(:kill) do |signal, pid|
       killed << { signal: signal, pid: pid }
     end
@@ -204,10 +205,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_equal [ { signal: "INT", pid: 99999 } ], killed
     assert_includes posted.first[:message], "SIGINT"
   ensure
-    # Restore original Process.kill
-    class << Process
-      remove_method :kill
-    end
+    Process.define_singleton_method(:kill) { |*args| original_kill.call(*args) } if original_kill
   end
 
   test "!escape reports no session when none active" do
@@ -229,6 +227,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     executor = build_executor(posted: posted, session: mock_session, stopped: stopped)
 
     killed = []
+    original_kill = Process.method(:kill)
     Process.define_singleton_method(:kill) do |signal, pid|
       killed << { signal: signal, pid: pid }
     end
@@ -240,9 +239,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_equal [ "thread-1" ], stopped
     assert_includes posted.first[:message], "force killed"
   ensure
-    class << Process
-      remove_method :kill
-    end
+    Process.define_singleton_method(:kill) { |*args| original_kill.call(*args) } if original_kill
   end
 
   test "!kill reports no session when none active" do
@@ -277,9 +274,103 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_empty posted
   end
 
+  test "!heartbeats posts status table with heartbeats" do
+    posted = []
+    mock_scheduler = Object.new
+    mock_scheduler.define_singleton_method(:status) do
+      [
+        { name: "morning_briefing", description: "Morning briefing", next_run_at: Time.new(2026, 2, 14, 9, 0, 0),
+          last_run_at: Time.new(2026, 2, 13, 9, 0, 0), run_count: 5, running: false, last_error: nil }
+      ]
+    end
+
+    executor = build_executor(posted: posted, heartbeat_scheduler: mock_scheduler)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :heartbeats, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, posted.size
+    message = posted.first[:message]
+    assert_includes message, "Heartbeat Status"
+    assert_includes message, "morning_briefing"
+    assert_includes message, "2026-02-14 09:00"
+    assert_includes message, "2026-02-13 09:00"
+    assert_includes message, "5"
+    assert_includes message, "Idle"
+  end
+
+  test "!heartbeats shows running status" do
+    posted = []
+    mock_scheduler = Object.new
+    mock_scheduler.define_singleton_method(:status) do
+      [
+        { name: "active_beat", description: "Active", next_run_at: nil,
+          last_run_at: Time.now, run_count: 1, running: true, last_error: nil }
+      ]
+    end
+
+    executor = build_executor(posted: posted, heartbeat_scheduler: mock_scheduler)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :heartbeats, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Running"
+  end
+
+  test "!heartbeats shows error status" do
+    posted = []
+    mock_scheduler = Object.new
+    mock_scheduler.define_singleton_method(:status) do
+      [
+        { name: "broken_beat", description: "Broken", next_run_at: Time.now + 3600,
+          last_run_at: Time.now - 3600, run_count: 3, running: false, last_error: "timeout" }
+      ]
+    end
+
+    executor = build_executor(posted: posted, heartbeat_scheduler: mock_scheduler)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :heartbeats, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Error"
+  end
+
+  test "!heartbeats reports no heartbeats configured" do
+    posted = []
+    mock_scheduler = Object.new
+    mock_scheduler.define_singleton_method(:status) { [] }
+
+    executor = build_executor(posted: posted, heartbeat_scheduler: mock_scheduler)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :heartbeats, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "No heartbeats configured"
+  end
+
+  test "!heartbeats reports scheduler not configured" do
+    posted = []
+    executor = build_executor(posted: posted, heartbeat_scheduler: nil)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :heartbeats, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "not configured"
+  end
+
+  test "!help includes heartbeats command" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :help, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "!heartbeats"
+  end
+
   private
 
-  def build_executor(posted: [], session: nil, stopped: [])
+  def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set)
     config = Earl::Config.new
 
     mock_manager = Object.new
@@ -294,10 +385,13 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
       { "id" => "reply-1" }
     end
 
-    Earl::CommandExecutor.new(
+    opts = {
       session_manager: mock_manager,
       mattermost: mock_mm,
       config: config
-    )
+    }
+    opts[:heartbeat_scheduler] = heartbeat_scheduler unless heartbeat_scheduler == :not_set
+
+    Earl::CommandExecutor.new(**opts)
   end
 end

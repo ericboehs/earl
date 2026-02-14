@@ -128,7 +128,10 @@ module Earl
     end
 
     def send_message(text)
-      return unless alive?
+      unless alive?
+        log(:warn, "Cannot send message to dead session #{short_id} — process not running")
+        return
+      end
 
       @stats.reset_turn
       @stats.message_sent_at = Time.now
@@ -238,6 +241,7 @@ module Earl
         }
         path = File.join(Dir.tmpdir, "earl-mcp-#{@session_id}.json")
         File.write(path, JSON.generate(config))
+        File.chmod(0o600, path)
         path
       end
     end
