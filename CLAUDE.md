@@ -54,12 +54,13 @@ lib/
     runner.rb                     # Main event loop, wires everything together
     cron_parser.rb                # Minimal 5-field cron expression parser
     heartbeat_config.rb           # Loads heartbeat definitions from YAML
-    heartbeat_scheduler.rb        # Runs heartbeat tasks on cron/interval schedules
+    heartbeat_scheduler.rb        # Runs heartbeat tasks on cron/interval/one-shot schedules; auto-reloads config
     mcp/
       config.rb                   # MCP server ENV-based config
       server.rb                   # JSON-RPC 2.0 MCP server over stdio
       approval_handler.rb         # Permission approval via Mattermost reactions
       memory_handler.rb           # save_memory / search_memory MCP tools
+      heartbeat_handler.rb        # manage_heartbeat MCP tool (CRUD heartbeat schedules)
     memory/
       store.rb                    # File I/O for persistent memory (markdown files)
       prompt_builder.rb           # Builds system prompt from memory store
@@ -97,7 +98,7 @@ User posts in channel
 - **Session persistence**: sessions are saved to `~/.config/earl/sessions.json` and resumed on restart
 - **Shutdown**: SIGINT sends INT to Claude process, waits ~2s, then TERM. Runner calls `pause_all` to persist sessions before exit.
 - **Memory**: Persistent facts stored as markdown in `~/.config/earl/memory/`. Injected into Claude sessions via `--append-system-prompt`. Claude can save/search via MCP tools.
-- **Heartbeats**: Scheduled tasks that spawn Claude sessions on cron/interval, posting results to configured channels.
+- **Heartbeats**: Scheduled tasks (cron/interval/one-shot via `run_at`) that spawn Claude sessions, posting results to configured channels. One-off tasks (`once: true`) auto-disable after execution. Config auto-reloads on file change. Claude can manage schedules via the `manage_heartbeat` MCP tool.
 
 ## Development Commands
 

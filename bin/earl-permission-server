@@ -18,7 +18,10 @@ approval_handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: ap
 memory_handler = Earl::Mcp::MemoryHandler.new(
   store: store, username: ENV["EARL_CURRENT_USERNAME"]
 )
+heartbeat_handler = Earl::Mcp::HeartbeatHandler.new(
+  default_channel_id: ENV["PLATFORM_CHANNEL_ID"]
+)
 
-server = Earl::Mcp::Server.new(handlers: [approval_handler, memory_handler])
+server = Earl::Mcp::Server.new(handlers: [ approval_handler, memory_handler, heartbeat_handler ])
 
 server.run

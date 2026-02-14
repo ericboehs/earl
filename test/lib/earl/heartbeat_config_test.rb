@@ -103,4 +103,43 @@ class Earl::HeartbeatConfigTest < ActiveSupport::TestCase
     config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "bad_structure.yml"))
     assert_equal [], config.definitions
   end
+
+  test "reads once field correctly" do
+    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
+    defs = config.definitions
+
+    scheduled = defs.find { |d| d.name == "scheduled_reminder" }
+    assert scheduled.once
+    assert_equal 1_739_559_600, scheduled.run_at
+
+    recurring = defs.find { |d| d.name == "recurring_without_once" }
+    assert_not recurring.once
+  end
+
+  test "run_at schedule is valid" do
+    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
+    defs = config.definitions
+
+    names = defs.map(&:name)
+    assert_includes names, "scheduled_reminder"
+    assert_includes names, "immediate_task"
+  end
+
+  test "definition with only run_at schedule loads" do
+    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
+    scheduled = config.definitions.find { |d| d.name == "scheduled_reminder" }
+
+    assert_not_nil scheduled
+    assert_nil scheduled.cron
+    assert_nil scheduled.interval
+    assert_equal 1_739_559_600, scheduled.run_at
+  end
+
+  test "defaults once to false" do
+    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "valid.yml"))
+    defs = config.definitions
+    defs.each do |d|
+      assert_equal false, d.once
+    end
+  end
 end

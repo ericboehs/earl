@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 module Earl
-  # Runs heartbeat tasks on cron/interval schedules. Spawns Claude sessions
+  # Runs heartbeat tasks on cron/interval/one-shot schedules. Spawns Claude sessions
   # and posts results to Mattermost channels without waiting for user messages.
+  # Auto-reloads config when the YAML file changes. One-off tasks (once: true)
+  # are disabled in YAML after execution.
   # :reek:TooManyInstanceVariables :reek:TooManyMethods
   class HeartbeatScheduler
     include Logging
@@ -16,22 +18,26 @@ module Earl
       keyword_init: true
     )
 
+    # :reek:TooManyStatements
     def initialize(config:, session_manager:, mattermost:)
       @config = config
       @session_manager = session_manager
       @mattermost = mattermost
       @heartbeat_config = HeartbeatConfig.new
+      @heartbeat_config_path = @heartbeat_config.path
       @states = {}
       @mutex = Mutex.new
       @scheduler_thread = nil
+      @config_mtime = nil
     end
 
     def start
       definitions = @heartbeat_config.definitions
-      return if definitions.empty?
+      initialize_states(definitions) unless definitions.empty?
+      @config_mtime = config_file_mtime
 
-      initialize_states(definitions)
-      log(:info, "Heartbeat scheduler starting with #{definitions.size} heartbeat(s)")
+      count = definitions.size
+      log(:info, "Heartbeat scheduler starting with #{count} heartbeat(s)")
 
       @scheduler_thread = Thread.new { scheduler_loop }
     end
@@ -71,6 +77,7 @@ module Earl
 
     def scheduler_loop
       loop do
+        check_for_reload
         check_and_dispatch
         sleep CHECK_INTERVAL
       rescue StandardError => error
@@ -199,17 +206,99 @@ module Earl
         state.last_completed_at = Time.now
         state.run_count += 1
         state.run_thread = nil
-        state.next_run_at = compute_next_run(state.definition, Time.now)
+
+        if state.definition.once
+          state.next_run_at = nil
+          disable_heartbeat(state.definition.name)
+        else
+          state.next_run_at = compute_next_run(state.definition, Time.now)
+        end
       end
     end
 
     # :reek:DuplicateMethodCall :reek:FeatureEnvy
     def compute_next_run(definition, from)
-      if definition.cron
+      if definition.run_at
+        target = Time.at(definition.run_at)
+        target > from ? target : from
+      elsif definition.cron
         CronParser.new(definition.cron).next_occurrence(from: from)
       elsif definition.interval
         from + definition.interval
       end
+    end
+
+    # :reek:TooManyStatements
+    def disable_heartbeat(name)
+      path = @heartbeat_config_path
+      return unless File.exist?(path)
+
+      data = YAML.safe_load_file(path)
+      return unless data.is_a?(Hash) && data.dig("heartbeats", name).is_a?(Hash)
+
+      data["heartbeats"][name]["enabled"] = false
+      File.write(path, YAML.dump(data))
+      log(:info, "One-off heartbeat '#{name}' disabled in YAML")
+    rescue StandardError => error
+      log(:warn, "Failed to disable heartbeat '#{name}': #{error.message}")
+    end
+
+    # --- Auto-reload ---
+
+    def check_for_reload
+      mtime = config_file_mtime
+      return if mtime == @config_mtime
+
+      @config_mtime = mtime
+      reload_definitions
+    end
+
+    # :reek:TooManyStatements :reek:DuplicateMethodCall
+    def reload_definitions
+      new_defs = @heartbeat_config.definitions
+      now = Time.now
+      new_names = new_defs.map(&:name)
+
+      @mutex.synchronize do
+        # Add new heartbeats
+        new_defs.each do |definition|
+          unless @states.key?(definition.name)
+            @states[definition.name] = HeartbeatState.new(
+              definition: definition,
+              next_run_at: compute_next_run(definition, now),
+              running: false,
+              run_count: 0
+            )
+            log(:info, "Heartbeat reload: added '#{definition.name}'")
+          end
+        end
+
+        # Remove deleted heartbeats (skip running ones)
+        @states.each_key do |name|
+          next if new_names.include?(name)
+          next if @states[name].running
+
+          @states.delete(name)
+          log(:info, "Heartbeat reload: removed '#{name}'")
+        end
+
+        # Update definitions for existing non-running heartbeats
+        new_defs.each do |definition|
+          state = @states[definition.name]
+          next unless state
+          next if state.running
+
+          state.definition = definition
+        end
+      end
+
+      log(:info, "Heartbeat config reloaded: #{new_defs.size} definition(s)")
+    end
+
+    def config_file_mtime
+      File.mtime(@heartbeat_config_path)
+    rescue Errno::ENOENT
+      nil
     end
 
     # Builds a status hash for a single heartbeat for the !heartbeats command.

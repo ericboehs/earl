@@ -9,10 +9,12 @@ module Earl
 
     CONFIG_PATH = File.expand_path("~/.config/earl/heartbeats.yml")
 
+    attr_reader :path
+
     # A single heartbeat definition with schedule, prompt, and execution options.
     HeartbeatDefinition = Struct.new(
-      :name, :description, :cron, :interval, :channel_id, :working_dir,
-      :prompt, :permission_mode, :persistent, :timeout, :enabled,
+      :name, :description, :cron, :interval, :run_at, :channel_id, :working_dir,
+      :prompt, :permission_mode, :persistent, :timeout, :enabled, :once,
       keyword_init: true
     )
 
@@ -49,13 +51,15 @@ module Earl
         description: config["description"] || name,
         cron: config.dig("schedule", "cron"),
         interval: config.dig("schedule", "interval"),
+        run_at: config.dig("schedule", "run_at"),
         channel_id: config["channel_id"],
         working_dir: resolve_working_dir(config["working_dir"]),
         prompt: config["prompt"],
         permission_mode: (config["permission_mode"] || "interactive").to_sym,
         persistent: config.fetch("persistent", false),
         timeout: config.fetch("timeout", 600),
-        enabled: config.fetch("enabled", true)
+        enabled: config.fetch("enabled", true),
+        once: config.fetch("once", false)
       )
 
       return nil unless definition.enabled
@@ -68,7 +72,7 @@ module Earl
       schedule = config["schedule"]
       return false unless schedule.is_a?(Hash)
 
-      schedule.key?("cron") || schedule.key?("interval")
+      schedule.key?("cron") || schedule.key?("interval") || schedule.key?("run_at")
     end
 
     def resolve_working_dir(path)
