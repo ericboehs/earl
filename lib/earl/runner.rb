@@ -73,7 +73,8 @@ module Earl
     def setup_message_handler
       @mattermost.on_message do |sender_name:, thread_id:, text:, post_id:, channel_id:|
         if allowed_user?(sender_name)
-          handle_incoming_message(thread_id: thread_id, text: text, channel_id: channel_id)
+          handle_incoming_message(thread_id: thread_id, text: text, channel_id: channel_id,
+                                 sender_name: sender_name)
         end
       end
     end
@@ -95,12 +96,12 @@ module Earl
       session&.send_message(result[:answer_text])
     end
 
-    def handle_incoming_message(thread_id:, text:, channel_id:)
+    def handle_incoming_message(thread_id:, text:, channel_id:, sender_name: nil)
       if CommandParser.command?(text)
         command = CommandParser.parse(text)
         @command_executor.execute(command, thread_id: thread_id, channel_id: channel_id) if command
       else
-        enqueue_message(thread_id: thread_id, text: text, channel_id: channel_id)
+        enqueue_message(thread_id: thread_id, text: text, channel_id: channel_id, sender_name: sender_name)
       end
     end
 
@@ -116,20 +117,22 @@ module Earl
       true
     end
 
-    def enqueue_message(thread_id:, text:, channel_id: nil)
+    def enqueue_message(thread_id:, text:, channel_id: nil, sender_name: nil)
       queue = @app_state.message_queue
       if queue.try_claim(thread_id)
-        process_message(thread_id: thread_id, text: text, channel_id: channel_id)
+        process_message(thread_id: thread_id, text: text, channel_id: channel_id, sender_name: sender_name)
       else
         queue.enqueue(thread_id, text)
       end
     end
 
-    def process_message(thread_id:, text:, channel_id: nil)
+    def process_message(thread_id:, text:, channel_id: nil, sender_name: nil)
       effective_channel = channel_id || @config.channel_id
       working_dir = resolve_working_dir(thread_id, effective_channel)
 
-      session = @session_manager.get_or_create(thread_id, channel_id: effective_channel, working_dir: working_dir)
+      session = @session_manager.get_or_create(
+        thread_id, channel_id: effective_channel, working_dir: working_dir, username: sender_name
+      )
       response = StreamingResponse.new(
         thread_id: thread_id, mattermost: @mattermost, channel_id: effective_channel
       )

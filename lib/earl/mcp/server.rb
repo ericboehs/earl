@@ -2,15 +2,16 @@
 
 module Earl
   module Mcp
-    # Minimal JSON-RPC 2.0 server over stdio for the Claude CLI --permission-prompt-tool.
-    # Handles initialize, notifications/initialized, tools/list, and tools/call.
+    # Minimal JSON-RPC 2.0 server over stdio for the Claude CLI MCP integration.
+    # Routes tools/list and tools/call to registered handlers via duck-typed interface:
+    #   #tool_definitions → Array of tool hashes
+    #   #handles?(tool_name) → Boolean
+    #   #call(tool_name, arguments) → result hash
     class Server
       include Logging
 
-      TOOL_NAME = "permission_prompt"
-
-      def initialize(handler:, input: $stdin, output: $stdout)
-        @handler = handler
+      def initialize(handlers:, input: $stdin, output: $stdout)
+        @handlers = Array(handlers)
         @input = input
         @output = output
         @output.sync = true
@@ -60,7 +61,7 @@ module Earl
           result: {
             protocolVersion: "2024-11-05",
             capabilities: { tools: {} },
-            serverInfo: { name: "earl-permission-server", version: "1.0.0" }
+            serverInfo: { name: "earl-mcp-server", version: "1.0.0" }
           }
         }
       end
@@ -70,38 +71,28 @@ module Earl
           jsonrpc: "2.0",
           id: id,
           result: {
-            tools: [
-              {
-                name: TOOL_NAME,
-                description: "Request permission to execute a tool",
-                inputSchema: {
-                  type: "object",
-                  properties: {
-                    tool_name: { type: "string", description: "Name of the tool requesting permission" },
-                    input: { type: "object", description: "The tool's input parameters" }
-                  },
-                  required: %w[tool_name input]
-                }
-              }
-            ]
+            tools: @handlers.flat_map(&:tool_definitions)
           }
         }
       end
 
       def tools_call_response(id, params)
-        tool_name = params&.dig("arguments", "tool_name") || params&.dig("tool_name") || "unknown"
-        input = params&.dig("arguments", "input") || params&.dig("input") || {}
+        tool_name = params&.dig("name") || params&.dig("arguments", "tool_name") || "unknown"
+        arguments = params&.dig("arguments") || {}
 
-        log(:info, "MCP permission_prompt called for tool: #{tool_name}")
-        result = @handler.handle(tool_name: tool_name, input: input)
-        log(:info, "MCP permission result: #{result[:behavior]} for #{tool_name}")
+        handler = @handlers.find { |candidate| candidate.handles?(tool_name) }
+        unless handler
+          return error_response(id, -32602, "No handler for tool: #{tool_name}")
+        end
+
+        log(:info, "MCP tool call: #{tool_name}")
+        result = handler.call(tool_name, arguments)
+        log(:info, "MCP tool result for #{tool_name}: #{result.inspect[0..200]}")
 
         {
           jsonrpc: "2.0",
           id: id,
-          result: {
-            content: [ { type: "text", text: JSON.generate(result) } ]
-          }
+          result: result
         }
       rescue StandardError => error
         log(:error, "MCP tool call error: #{error.class}: #{error.message}")

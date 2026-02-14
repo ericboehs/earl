@@ -256,6 +256,42 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     assert handler.send(:allowed_reactor?, "any-user-id")
   end
 
+  # --- Handler interface tests ---
+
+  test "tool_definitions returns permission_prompt tool" do
+    handler = build_handler
+    defs = handler.tool_definitions
+
+    assert_equal 1, defs.size
+    assert_equal "permission_prompt", defs.first[:name]
+    assert defs.first.key?(:inputSchema)
+  end
+
+  test "handles? returns true for permission_prompt" do
+    handler = build_handler
+    assert handler.handles?("permission_prompt")
+  end
+
+  test "handles? returns false for other tools" do
+    handler = build_handler
+    assert_not handler.handles?("save_memory")
+    assert_not handler.handles?("Bash")
+  end
+
+  test "call delegates to handle and wraps result in MCP content format" do
+    handler = build_handler
+    handler.instance_variable_get(:@allowed_tools).add("Bash")
+
+    result = handler.call("permission_prompt", { "tool_name" => "Bash", "input" => { "command" => "ls" } })
+
+    assert result.key?(:content)
+    assert_equal 1, result[:content].size
+    assert_equal "text", result[:content].first[:type]
+
+    parsed = JSON.parse(result[:content].first[:text])
+    assert_equal "allow", parsed["behavior"]
+  end
+
   test "multiple tools can be independently allowed" do
     handler = build_handler
     handler.send(:process_reaction, "white_check_mark", "Bash", { "command" => "ls" })

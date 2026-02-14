@@ -16,12 +16,47 @@ module Earl
       REACTION_EMOJIS = %w[+1 white_check_mark -1].freeze
       ALLOWED_TOOLS_DIR = File.expand_path("~/.config/earl/allowed_tools")
 
+      TOOL_NAME = "permission_prompt"
+
       def initialize(config:, api_client:)
         @config = config
         @api = api_client
         @allowed_tools = load_allowed_tools
         @mutex = Mutex.new
       end
+
+      # --- Handler interface for Server multi-handler routing ---
+
+      def tool_definitions
+        [
+          {
+            name: TOOL_NAME,
+            description: "Request permission to execute a tool",
+            inputSchema: {
+              type: "object",
+              properties: {
+                tool_name: { type: "string", description: "Name of the tool requesting permission" },
+                input: { type: "object", description: "The tool's input parameters" }
+              },
+              required: %w[tool_name input]
+            }
+          }
+        ]
+      end
+
+      def handles?(name)
+        name == TOOL_NAME
+      end
+
+      def call(_name, arguments)
+        tool_name = arguments["tool_name"] || "unknown"
+        input = arguments["input"] || {}
+
+        result = handle(tool_name: tool_name, input: input)
+        { content: [ { type: "text", text: JSON.generate(result) } ] }
+      end
+
+      # --- Original handle method (internal implementation) ---
 
       def handle(tool_name:, input:)
         if @allowed_tools.include?(tool_name)

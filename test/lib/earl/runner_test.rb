@@ -630,6 +630,208 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_equal "0", runner.send(:format_number, nil)
   end
 
+  test "configure_channels uses multi-channel when multiple channels configured" do
+    ENV["EARL_CHANNELS"] = "chan1:/path1,chan2:/path2"
+    runner = Earl::Runner.new
+    mm = runner.instance_variable_get(:@mattermost)
+    channel_ids = mm.instance_variable_get(:@channel_ids)
+    assert channel_ids.size > 1
+  end
+
+  test "handle_shutdown_signal is idempotent" do
+    runner = Earl::Runner.new
+    app_state = runner.instance_variable_get(:@app_state)
+
+    # First call should set shutting_down
+    # Stub Thread.new to avoid actually spawning shutdown thread
+    threads_spawned = 0
+    original_new = Thread.method(:new)
+    Thread.define_singleton_method(:new) do |&block|
+      threads_spawned += 1
+      original_new.call { } # no-op thread
+    end
+
+    runner.send(:handle_shutdown_signal)
+    assert app_state.shutting_down
+    assert_equal 1, threads_spawned
+
+    # Second call should return early
+    runner.send(:handle_shutdown_signal)
+    assert_equal 1, threads_spawned # no additional thread
+  ensure
+    Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+  end
+
+  test "handle_incoming_message ignores unparseable commands" do
+    runner = Earl::Runner.new
+
+    executed = false
+    executor = runner.instance_variable_get(:@command_executor)
+    executor.define_singleton_method(:execute) { |*_args, **_kwargs| executed = true }
+
+    # "!unknown_thing" is command-like but CommandParser.parse returns nil
+    runner.send(:handle_incoming_message, thread_id: "thread-12345678", text: "!unknown_thing",
+                                          channel_id: "channel-456")
+
+    assert_not executed
+  end
+
+  test "handle_reaction returns early when question handler returns nil result" do
+    runner = Earl::Runner.new
+    handler = runner.instance_variable_get(:@question_handler)
+    handler.define_singleton_method(:handle_reaction) { |**_args| nil }
+
+    assert_nothing_raised do
+      runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
+    end
+  end
+
+  test "handle_reaction returns early when find_thread returns nil" do
+    runner = Earl::Runner.new
+    handler = runner.instance_variable_get(:@question_handler)
+    handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
+
+    # find_thread_for_question always returns nil currently
+    assert_nothing_raised do
+      runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
+    end
+  end
+
+  test "pause_if_idle skips paused sessions" do
+    runner = Earl::Runner.new
+    persisted = Earl::SessionStore::PersistedSession.new(
+      is_paused: true,
+      last_activity_at: (Time.now - 7200).iso8601
+    )
+
+    stopped = false
+    manager = runner.instance_variable_get(:@session_manager)
+    manager.define_singleton_method(:stop_session) { |_id| stopped = true }
+
+    runner.send(:pause_if_idle, "thread-12345678", persisted)
+    assert_not stopped
+  end
+
+  test "pause_if_idle skips recently active sessions" do
+    runner = Earl::Runner.new
+    persisted = Earl::SessionStore::PersistedSession.new(
+      is_paused: false,
+      last_activity_at: Time.now.iso8601
+    )
+
+    stopped = false
+    manager = runner.instance_variable_get(:@session_manager)
+    manager.define_singleton_method(:stop_session) { |_id| stopped = true }
+
+    runner.send(:pause_if_idle, "thread-12345678", persisted)
+    assert_not stopped
+  end
+
+  test "pause_if_idle stops idle sessions" do
+    runner = Earl::Runner.new
+    persisted = Earl::SessionStore::PersistedSession.new(
+      is_paused: false,
+      last_activity_at: (Time.now - 7200).iso8601
+    )
+
+    stopped = false
+    manager = runner.instance_variable_get(:@session_manager)
+    manager.define_singleton_method(:stop_session) { |_id| stopped = true }
+
+    runner.send(:pause_if_idle, "thread-12345678", persisted)
+    assert stopped
+  end
+
+  test "handle_reaction sends answer when thread found and session exists" do
+    runner = Earl::Runner.new
+    handler = runner.instance_variable_get(:@question_handler)
+    handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
+
+    # Override find_thread_for_question to return a thread_id
+    runner.define_singleton_method(:find_thread_for_question) { |_id| "thread-12345678" }
+
+    sent_messages = []
+    mock_session = Object.new
+    mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
+
+    manager = runner.instance_variable_get(:@session_manager)
+    manager.define_singleton_method(:get) { |_id| mock_session }
+
+    runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
+    assert_equal [ "yes" ], sent_messages
+  end
+
+  test "handle_reaction skips send when session is nil" do
+    runner = Earl::Runner.new
+    handler = runner.instance_variable_get(:@question_handler)
+    handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
+
+    # Override find_thread_for_question to return a thread_id
+    runner.define_singleton_method(:find_thread_for_question) { |_id| "thread-12345678" }
+
+    # session_manager.get returns nil
+    manager = runner.instance_variable_get(:@session_manager)
+    manager.define_singleton_method(:get) { |_id| nil }
+
+    # Should not raise (session&.send_message with nil session)
+    assert_nothing_raised do
+      runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
+    end
+  end
+
+  test "shutdown kills idle_checker_thread when present" do
+    runner = Earl::Runner.new
+
+    # Create a thread that mimics the idle checker
+    thread = Thread.new { sleep 60 }
+    runner.instance_variable_set(:@idle_checker_thread, thread)
+
+    # Stub session_manager.pause_all and exit
+    manager = runner.instance_variable_get(:@session_manager)
+    manager.define_singleton_method(:pause_all) { }
+
+    # Stub exit to prevent test from exiting
+    exited = false
+    runner.define_singleton_method(:exit) { |_code| exited = true }
+
+    runner.send(:shutdown)
+    sleep 0.05 # Allow thread to be killed
+    assert_not thread.alive?
+    assert exited
+  end
+
+  test "shutdown works when idle_checker_thread is nil" do
+    runner = Earl::Runner.new
+    runner.instance_variable_set(:@idle_checker_thread, nil)
+
+    manager = runner.instance_variable_get(:@session_manager)
+    manager.define_singleton_method(:pause_all) { }
+
+    exited = false
+    runner.define_singleton_method(:exit) { |_code| exited = true }
+
+    # Should not raise even with nil thread
+    assert_nothing_raised { runner.send(:shutdown) }
+    assert exited
+  end
+
+  test "check_idle_sessions iterates persisted sessions" do
+    runner = Earl::Runner.new
+    store = Earl::SessionStore.new(path: File.join(Dir.tmpdir, "earl-test-idle-#{SecureRandom.hex(4)}.json"))
+    runner.instance_variable_set(:@session_store, store)
+
+    session = Earl::SessionStore::PersistedSession.new(
+      claude_session_id: "sess-1", channel_id: "ch-1", working_dir: "/tmp",
+      started_at: Time.now.iso8601, last_activity_at: Time.now.iso8601,
+      is_paused: false, message_count: 0
+    )
+    store.save("thread-12345678", session)
+
+    assert_nothing_raised { runner.send(:check_idle_sessions) }
+  ensure
+    FileUtils.rm_f(store.instance_variable_get(:@path)) if store
+  end
+
   private
 
   def build_mock_session(on_send: nil)

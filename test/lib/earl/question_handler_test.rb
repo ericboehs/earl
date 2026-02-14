@@ -194,6 +194,87 @@ class Earl::QuestionHandlerTest < ActiveSupport::TestCase
     assert_nil result
   end
 
+  test "multi-question flow posts second question after first answer" do
+    posted = []
+    reactions = []
+    deleted = []
+    handler = build_handler(posted: posted, reactions: reactions, deleted: deleted)
+
+    handler.handle_tool_use(
+      thread_id: "thread-1",
+      tool_use: {
+        id: "tu-1",
+        name: "AskUserQuestion",
+        input: {
+          "questions" => [
+            {
+              "question" => "First question?",
+              "options" => [
+                { "label" => "A" },
+                { "label" => "B" }
+              ]
+            },
+            {
+              "question" => "Second question?",
+              "options" => [
+                { "label" => "X" },
+                { "label" => "Y" }
+              ]
+            }
+          ]
+        }
+      }
+    )
+
+    # Answer first question
+    first_post_id = posted.last[:post_id]
+    result = handler.handle_reaction(post_id: first_post_id, emoji_name: "one")
+
+    # Should return nil (more questions to ask)
+    assert_nil result
+    # Second question should have been posted
+    assert_equal 2, posted.size
+    assert_includes posted.last[:message], "Second question?"
+
+    # Answer second question
+    second_post_id = posted.last[:post_id]
+    result = handler.handle_reaction(post_id: second_post_id, emoji_name: "two")
+
+    # Now should return the combined answer
+    assert_not_nil result
+    assert_includes result[:answer_text], "First question?"
+    assert_includes result[:answer_text], "Second question?"
+    assert_includes result[:answer_text], "A"
+    assert_includes result[:answer_text], "Y"
+  end
+
+  test "handle_tool_use handles create_post returning no id" do
+    mock_mm = Object.new
+    mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No "id"
+    mock_mm.define_singleton_method(:add_reaction) { |**_args| }
+
+    handler = Earl::QuestionHandler.new(mattermost: mock_mm)
+
+    # Should not raise, just silently skip
+    assert_nothing_raised do
+      handler.handle_tool_use(
+        thread_id: "thread-1",
+        tool_use: {
+          id: "tu-1",
+          name: "AskUserQuestion",
+          input: {
+            "questions" => [
+              {
+                "question" => "Pick?",
+                "options" => [ { "label" => "A" }, { "label" => "B" } ]
+              }
+            ]
+          }
+        }
+      )
+    end
+  end
+
   private
 
   def build_handler(posted: [], reactions: [], deleted: [])

@@ -9,6 +9,9 @@ exclude_paths:
 detectors:
   UtilityFunction:
     public_methods_only: true
+    exclude:
+      - Earl::Mcp::ApprovalHandler#handles?    # Handler interface method — intentionally stateless
+      - Earl::Mcp::MemoryHandler#handles?      # Handler interface method — intentionally stateless
 
   IrresponsibleModule:
     exclude:
@@ -37,12 +40,12 @@ detectors:
       - Earl::Mattermost        # WebSocket handling + REST API + event dispatch (split across module)
       - Earl::CommandExecutor   # One method per command + formatting helpers
       - Earl::StreamingResponse # Streaming lifecycle + tool display + finalize (many small focused methods)
-      - Earl::Mcp::ApprovalHandler # Permission flow: post, react, poll, persist (many small focused methods)
+      - Earl::Mcp::ApprovalHandler # Permission flow: post, react, poll, persist + handler interface
 
   DataClump:
     exclude:
-      - Earl::Runner            # thread_id, text, channel_id travel together through message routing
-      - Earl::SessionManager    # channel_id, working_dir travel together for session creation
+      - Earl::Runner            # thread_id, text, channel_id, sender_name travel together through message routing
+      - Earl::SessionManager    # channel_id, working_dir, username travel together for session creation
       - Earl::CommandExecutor   # thread_id, channel_id travel together through command routing
       - Earl::Mcp::ApprovalHandler # tool_name, input travel together through approval flow
 
@@ -63,18 +66,14 @@ detectors:
 
   FeatureEnvy:
     exclude:
-      - Earl::ClaudeSession::EventProcessing#emit_text_content    # Iterates content blocks
       - Earl::ClaudeSession::EventProcessing#emit_tool_use_blocks # Iterates content blocks
-      - Earl::ClaudeSession::EventProcessing#extract_model_usage  # Reads model usage hash fields
-      - Earl::ClaudeSession::EventProcessing#apply_model_stats    # Sets stats from model usage entries
-      - Earl::ClaudeSession::EventProcessing#extract_usage        # Reads usage hash fields
       - Earl::ClaudeSession::EventProcessing#format_result_log    # Builds formatted log string
       - Earl::Config#parse_channels                               # Parses env var string
-      - Earl::CommandExecutor#format_stats                        # Reads stats struct fields
-      - Earl::CommandExecutor#append_optional_stats               # Reads stats struct fields
-      - Earl::Runner#log_session_stats                            # Reads session stats
-      - Earl::Runner#build_stats_line                             # Reads session stats for footer
       - Earl::QuestionHandler#handle_tool_use                     # Reads tool_use hash fields
+      - Earl::Mcp::ApprovalHandler#call                           # Reads arguments hash to delegate
+      - Earl::Memory::PromptBuilder#build                         # Assembles sections array into string
+      - Earl::Memory::Store#collect_entries                         # Builds entries array from file lines
+      - Earl::Memory::Store#grep_files                              # Builds results array from file matches
 
   ControlParameter:
     exclude:
@@ -83,6 +82,7 @@ detectors:
       - Earl::Mcp::ApprovalHandler#format_input          # tool_name dispatches formatting
       - Earl::Mcp::ApprovalHandler#poll_for_reaction     # post_id filters reactions
       - Earl::Mcp::Server#tools_call_response            # params dispatches tool call
+      - Earl::Mcp::MemoryHandler#call                    # name dispatches to save/search handlers
 
   DuplicateMethodCall:
     exclude:
@@ -93,15 +93,20 @@ detectors:
       - Earl::QuestionHandler#build_answer_json           # question field access in iteration
       - Earl::StreamingResponse#finalize                  # reply_post_id checked for different branch paths
 
-  NilCheck:
+  NestedIterators:
     exclude:
-      - Earl::StreamingResponse#extract_tool_detail      # nil-safe compact on unknown tool input
+      - Earl::Memory::Store#collect_entries              # Iterates date files then lines within each
+      - Earl::Memory::Store#grep_files                   # Iterates files then lines within each
 
   RepeatedConditional:
     exclude:
       - Earl::StreamingResponse                          # reply_post_id guards at multiple lifecycle points
+      - Earl::Memory::Store                              # File.exist? guards at multiple file access points
 
   LongParameterList:
     exclude:
       - Earl::SessionManager # create_session and build_persisted pass through session config
       - Earl::Mcp::ApprovalHandler#poll_for_reaction # WebSocket + post_id + tool context for polling
+      - Earl::Runner#handle_incoming_message             # Message routing with thread_id, text, channel_id, sender_name
+      - Earl::Runner#enqueue_message                     # Message queue with thread_id, text, channel_id, sender_name
+      - Earl::Runner#process_message                     # Session creation with thread_id, text, channel_id, sender_name

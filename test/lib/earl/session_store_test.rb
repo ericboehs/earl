@@ -118,6 +118,26 @@ class Earl::SessionStoreTest < ActiveSupport::TestCase
     assert File.exist?(nested_path)
   end
 
+  test "write_store rescues errors and cleans up tmp file" do
+    store_path = File.join(@tmp_dir, "readonly", "sessions.json")
+    readonly_dir = File.join(@tmp_dir, "readonly")
+    FileUtils.mkdir_p(readonly_dir)
+
+    store = Earl::SessionStore.new(path: store_path)
+    session = build_session(id: "sess-1")
+
+    # First write works
+    store.save("thread-1", session)
+
+    # Now make the file un-renameable by removing write permission on directory
+    File.chmod(0o444, readonly_dir)
+
+    # This should rescue and not raise
+    assert_nothing_raised { store.save("thread-2", build_session(id: "sess-2")) }
+  ensure
+    File.chmod(0o755, readonly_dir) if Dir.exist?(readonly_dir)
+  end
+
   private
 
   def build_session(id: "sess-1")

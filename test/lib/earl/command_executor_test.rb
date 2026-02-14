@@ -255,6 +255,28 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "No active session"
   end
 
+  test "!compact does nothing when no session" do
+    executor = build_executor(session: nil)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :compact, args: [])
+    # Should not raise — session&.send_message with nil session
+    assert_nothing_raised do
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+    end
+  end
+
+  test "execute handles unknown command gracefully" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :unknown_cmd, args: [])
+    # Should not raise — just falls through case statement
+    assert_nothing_raised do
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+    end
+    assert_empty posted
+  end
+
   private
 
   def build_executor(posted: [], session: nil, stopped: [])

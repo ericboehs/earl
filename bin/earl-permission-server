@@ -12,7 +12,13 @@ Earl.logger.level = Logger::WARN
 config = Earl::Mcp::Config.new
 api_config = config.to_api_config
 api_client = Earl::Mattermost::ApiClient.new(api_config)
-handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api_client)
-server = Earl::Mcp::Server.new(handler: handler)
+
+store = Earl::Memory::Store.new
+approval_handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api_client)
+memory_handler = Earl::Mcp::MemoryHandler.new(
+  store: store, username: ENV["EARL_CURRENT_USERNAME"]
+)
+
+server = Earl::Mcp::Server.new(handlers: [approval_handler, memory_handler])
 
 server.run

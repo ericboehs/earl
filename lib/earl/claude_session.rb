@@ -21,7 +21,7 @@ module Earl
     # Holds text-streaming and completion callback procs.
     Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, keyword_init: true)
     # Groups session launch options to keep instance variable count low.
-    Options = Struct.new(:permission_config, :resume, :working_dir, keyword_init: true)
+    Options = Struct.new(:permission_config, :resume, :working_dir, :username, keyword_init: true)
 
     # Tracks usage statistics, timing, and cost across the session.
     # rubocop:disable Metrics/BlockLength
@@ -83,9 +83,12 @@ module Earl
     end
     # rubocop:enable Metrics/BlockLength
 
-    def initialize(session_id: SecureRandom.uuid, permission_config: nil, mode: :new, working_dir: nil)
+    def initialize(session_id: SecureRandom.uuid, permission_config: nil, mode: :new, working_dir: nil, username: nil)
       @session_id = session_id
-      @options = Options.new(permission_config: permission_config, resume: mode == :resume, working_dir: working_dir)
+      @options = Options.new(
+        permission_config: permission_config, resume: mode == :resume,
+        working_dir: working_dir, username: username
+      )
       @process_state = ProcessState.new
       @callbacks = Callbacks.new
       @stats = Stats.new(
@@ -198,7 +201,7 @@ module Earl
 
       def cli_args
         [ "claude", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-         *session_args, *permission_args ]
+         *session_args, *permission_args, *system_prompt_args ]
       end
 
       def session_args
@@ -208,8 +211,13 @@ module Earl
       def permission_args
         return [ "--dangerously-skip-permissions" ] unless @options.permission_config
 
-        [ "--permission-prompt-tool", "mcp__earl_permissions__permission_prompt",
+        [ "--permission-prompt-tool", "mcp__earl__permission_prompt",
          "--mcp-config", mcp_config_path ]
+      end
+
+      def system_prompt_args
+        prompt = Memory::PromptBuilder.new(store: Memory::Store.new).build
+        prompt ? [ "--append-system-prompt", prompt ] : []
       end
 
       def mcp_config_path
@@ -219,10 +227,12 @@ module Earl
       def write_mcp_config
         config = {
           mcpServers: {
-            earl_permissions: {
+            earl: {
               command: File.expand_path("../../bin/earl-permission-server", __dir__),
               args: [],
-              env: @options.permission_config
+              env: @options.permission_config.merge(
+                "EARL_CURRENT_USERNAME" => @options.username || ""
+              )
             }
           }
         }

@@ -358,6 +358,170 @@ class Earl::StreamingResponseTest < ActiveSupport::TestCase
     assert_includes result, '"foo":"bar"'
   end
 
+  test "on_tool_use skips update when create_failed" do
+    create_count = 0
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) do |**_args|
+      create_count += 1
+      {} # No "id" key — simulates failure
+    end
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    # First text call fails to create post
+    response.on_text("Part 1")
+    assert_equal 1, create_count
+
+    # Tool use should also skip since create_failed
+    response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } })
+    assert_equal 1, create_count
+  end
+
+  test "format_tool_use returns name only for unknown tool with empty input" do
+    mock_mm = build_mock_mattermost
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    result = response.send(:format_tool_use, { name: "CustomTool", input: {} })
+    assert_equal "⚙️ `CustomTool`", result
+    assert_not_includes result, "```"
+  end
+
+  test "format_tool_use handles nil input values for unknown tool" do
+    mock_mm = build_mock_mattermost
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    result = response.send(:format_tool_use, { name: "CustomTool", input: { "key" => nil } })
+    assert_equal "⚙️ `CustomTool`", result
+  end
+
+  test "on_complete with only tool segments and no text" do
+    created_posts = []
+    updated_posts = []
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) do |**args|
+      created_posts << args
+      { "id" => "reply-1" }
+    end
+    mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      updated_posts << { post_id: post_id, message: message }
+    end
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    # Only tool use, no text segments
+    response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } })
+    sleep 0.35
+    response.on_tool_use({ id: "tu-2", name: "Read", input: { "file_path" => "/tmp/foo" } })
+
+    created_posts.clear
+    updated_posts.clear
+    response.on_complete(stats_line: "100 tokens")
+
+    # All segments are tools, so last_text_index is nil -> remove_last_text returns early
+    # Then creates notification post with full_text (which is all tools) + stats
+    assert created_posts.any?
+  end
+
+  test "on_complete multi-segment removes text leaving tool-only content" do
+    created_posts = []
+    updated_posts = []
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) do |**args|
+      created_posts << args
+      { "id" => "reply-1" }
+    end
+    mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      updated_posts << { post_id: post_id, message: message }
+    end
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    # Single text segment followed by tool
+    response.on_text("Only text here")
+    sleep 0.35
+    response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } })
+
+    created_posts.clear
+    updated_posts.clear
+    response.on_complete(stats_line: "50 tokens")
+
+    # After removing "Only text here", only tool segment remains
+    # update_post should be called for the tool-only content (non-empty after removal)
+    assert updated_posts.any?
+  end
+
+  test "on_complete multi-segment with single text leaves empty after removal" do
+    created_posts = []
+    updated_posts = []
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) do |**args|
+      created_posts << args
+      { "id" => "reply-1" }
+    end
+    mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      updated_posts << { post_id: post_id, message: message }
+    end
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    # Tool then text — removing text leaves only tool, which is empty-ish in text terms
+    response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } })
+    sleep 0.35
+    response.on_text("Answer here")
+
+    created_posts.clear
+    updated_posts.clear
+    response.on_complete(stats_line: "200 tokens")
+
+    # After removing "Answer here", only tool segment remains
+    # The streamed post should be updated with just the tool content
+    # A new notification post should be created with the answer + stats
+    assert created_posts.any? { |p| p[:message].include?("Answer here") }
+  end
+
+  test "on_complete multi-segment with create_failed has no reply_post_id" do
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No id — failure
+    mock_mm.define_singleton_method(:update_post) { |**_args| }
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    # Text then tool — creates a multi-segment response, but post creation fails
+    response.on_text("Some text")
+    response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "echo" } })
+
+    # Finalize with no reply_post_id — remove_last_text should return early at L150
+    assert_nothing_raised { response.on_complete(stats_line: "50 tokens") }
+  end
+
+  test "on_tool_use handles errors gracefully" do
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) { |**_args| raise "API error" }
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    assert_nothing_raised { response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } }) }
+  end
+
+  test "channel_id returns context channel_id" do
+    mock_mm = build_mock_mattermost
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-99")
+    assert_equal "ch-99", response.channel_id
+  end
+
+  test "on_complete with text-only but no reply_post_id due to create_failed" do
+    mock_mm = build_mock_mattermost
+    mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No id — failure
+
+    response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+    response.on_text("Some text")
+    # create_failed is true, reply_post_id is nil
+
+    # finalize should handle the case: full_text is not empty but reply_post_id is nil
+    assert_nothing_raised { response.on_complete }
+  end
+
   test "on_tool_use skips AskUserQuestion" do
     created_posts = []
     updated_posts = []

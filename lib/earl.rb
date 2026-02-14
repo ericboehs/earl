@@ -23,7 +23,10 @@ require_relative "earl/command_executor"
 require_relative "earl/question_handler"
 require_relative "earl/mcp/config"
 require_relative "earl/mcp/approval_handler"
+require_relative "earl/mcp/memory_handler"
 require_relative "earl/mcp/server"
+require_relative "earl/memory/store"
+require_relative "earl/memory/prompt_builder"
 require_relative "earl/runner"
 
 # Top-level module for EARL (Extensible AI Response Layer), a Mattermost bot

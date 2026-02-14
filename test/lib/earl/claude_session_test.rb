@@ -541,6 +541,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     args = session.send(:cli_args)
 
     assert_includes args, "--permission-prompt-tool"
+    assert_includes args, "mcp__earl__permission_prompt"
     assert_not_includes args, "--dangerously-skip-permissions"
   end
 
@@ -650,6 +651,209 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
   ensure
     [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
     wait_thread&.value rescue nil
+  end
+
+  # --- System prompt args tests ---
+
+  test "cli_args includes --append-system-prompt when memory exists" do
+    tmp_dir = Dir.mktmpdir("earl-memory-cli-test")
+    File.write(File.join(tmp_dir, "SOUL.md"), "I am EARL.")
+
+    # Temporarily override the default memory dir
+    original_default = Earl::Memory::Store::DEFAULT_DIR
+    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
+    Earl::Memory::Store.const_set(:DEFAULT_DIR, tmp_dir)
+
+    session = Earl::ClaudeSession.new
+    args = session.send(:cli_args)
+
+    assert_includes args, "--append-system-prompt"
+    idx = args.index("--append-system-prompt")
+    assert_includes args[idx + 1], "I am EARL."
+    assert_includes args[idx + 1], "<earl-memory>"
+  ensure
+    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
+    Earl::Memory::Store.const_set(:DEFAULT_DIR, original_default)
+    FileUtils.rm_rf(tmp_dir)
+  end
+
+  test "cli_args omits --append-system-prompt when no memory" do
+    tmp_dir = Dir.mktmpdir("earl-memory-cli-empty-test")
+
+    original_default = Earl::Memory::Store::DEFAULT_DIR
+    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
+    Earl::Memory::Store.const_set(:DEFAULT_DIR, tmp_dir)
+
+    session = Earl::ClaudeSession.new
+    args = session.send(:cli_args)
+
+    assert_not_includes args, "--append-system-prompt"
+  ensure
+    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
+    Earl::Memory::Store.const_set(:DEFAULT_DIR, original_default)
+    FileUtils.rm_rf(tmp_dir)
+  end
+
+  # --- Username tests ---
+
+  test "initialize accepts username option" do
+    session = Earl::ClaudeSession.new(username: "ericboehs")
+    options = session.instance_variable_get(:@options)
+    assert_equal "ericboehs", options.username
+  end
+
+  test "write_mcp_config includes EARL_CURRENT_USERNAME in env" do
+    session = Earl::ClaudeSession.new(
+      permission_config: { "PLATFORM_URL" => "http://localhost" },
+      username: "ericboehs"
+    )
+    path = session.send(:write_mcp_config)
+    config = JSON.parse(File.read(path))
+
+    env = config.dig("mcpServers", "earl", "env")
+    assert_equal "ericboehs", env["EARL_CURRENT_USERNAME"]
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
+  test "write_mcp_config uses earl as server name" do
+    session = Earl::ClaudeSession.new(
+      permission_config: { "PLATFORM_URL" => "http://localhost" }
+    )
+    path = session.send(:write_mcp_config)
+    config = JSON.parse(File.read(path))
+
+    assert config.dig("mcpServers", "earl"), "Expected 'earl' key in mcpServers"
+    assert_nil config.dig("mcpServers", "earl_permissions"), "Should not have old 'earl_permissions' key"
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
+  test "stats tokens_per_second returns nil when duration is zero" do
+    session = Earl::ClaudeSession.new
+    now = Time.now
+    session.stats.first_token_at = now
+    session.stats.complete_at = now # zero duration
+    session.stats.turn_output_tokens = 100
+
+    assert_nil session.stats.tokens_per_second
+  end
+
+  test "stats context_percent returns nil when context_tokens are zero" do
+    session = Earl::ClaudeSession.new
+    session.stats.context_window = 200_000
+    session.stats.turn_input_tokens = 0
+    session.stats.cache_read_tokens = 0
+    session.stats.cache_creation_tokens = 0
+
+    assert_nil session.stats.context_percent
+  end
+
+  test "open_process uses no chdir when working_dir is nil" do
+    session = Earl::ClaudeSession.new(working_dir: nil)
+    args = session.send(:cli_args)
+    assert_includes args, "claude"
+  end
+
+  test "handle_event result with empty modelUsage hash" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = {
+      "type" => "result", "subtype" => "success",
+      "modelUsage" => {}
+    }
+    session.send(:handle_event, event)
+
+    assert_equal 0, session.stats.total_input_tokens
+  end
+
+  test "handle_event result with modelUsage missing contextWindow" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = {
+      "type" => "result", "subtype" => "success",
+      "modelUsage" => {
+        "claude-sonnet-4-20250514" => {
+          "inputTokens" => 100, "outputTokens" => 50
+        }
+      }
+    }
+    session.send(:handle_event, event)
+
+    assert_nil session.stats.context_window
+  end
+
+  test "format_timing returns nil when no timing data" do
+    session = Earl::ClaudeSession.new
+    result = session.send(:format_timing)
+    assert_nil result
+  end
+
+  test "format_context_usage returns nil when no context" do
+    session = Earl::ClaudeSession.new
+    result = session.send(:format_context_usage)
+    assert_nil result
+  end
+
+  test "stats format_summary includes all optional fields when present" do
+    session = Earl::ClaudeSession.new
+    session.stats.total_input_tokens = 5000
+    session.stats.total_output_tokens = 1500
+    session.stats.turn_input_tokens = 1000
+    session.stats.turn_output_tokens = 500
+    session.stats.cache_read_tokens = 3000
+    session.stats.cache_creation_tokens = 1000
+    session.stats.context_window = 200_000
+    session.stats.model_id = "claude-sonnet-4-20250514"
+    session.stats.message_sent_at = Time.now - 2.0
+    session.stats.first_token_at = Time.now - 1.0
+    session.stats.complete_at = Time.now
+
+    summary = session.stats.format_summary("Test")
+    assert_includes summary, "Test:"
+    assert_includes summary, "6500 tokens"
+    assert_includes summary, "context"
+    assert_includes summary, "TTFT"
+    assert_includes summary, "tok/s"
+    assert_includes summary, "model=claude-sonnet-4-20250514"
+  end
+
+  test "format_timing returns timing string when data present" do
+    session = Earl::ClaudeSession.new
+    session.stats.message_sent_at = Time.now - 2.0
+    session.stats.first_token_at = Time.now - 1.0
+    session.stats.complete_at = Time.now
+    session.stats.turn_output_tokens = 100
+
+    result = session.send(:format_timing)
+    assert_not_nil result
+    assert_includes result, "TTFT"
+    assert_includes result, "tok/s"
+  end
+
+  test "format_context_usage returns string when context data present" do
+    session = Earl::ClaudeSession.new
+    session.stats.context_window = 200_000
+    session.stats.turn_input_tokens = 10_000
+    session.stats.cache_read_tokens = 5_000
+    session.stats.cache_creation_tokens = 5_000
+
+    result = session.send(:format_context_usage)
+    assert_not_nil result
+    assert_includes result, "context used"
+  end
+
+  test "stats format_summary omits optional fields when nil" do
+    session = Earl::ClaudeSession.new
+    summary = session.stats.format_summary("Test")
+    assert_includes summary, "Test:"
+    assert_includes summary, "0 tokens"
+    assert_not_includes summary, "context"
+    assert_not_includes summary, "TTFT"
+    assert_not_includes summary, "tok/s"
+    assert_not_includes summary, "model="
   end
 
   test "format_result_log includes all available stats" do
