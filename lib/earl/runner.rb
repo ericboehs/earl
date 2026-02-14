@@ -28,6 +28,7 @@ module Earl
       @question_handler = QuestionHandler.new(mattermost: @mattermost)
       @app_state = AppState.new(shutting_down: false, message_queue: MessageQueue.new)
       @question_threads = {} # tool_use_id -> thread_id
+      @active_responses = {} # thread_id -> StreamingResponse
       @idle_checker_thread = nil
 
       configure_channels
@@ -107,7 +108,10 @@ module Earl
     def handle_incoming_message(thread_id:, text:, channel_id:, sender_name: nil)
       if CommandParser.command?(text)
         command = CommandParser.parse(text)
-        @command_executor.execute(command, thread_id: thread_id, channel_id: channel_id) if command
+        if command
+          @command_executor.execute(command, thread_id: thread_id, channel_id: channel_id)
+          stop_active_response(thread_id) if %i[stop kill].include?(command.name)
+        end
       else
         enqueue_message(thread_id: thread_id, text: text, channel_id: channel_id, sender_name: sender_name)
       end
@@ -145,6 +149,7 @@ module Earl
       response = StreamingResponse.new(
         thread_id: thread_id, mattermost: @mattermost, channel_id: effective_channel
       )
+      @active_responses[thread_id] = response
       response.start_typing
 
       setup_callbacks(session, response, thread_id)
@@ -181,7 +186,9 @@ module Earl
     def handle_response_complete(session, response, thread_id)
       stats_line = build_stats_line(session)
       response.on_complete(stats_line: stats_line)
+      @active_responses.delete(thread_id)
       log_session_stats(session, thread_id)
+      @session_manager.save_stats(thread_id)
       process_next_queued(thread_id)
     end
 
@@ -209,6 +216,12 @@ module Earl
 
     def find_thread_for_question(tool_use_id)
       @question_threads[tool_use_id]
+    end
+
+    def stop_active_response(thread_id)
+      response = @active_responses.delete(thread_id)
+      response&.stop_typing
+      @app_state.message_queue.dequeue(thread_id)
     end
 
     def format_number(num)

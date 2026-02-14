@@ -54,6 +54,11 @@ module Earl
       log(:error, error.backtrace.first(5).join("\n"))
     end
 
+    def stop_typing
+      @typing_thread&.kill
+      @typing_thread = nil
+    end
+
     private
 
     def typing_loop
@@ -161,11 +166,6 @@ module Earl
       @context.mattermost.create_post(
         channel_id: @context.channel_id, message: text, root_id: @context.thread_id
       )
-    end
-
-    def stop_typing
-      @typing_thread&.kill
-      @typing_thread = nil
     end
 
     def handle_tool_use_display(tool_use)

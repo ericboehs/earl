@@ -66,12 +66,17 @@ module Earl
 
     def handle_stats(thread_id, channel_id)
       session = @session_manager.get(thread_id)
-      unless session
-        post_reply(channel_id, thread_id, "No active session for this thread.")
+      if session
+        post_reply(channel_id, thread_id, format_stats(session.stats))
         return
       end
 
-      post_reply(channel_id, thread_id, format_stats(session.stats))
+      persisted = @session_manager.persisted_session_for(thread_id)
+      if persisted&.total_cost
+        post_reply(channel_id, thread_id, format_persisted_stats(persisted))
+      else
+        post_reply(channel_id, thread_id, "No active session for this thread.")
+      end
     end
 
     # :reek:FeatureEnvy
@@ -95,6 +100,16 @@ module Earl
       lines << "| **Last TTFT** | #{format('%.1fs', ttft)} |" if ttft
       tps = stats.tokens_per_second
       lines << "| **Last speed** | #{format('%.0f', tps)} tok/s |" if tps
+    end
+
+    # :reek:FeatureEnvy
+    def format_persisted_stats(persisted)
+      total_in = persisted.total_input_tokens || 0
+      total_out = persisted.total_output_tokens || 0
+      lines = [ "#### :bar_chart: Session Stats (stopped)", "| Metric | Value |", "|--------|-------|" ]
+      lines << "| **Total tokens** | #{format_number(total_in + total_out)} (in: #{format_number(total_in)}, out: #{format_number(total_out)}) |"
+      lines << "| **Cost** | $#{format('%.4f', persisted.total_cost)} |"
+      lines.join("\n")
     end
 
     def handle_stop(thread_id, channel_id)

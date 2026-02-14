@@ -930,6 +930,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock.define_singleton_method(:get_or_create) { |*_args, **_kwargs| mock_session }
     mock.define_singleton_method(:get) { |_id| mock_session }
     mock.define_singleton_method(:touch) { |_id| }
+    mock.define_singleton_method(:save_stats) { |_id| }
     mock
   end
 

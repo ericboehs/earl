@@ -8,7 +8,8 @@ module Earl
 
     PersistedSession = Struct.new(:claude_session_id, :channel_id, :working_dir,
                                   :started_at, :last_activity_at, :is_paused,
-                                  :message_count, keyword_init: true)
+                                  :message_count, :total_cost, :total_input_tokens,
+                                  :total_output_tokens, keyword_init: true)
 
     DEFAULT_PATH = File.expand_path("~/.config/earl/sessions.json")
 

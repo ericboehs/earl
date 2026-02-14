@@ -93,6 +93,31 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "No active session"
   end
 
+  test "!stats shows persisted stats for stopped session" do
+    posted = []
+    executor = build_executor(posted: posted, session: nil)
+
+    persisted = Earl::SessionStore::PersistedSession.new(
+      claude_session_id: "sess-123",
+      total_cost: 0.5678,
+      total_input_tokens: 10_000,
+      total_output_tokens: 3_000
+    )
+    executor.instance_variable_get(:@session_manager)
+            .define_singleton_method(:persisted_session_for) { |_id| persisted }
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :stats, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, posted.size
+    message = posted.first[:message]
+    assert_includes message, "stopped"
+    assert_includes message, "13,000"
+    assert_includes message, "10,000"
+    assert_includes message, "3,000"
+    assert_includes message, "0.5678"
+  end
+
   test "!stats includes timing when available" do
     posted = []
     mock_session = Object.new
@@ -589,6 +614,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     mock_manager.define_singleton_method(:get) { |_id| session }
     sess = session
     mock_manager.define_singleton_method(:claude_session_id_for) { |_id| sess&.respond_to?(:session_id) ? sess.session_id : nil }
+    mock_manager.define_singleton_method(:persisted_session_for) { |_id| nil }
     stoppd = stopped
     mock_manager.define_singleton_method(:stop_session) { |thread_id| stoppd << thread_id }
 
