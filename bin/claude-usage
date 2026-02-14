@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Scrape Claude Code /usage output via tmux.
+# Spawns an interactive Claude session, runs /usage, captures output, exits.
+#
+# Usage:
+#   bin/claude-usage          # Human-readable output
+#   bin/claude-usage --json   # JSON output for programmatic use
+#
+# Requires: tmux, claude CLI
+set -euo pipefail
+
+SESSION="claude-usage-$$"
+TIMEOUT=15
+
+cleanup() { tmux kill-session -t "$SESSION" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# Start interactive Claude in detached tmux (wide to avoid text wrapping)
+tmux new-session -d -s "$SESSION" -x 200 -y 50 "CLAUDECODE= claude 2>&1"
+
+# Wait for the welcome screen
+for _ in $(seq 1 "$TIMEOUT"); do
+  sleep 1
+  if tmux capture-pane -t "$SESSION" -p 2>/dev/null | grep -q "Welcome\|Opus\|Claude"; then
+    break
+  fi
+done
+
+# Send /usage — first Enter selects from autocomplete, second confirms
+tmux send-keys -t "$SESSION" '/usage' Enter
+sleep 1
+tmux send-keys -t "$SESSION" Enter
+sleep 3
+
+# Capture the pane content
+OUTPUT=$(tmux capture-pane -t "$SESSION" -p 2>/dev/null)
+
+# Exit Claude cleanly
+tmux send-keys -t "$SESSION" Escape
+sleep 0.5
+tmux send-keys -t "$SESSION" '/exit' Enter
+sleep 1
+
+# Parse the captured output
+session_pct=$(echo "$OUTPUT" | grep -A1 "Current session" | grep -o '[0-9]*% used' | grep -o '[0-9]*' || echo "")
+session_reset=$(echo "$OUTPUT" | grep -A2 "Current session" | grep "Resets" | sed 's/^[[:space:]]*//' | sed 's/Resets //' || echo "")
+
+week_pct=$(echo "$OUTPUT" | grep -A1 "Current week" | grep -o '[0-9]*% used' | grep -o '[0-9]*' || echo "")
+week_reset=$(echo "$OUTPUT" | grep -A2 "Current week" | grep "Resets" | sed 's/^[[:space:]]*//' | sed 's/Resets //' || echo "")
+
+extra_pct=$(echo "$OUTPUT" | grep -A1 "Extra usage" | grep -o '[0-9]*% used' | grep -o '[0-9]*' || echo "")
+extra_detail=$(echo "$OUTPUT" | grep -A2 "Extra usage" | grep "spent" | sed 's/^[[:space:]]*//' || echo "")
+extra_reset=$(echo "$extra_detail" | sed 's/.*Resets //' || echo "")
+extra_spent=$(echo "$extra_detail" | grep -o '\$[0-9.]*' | head -1 || echo "")
+extra_budget=$(echo "$extra_detail" | grep -o '\$[0-9.]*' | tail -1 || echo "")
+
+if [[ "${1:-}" == "--json" ]]; then
+  cat <<JSON
+{
+  "session": {
+    "percent_used": ${session_pct:-null},
+    "resets": "${session_reset}"
+  },
+  "week": {
+    "percent_used": ${week_pct:-null},
+    "resets": "${week_reset}"
+  },
+  "extra": {
+    "percent_used": ${extra_pct:-null},
+    "spent": "${extra_spent}",
+    "budget": "${extra_budget}",
+    "resets": "${extra_reset}"
+  }
+}
+JSON
+else
+  echo "📊 Claude Pro Usage"
+  echo ""
+  if [[ -n "$session_pct" ]]; then
+    echo "  Session:  ${session_pct}% used — resets ${session_reset}"
+  fi
+  if [[ -n "$week_pct" ]]; then
+    echo "  Week:     ${week_pct}% used — resets ${week_reset}"
+  fi
+  if [[ -n "$extra_pct" ]]; then
+    echo "  Extra:    ${extra_pct}% used (${extra_spent} / ${extra_budget}) — resets ${extra_reset}"
+  fi
+  if [[ -z "$session_pct" && -z "$week_pct" ]]; then
+    echo "  ⚠️  Could not parse usage data. Raw output:"
+    echo "$OUTPUT" | sed -n '/Current session/,/Esc to cancel/p'
+  fi
+fi

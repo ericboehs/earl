@@ -89,6 +89,12 @@ class Earl::CommandParserTest < ActiveSupport::TestCase
     assert_empty cmd.args
   end
 
+  test "parse recognizes !usage" do
+    cmd = Earl::CommandParser.parse("!usage")
+    assert_equal :usage, cmd.name
+    assert_empty cmd.args
+  end
+
   test "parse is case insensitive" do
     cmd = Earl::CommandParser.parse("!HELP")
     assert_equal :help, cmd.name

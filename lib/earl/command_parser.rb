@@ -17,7 +17,8 @@ module Earl
       /\A!compact\z/i => :compact,
       /\A!cd\s+(.+)\z/i => :cd,
       /\A!permissions\s+(auto|interactive)\z/i => :permissions,
-      /\A!heartbeats\z/i => :heartbeats
+      /\A!heartbeats\z/i => :heartbeats,
+      /\A!usage\z/i => :usage
     }.freeze
 
     def self.command?(text)
