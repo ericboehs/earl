@@ -201,6 +201,136 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
     assert_nil manager.get("thread-paused")
   end
 
+  test "get_or_create resumes from store when session is dead" do
+    store = Object.new
+    loaded_data = {
+      "thread-abc12345" => Earl::SessionStore::PersistedSession.new(
+        claude_session_id: "sess-original",
+        channel_id: "channel-1",
+        working_dir: "/tmp",
+        started_at: Time.now.iso8601,
+        last_activity_at: Time.now.iso8601,
+        is_paused: false,
+        message_count: 0
+      )
+    }
+    store.define_singleton_method(:load) { loaded_data }
+    store.define_singleton_method(:save) { |*_args| }
+
+    config = Earl::Config.new
+    manager = Earl::SessionManager.new(config: config, session_store: store)
+
+    # First, create a session that's dead
+    dead_session = fake_session(alive: false)
+    original_new = Earl::ClaudeSession.method(:new)
+
+    call_count = 0
+    Earl::ClaudeSession.define_singleton_method(:new) do |**args|
+      call_count += 1
+      session = Object.new
+      session.define_singleton_method(:start) { }
+      session.define_singleton_method(:alive?) { call_count > 1 } # first is dead, second is alive (resumed)
+      session.define_singleton_method(:session_id) { args[:session_id] || "new-session" }
+      session.define_singleton_method(:kill) { }
+      session
+    end
+
+    # First get_or_create — creates a dead session
+    first = manager.get_or_create("thread-abc12345")
+
+    # Second get_or_create — session is dead, should resume from store
+    second = manager.get_or_create("thread-abc12345")
+
+    # The resumed session should have the original session_id
+    assert_equal "sess-original", second.session_id
+  ensure
+    Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) } if original_new
+  end
+
+  test "get_or_create falls back to new session when resume fails" do
+    store = Object.new
+    loaded_data = {
+      "thread-abc12345" => Earl::SessionStore::PersistedSession.new(
+        claude_session_id: "sess-broken",
+        channel_id: "channel-1",
+        working_dir: "/tmp",
+        started_at: Time.now.iso8601,
+        last_activity_at: Time.now.iso8601,
+        is_paused: false,
+        message_count: 0
+      )
+    }
+    store.define_singleton_method(:load) { loaded_data }
+    store.define_singleton_method(:save) { |*_args| }
+
+    config = Earl::Config.new
+    manager = Earl::SessionManager.new(config: config, session_store: store)
+
+    original_new = Earl::ClaudeSession.method(:new)
+    call_count = 0
+    Earl::ClaudeSession.define_singleton_method(:new) do |**args|
+      call_count += 1
+      if call_count == 1
+        # Resume attempt fails
+        session = Object.new
+        session.define_singleton_method(:start) { raise "resume failed" }
+        session.define_singleton_method(:alive?) { false }
+        session.define_singleton_method(:session_id) { "sess-broken" }
+        session.define_singleton_method(:kill) { }
+        session
+      else
+        # Fallback to new session succeeds
+        session = Object.new
+        session.define_singleton_method(:start) { }
+        session.define_singleton_method(:alive?) { true }
+        session.define_singleton_method(:session_id) { "sess-new" }
+        session.define_singleton_method(:kill) { }
+        session
+      end
+    end
+
+    result = manager.get_or_create("thread-abc12345")
+
+    # Should have fallen back to a new session
+    assert_equal "sess-new", result.session_id
+  ensure
+    Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) } if original_new
+  end
+
+  test "resume_session handles errors gracefully on startup" do
+    store = Object.new
+    loaded_data = {
+      "thread-abc12345" => Earl::SessionStore::PersistedSession.new(
+        claude_session_id: "sess-broken",
+        channel_id: "channel-1",
+        working_dir: "/tmp",
+        started_at: Time.now.iso8601,
+        last_activity_at: Time.now.iso8601,
+        is_paused: false,
+        message_count: 0
+      )
+    }
+    store.define_singleton_method(:load) { loaded_data }
+
+    config = Earl::Config.new
+    manager = Earl::SessionManager.new(config: config, session_store: store)
+
+    original_new = Earl::ClaudeSession.method(:new)
+    Earl::ClaudeSession.define_singleton_method(:new) do |**_args|
+      session = Object.new
+      session.define_singleton_method(:start) { raise "connection refused" }
+      session
+    end
+
+    # Should not raise
+    assert_nothing_raised { manager.resume_all }
+
+    # Session should not have been stored
+    assert_nil manager.get("thread-abc12345")
+  ensure
+    Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) } if original_new
+  end
+
   private
 
   def create_with_fake_session(manager, thread_id, alive: true, &on_kill)

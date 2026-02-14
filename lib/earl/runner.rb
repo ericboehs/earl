@@ -146,9 +146,12 @@ module Earl
 
     # :reek:FeatureEnvy
     def setup_callbacks(session, response, thread_id)
-      session.on_text { |accumulated_text| response.on_text(accumulated_text) }
+      session.on_text { |text| response.on_text(text) }
       session.on_complete { |_| handle_response_complete(session, response, thread_id) }
-      session.on_tool_use { |tool_use| handle_tool_use(thread_id, tool_use) }
+      session.on_tool_use do |tool_use|
+        response.on_tool_use(tool_use)
+        handle_tool_use(thread_id, tool_use)
+      end
     end
 
     def handle_tool_use(thread_id, tool_use)
@@ -156,9 +159,22 @@ module Earl
     end
 
     def handle_response_complete(session, response, thread_id)
-      response.on_complete
+      stats_line = build_stats_line(session)
+      response.on_complete(stats_line: stats_line)
       log_session_stats(session, thread_id)
       process_next_queued(thread_id)
+    end
+
+    # :reek:FeatureEnvy
+    def build_stats_line(session)
+      stats = session.stats
+      total = stats.total_input_tokens + stats.total_output_tokens
+      return nil unless total.positive?
+
+      line = "#{format_number(total)} tokens"
+      pct = stats.context_percent
+      line += format(" · %.0f%% context", pct) if pct
+      line
     end
 
     # :reek:FeatureEnvy
@@ -173,6 +189,12 @@ module Earl
 
     def find_thread_for_question(_tool_use_id)
       nil
+    end
+
+    def format_number(num)
+      return "0" unless num
+
+      num.to_s.reverse.gsub(/(\d{3})(?=\d)/, '\\1,').reverse
     end
 
     # Idle session management extracted to reduce class method count.

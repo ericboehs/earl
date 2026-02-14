@@ -68,7 +68,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     on_text_callback = nil
     on_complete_callback = nil
-    stats = mock_stats
+    stats = mock_stats(total_input_tokens: 1000, total_output_tokens: 500)
 
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
@@ -103,18 +103,20 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_equal "Hello from Claude", created_posts.first[:message]
     assert_equal "thread-12345678", created_posts.first[:root_id]
 
-    # Subsequent chunk after debounce updates
+    # Subsequent chunk after debounce updates with accumulated text
     sleep 0.35
-    on_text_callback.call("Hello from Claude, updated")
+    on_text_callback.call("updated")
 
     assert_equal 1, updated_posts.size
     assert_equal "reply-post-1", updated_posts.first[:post_id]
 
-    # on_complete does final update
+    # on_complete edits existing post with stats footer (text-only response)
     on_complete_callback.call(mock_session)
 
-    final = updated_posts.last
-    assert_equal "Hello from Claude, updated", final[:message]
+    # Text-only response: stats appended to existing post via update
+    final_update = updated_posts.last
+    assert_includes final_update[:message], "updated"
+    assert_includes final_update[:message], "tokens"
   end
 
   test "setup_message_handler registers callback with mattermost" do
@@ -156,12 +158,12 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_text_callback.call("Part 1")
 
     # Rapid second chunk (within debounce window) — should schedule timer
-    on_text_callback.call("Part 1 Part 2")
+    on_text_callback.call("Part 2")
 
     # Wait for debounce timer to fire
     sleep 0.5
 
-    assert updated_posts.any? { |u| u[:message] == "Part 1 Part 2" }
+    assert updated_posts.any? { |u| u[:message] == "Part 1\n\nPart 2" }
   end
 
   test "setup_signal_handlers can be called without error" do
@@ -185,7 +187,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     runner.instance_variable_get(:@idle_checker_thread)&.kill
   end
 
-  test "on_complete without prior text does not update post" do
+  test "on_complete without prior text does not update or create posts" do
     runner = Earl::Runner.new
 
     on_text_callback = nil
@@ -204,10 +206,15 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     runner.instance_variable_set(:@session_manager, mock_manager)
 
     updated_posts = []
+    created_posts = []
     mock_mm = runner.instance_variable_get(:@mattermost)
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
       updated_posts << { post_id: post_id, message: message }
+    end
+    mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      created_posts << { channel_id: channel_id, message: message, root_id: root_id }
+      { "id" => "notif-1" }
     end
 
     runner.send(:process_message, thread_id: "thread-12345678", text: "test")
@@ -217,6 +224,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_complete_callback.call(mock_session)
 
     assert_empty updated_posts
+    assert_empty created_posts
   end
 
   test "debounce timer already scheduled does not create another" do
@@ -247,10 +255,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_text_callback.call("Part 1")
 
     # Rapid second chunk — schedules debounce timer
-    on_text_callback.call("Part 1 Part 2")
+    on_text_callback.call("Part 2")
 
     # Rapid third chunk — timer already scheduled, should NOT create another
-    on_text_callback.call("Part 1 Part 2 Part 3")
+    on_text_callback.call("Part 3")
 
     # Wait for single debounce timer to fire
     sleep 0.5
@@ -313,6 +321,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     mock_mm = runner.instance_variable_get(:@mattermost)
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "notif-1" } }
 
     # First message starts processing
     runner.send(:enqueue_message, thread_id: "thread-12345678", text: "first")
@@ -365,6 +374,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     mock_mm = runner.instance_variable_get(:@mattermost)
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "notif-1" } }
 
     runner.send(:enqueue_message, thread_id: "thread-12345678", text: "hello")
     sleep 0.05
@@ -461,6 +471,44 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_nothing_raised { on_tool_use_callback.call({ id: "tu-1", name: "Bash", input: {} }) }
   end
 
+  test "on_tool_use routes to both response and question handler" do
+    runner = Earl::Runner.new
+
+    on_tool_use_callback = nil
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_complete) { |&_block| }
+    mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
+    mock_session.define_singleton_method(:send_message) { |_text| }
+
+    mock_manager = build_mock_manager(mock_session)
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    created_posts = []
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      created_posts << { message: message }
+      { "id" => "reply-1" }
+    end
+
+    question_handler_called = false
+    handler = runner.instance_variable_get(:@question_handler)
+    handler.define_singleton_method(:handle_tool_use) { |**_args| question_handler_called = true; nil }
+
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    sleep 0.05
+
+    on_tool_use_callback.call({ id: "tu-1", name: "Bash", input: { "command" => "echo hi" } })
+
+    # StreamingResponse should have created a post with tool indicator
+    assert created_posts.any? { |p| p[:message].include?("🔧 `Bash`") },
+           "Expected tool indicator in post, got: #{created_posts.inspect}"
+
+    # QuestionHandler should also have been called
+    assert question_handler_called, "Expected question_handler.handle_tool_use to be called"
+  end
+
   test "handle_reaction does nothing when question handler returns nil" do
     runner = Earl::Runner.new
 
@@ -494,6 +542,94 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_equal "/channel/path", result
   end
 
+  test "final post includes token count and context percent" do
+    runner = Earl::Runner.new
+
+    on_text_callback = nil
+    on_complete_callback = nil
+    stats = mock_stats(total_input_tokens: 5000, total_output_tokens: 1500, context_window: 200_000,
+                        turn_input_tokens: 5000, cache_read_tokens: 30_000)
+
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
+    mock_session.define_singleton_method(:on_tool_use) { |&_block| }
+    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:stats) { stats }
+
+    mock_manager = build_mock_manager(mock_session)
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    updated_posts = []
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      updated_posts << { post_id: post_id, message: message }
+    end
+    mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      { "id" => "post-1" }
+    end
+
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    sleep 0.05
+
+    on_text_callback.call("Here is the answer.")
+    on_complete_callback.call(mock_session)
+
+    # Text-only response: edits existing post with stats footer
+    final_update = updated_posts.last
+    assert_includes final_update[:message], "Here is the answer."
+    assert_includes final_update[:message], "6,500 tokens"
+    assert_includes final_update[:message], "% context"
+  end
+
+  test "final post has no stats footer when no tokens" do
+    runner = Earl::Runner.new
+
+    on_text_callback = nil
+    on_complete_callback = nil
+    stats = mock_stats
+
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
+    mock_session.define_singleton_method(:on_tool_use) { |&_block| }
+    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:stats) { stats }
+
+    mock_manager = build_mock_manager(mock_session)
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    updated_posts = []
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      updated_posts << { post_id: post_id, message: message }
+    end
+    mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      { "id" => "post-1" }
+    end
+
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    sleep 0.05
+
+    on_text_callback.call("Simple reply")
+    on_complete_callback.call(mock_session)
+
+    # Text-only response with no tokens: edits post, no stats footer
+    final_update = updated_posts.last
+    assert_equal "Simple reply", final_update[:message]
+    assert_not_includes final_update[:message], "tokens"
+  end
+
+  test "format_number formats numbers with commas" do
+    runner = Earl::Runner.new
+    assert_equal "1,234", runner.send(:format_number, 1234)
+    assert_equal "12,345,678", runner.send(:format_number, 12_345_678)
+    assert_equal "500", runner.send(:format_number, 500)
+    assert_equal "0", runner.send(:format_number, nil)
+  end
+
   private
 
   def build_mock_session(on_send: nil)
@@ -521,11 +657,13 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock
   end
 
-  def mock_stats
+  def mock_stats(total_input_tokens: 0, total_output_tokens: 0, context_window: nil,
+                  turn_input_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0)
     Earl::ClaudeSession::Stats.new(
-      total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
-      turn_input_tokens: 0, turn_output_tokens: 0,
-      cache_read_tokens: 0, cache_creation_tokens: 0
+      total_cost: 0.0, total_input_tokens: total_input_tokens, total_output_tokens: total_output_tokens,
+      turn_input_tokens: turn_input_tokens, turn_output_tokens: 0,
+      cache_read_tokens: cache_read_tokens, cache_creation_tokens: cache_creation_tokens,
+      context_window: context_window
     )
   end
 end

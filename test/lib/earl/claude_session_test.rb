@@ -249,9 +249,15 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
     event = {
       "type" => "result", "subtype" => "success",
+      "usage" => {
+        "input_tokens" => 10_000,
+        "output_tokens" => 0,
+        "cache_read_input_tokens" => 35_000,
+        "cache_creation_input_tokens" => 5_000
+      },
       "modelUsage" => {
         "claude-sonnet-4-20250514" => {
-          "inputTokens" => 50_000,
+          "inputTokens" => 10_000,
           "outputTokens" => 0,
           "contextWindow" => 200_000
         }
@@ -259,6 +265,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     }
     session.send(:handle_event, event)
 
+    # context_percent = (10_000 + 35_000 + 5_000) / 200_000 * 100 = 25%
     assert_in_delta 25.0, session.stats.context_percent, 0.1
   end
 

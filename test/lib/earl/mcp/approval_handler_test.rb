@@ -3,20 +3,46 @@ require "test_helper"
 class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   setup do
     Earl.logger = Logger.new(File::NULL)
+    @tmp_dir = Dir.mktmpdir("earl-allowed-tools-test")
+    @original_allowed_tools_dir = Earl::Mcp::ApprovalHandler::ALLOWED_TOOLS_DIR
+    Earl::Mcp::ApprovalHandler.send(:remove_const, :ALLOWED_TOOLS_DIR)
+    Earl::Mcp::ApprovalHandler.const_set(:ALLOWED_TOOLS_DIR, @tmp_dir)
   end
 
   teardown do
     Earl.logger = nil
+    FileUtils.rm_rf(@tmp_dir)
+    Earl::Mcp::ApprovalHandler.send(:remove_const, :ALLOWED_TOOLS_DIR)
+    Earl::Mcp::ApprovalHandler.const_set(:ALLOWED_TOOLS_DIR, @original_allowed_tools_dir)
   end
 
-  test "returns allow when auto-approve is active" do
+  test "returns allow when tool is in allowed_tools set" do
     handler = build_handler
-    # Set allow_all directly
-    handler.instance_variable_set(:@allow_all, true)
+    handler.instance_variable_get(:@allowed_tools).add("Bash")
 
     result = handler.handle(tool_name: "Bash", input: { "command" => "ls" })
 
     assert_equal "allow", result[:behavior]
+  end
+
+  test "does not auto-approve a different tool when only one is allowed" do
+    handler = build_handler
+    handler.instance_variable_get(:@allowed_tools).add("Bash")
+
+    # Edit should still require approval — since we can't mock the full flow,
+    # we test that handle does NOT return early for a non-allowed tool
+    # by verifying it posts a permission request
+    posts = []
+    handler_with_tracking = build_handler_with_tracking(posts: posts)
+    handler_with_tracking.instance_variable_get(:@allowed_tools).add("Bash")
+
+    # This will post a permission request (and then fail on wait_for_reaction)
+    # but we just need to verify it doesn't auto-approve
+    result = handler_with_tracking.handle(tool_name: "Edit", input: { "file_path" => "/tmp/foo", "new_string" => "x" })
+
+    # It should have posted a permission request for Edit
+    permission_posts = posts.select { |p| p[:path] == "/posts" }
+    assert permission_posts.any? { |p| p[:body][:message].include?("Edit") }
   end
 
   test "denies when post creation fails" do
@@ -64,45 +90,106 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     assert_includes result, "value"
   end
 
-  test "process_reaction allows for +1 emoji" do
+  test "process_reaction allows for +1 emoji without adding to allowed_tools" do
     handler = build_handler
-    result = handler.send(:process_reaction, "+1")
+    input = { "command" => "ls" }
+    result = handler.send(:process_reaction, "+1", "Bash", input)
 
     assert_equal "allow", result[:behavior]
+    assert_equal input, result[:updatedInput]
+    assert_not handler.instance_variable_get(:@allowed_tools).include?("Bash")
   end
 
-  test "process_reaction allows and sets allow_all for white_check_mark" do
+  test "process_reaction allows and adds tool to allowed_tools for white_check_mark" do
     handler = build_handler
-    result = handler.send(:process_reaction, "white_check_mark")
+    input = { "command" => "ls" }
+    result = handler.send(:process_reaction, "white_check_mark", "Bash", input)
 
     assert_equal "allow", result[:behavior]
-    assert handler.instance_variable_get(:@allow_all)
+    assert_equal input, result[:updatedInput]
+    assert handler.instance_variable_get(:@allowed_tools).include?("Bash")
+  end
+
+  test "process_reaction persists allowed_tools to disk on white_check_mark" do
+    handler = build_handler
+    handler.send(:process_reaction, "white_check_mark", "Bash", { "command" => "ls" })
+
+    # Verify the file was written
+    path = handler.send(:allowed_tools_path)
+    assert File.exist?(path)
+
+    saved = JSON.parse(File.read(path))
+    assert_includes saved, "Bash"
   end
 
   test "process_reaction denies for -1 emoji" do
     handler = build_handler
-    result = handler.send(:process_reaction, "-1")
+    result = handler.send(:process_reaction, "-1", "Bash", { "command" => "ls" })
 
     assert_equal "deny", result[:behavior]
   end
 
   test "process_reaction returns nil for unknown emoji" do
     handler = build_handler
-    result = handler.send(:process_reaction, "smile")
+    result = handler.send(:process_reaction, "smile", "Bash", { "command" => "ls" })
 
     assert_nil result
   end
 
-  test "handle with auto-approve skips posting" do
+  test "handle with allowed tool skips posting" do
     handler = build_handler
-    handler.instance_variable_set(:@allow_all, true)
+    handler.instance_variable_get(:@allowed_tools).add("Read")
 
-    result = handler.handle(tool_name: "Read", input: { "path" => "/tmp" })
+    input = { "path" => "/tmp" }
+    result = handler.handle(tool_name: "Read", input: input)
     assert_equal "allow", result[:behavior]
-    assert_nil result[:updatedInput]
+    assert_equal input, result[:updatedInput]
   end
 
-  test "post_permission_request formats message with tool_name" do
+  test "load_allowed_tools reads from persisted file" do
+    # Write a test file
+    thread_id = "thread-1"
+    path = File.join(@tmp_dir, "#{thread_id}.json")
+    File.write(path, JSON.generate(%w[Bash Read]))
+
+    handler = build_handler
+    allowed = handler.instance_variable_get(:@allowed_tools)
+
+    assert allowed.include?("Bash")
+    assert allowed.include?("Read")
+    assert_not allowed.include?("Edit")
+  end
+
+  test "load_allowed_tools returns empty set for missing file" do
+    handler = build_handler
+    allowed = handler.instance_variable_get(:@allowed_tools)
+    assert allowed.empty?
+  end
+
+  test "load_allowed_tools returns empty set for corrupt JSON" do
+    thread_id = "thread-1"
+    path = File.join(@tmp_dir, "#{thread_id}.json")
+    File.write(path, "not json{{{")
+
+    handler = build_handler
+    allowed = handler.instance_variable_get(:@allowed_tools)
+    assert allowed.empty?
+  end
+
+  test "save_allowed_tools creates directory and writes file" do
+    handler = build_handler
+    handler.instance_variable_get(:@allowed_tools).add("Bash")
+    handler.instance_variable_get(:@allowed_tools).add("Edit")
+    handler.send(:save_allowed_tools)
+
+    path = handler.send(:allowed_tools_path)
+    assert File.exist?(path)
+
+    saved = Set.new(JSON.parse(File.read(path)))
+    assert_equal Set.new(%w[Bash Edit]), saved
+  end
+
+  test "post_permission_request formats message with tool_name and always allow text" do
     posts = []
     handler = build_handler_with_tracking(posts: posts)
 
@@ -110,8 +197,11 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
 
     assert_equal "perm-post-1", post_id
     assert_equal 1, posts.size
-    assert_includes posts.first[:body][:message], "Bash"
-    assert_includes posts.first[:body][:message], "echo hello"
+    message = posts.first[:body][:message]
+    assert_includes message, "Bash"
+    assert_includes message, "echo hello"
+    assert_includes message, "always allow `Bash`"
+    assert_not_includes message, "allow all"
   end
 
   test "add_reaction_options adds all three emojis" do
@@ -164,6 +254,17 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     handler.instance_variable_get(:@config).define_singleton_method(:allowed_users) { [] }
 
     assert handler.send(:allowed_reactor?, "any-user-id")
+  end
+
+  test "multiple tools can be independently allowed" do
+    handler = build_handler
+    handler.send(:process_reaction, "white_check_mark", "Bash", { "command" => "ls" })
+    handler.send(:process_reaction, "white_check_mark", "Read", { "path" => "/tmp" })
+
+    allowed = handler.instance_variable_get(:@allowed_tools)
+    assert allowed.include?("Bash")
+    assert allowed.include?("Read")
+    assert_not allowed.include?("Edit")
   end
 
   private

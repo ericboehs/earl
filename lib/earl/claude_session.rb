@@ -49,9 +49,12 @@ module Earl
       end
 
       def context_percent
-        return nil unless context_window&.positive? && total_input_tokens
+        return nil unless context_window&.positive?
 
-        (total_input_tokens.to_f / context_window * 100)
+        context_tokens = turn_input_tokens + cache_read_tokens + cache_creation_tokens
+        return nil unless context_tokens.positive?
+
+        (context_tokens.to_f / context_window * 100)
       end
 
       def reset_turn
@@ -334,13 +337,22 @@ module Earl
       def extract_model_usage(model_usage)
         return unless model_usage.is_a?(Hash)
 
-        model_id, data = model_usage.first
-        return unless data.is_a?(Hash)
+        hash_entries = model_usage.select { |_, data| data.is_a?(Hash) }
+        return if hash_entries.empty?
 
+        primary_id, primary_data = hash_entries.max_by { |_, data| data["contextWindow"] || 0 }
+        apply_model_stats(primary_id, primary_data, hash_entries)
+      end
+
+      def apply_model_stats(model_id, primary_data, entries)
         @stats.model_id = model_id
-        @stats.total_input_tokens = data["inputTokens"] || 0
-        @stats.total_output_tokens = data["outputTokens"] || 0
-        context = data["contextWindow"]
+        totals = entries.each_with_object({ input: 0, output: 0 }) do |(_, data), acc|
+          acc[:input] += data["inputTokens"] || 0
+          acc[:output] += data["outputTokens"] || 0
+        end
+        @stats.total_input_tokens = totals[:input]
+        @stats.total_output_tokens = totals[:output]
+        context = primary_data["contextWindow"]
         @stats.context_window = context if context
       end
 

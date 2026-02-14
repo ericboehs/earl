@@ -6,6 +6,11 @@ module Earl
   class StreamingResponse
     include Logging
     DEBOUNCE_MS = 300
+    TOOL_ICONS = {
+      "Bash" => "🔧", "Read" => "📖", "WebFetch" => "🌐", "WebSearch" => "🌐",
+      "Edit" => "✏️", "Write" => "📝", "Glob" => "🔍", "Grep" => "🔍"
+    }.freeze
+    TOOL_PREFIXES = TOOL_ICONS.values.uniq.concat([ "⚙️" ]).freeze
 
     # Holds the Mattermost thread and channel context for posting.
     Context = Struct.new(:thread_id, :mattermost, :channel_id, keyword_init: true)
@@ -15,23 +20,35 @@ module Earl
     def initialize(thread_id:, mattermost:, channel_id:)
       @context = Context.new(thread_id: thread_id, mattermost: mattermost, channel_id: channel_id)
       @post_state = PostState.new(create_failed: false, full_text: "", last_update_at: Time.now)
+      @segments = []
       @typing_thread = nil
       @mutex = Mutex.new
+    end
+
+    def channel_id
+      @context.channel_id
     end
 
     def start_typing
       @typing_thread = Thread.new { typing_loop }
     end
 
-    def on_text(accumulated_text)
-      @mutex.synchronize { handle_text(accumulated_text) }
+    def on_text(text)
+      @mutex.synchronize { handle_text(text) }
     rescue StandardError => error
       log(:error, "Streaming error (thread #{short_id}): #{error.class}: #{error.message}")
       log(:error, error.backtrace.first(5).join("\n"))
     end
 
-    def on_complete
-      @mutex.synchronize { finalize }
+    def on_tool_use(tool_use)
+      @mutex.synchronize { handle_tool_use_display(tool_use) }
+    rescue StandardError => error
+      log(:error, "Tool use display error (thread #{short_id}): #{error.class}: #{error.message}")
+      log(:error, error.backtrace.first(5).join("\n"))
+    end
+
+    def on_complete(stats_line: nil)
+      @mutex.synchronize { finalize(stats_line) }
     rescue StandardError => error
       log(:error, "Completion error (thread #{short_id}): #{error.class}: #{error.message}")
       log(:error, error.backtrace.first(5).join("\n"))
@@ -53,11 +70,12 @@ module Earl
     end
 
     def handle_text(text)
-      @post_state.full_text = text
+      @segments << text
+      @post_state.full_text = @segments.join("\n\n")
       stop_typing
 
       return if @post_state.create_failed
-      return create_initial_post(text) unless @post_state.reply_post_id
+      return create_initial_post(@post_state.full_text) unless @post_state.reply_post_id
 
       schedule_update
     end
@@ -101,14 +119,97 @@ module Earl
       @post_state.last_update_at = Time.now
     end
 
-    def finalize
+    def finalize(stats_line)
       stop_typing
-      update_post if @post_state.reply_post_id && !@post_state.full_text.empty?
+      return if @post_state.full_text.empty? && !@post_state.reply_post_id
+
+      final_text = build_final_text(stats_line)
+
+      if only_text_segments?
+        # Simple response (no tool use) — edit existing post with stats footer
+        @post_state.full_text = final_text
+        update_post if @post_state.reply_post_id
+      else
+        # Multi-segment response — pull final answer out into a new post
+        remove_last_text_from_streamed_post
+        create_notification_post(final_text)
+      end
+    end
+
+    def only_text_segments?
+      @segments.none? { |segment| tool_segment?(segment) }
+    end
+
+    def build_final_text(stats_line)
+      last_text = @segments.reverse.find { |segment| !tool_segment?(segment) }
+      text = last_text || @post_state.full_text
+      stats_line ? "#{text}\n\n---\n#{stats_line}" : text
+    end
+
+    def remove_last_text_from_streamed_post
+      return unless @post_state.reply_post_id
+
+      last_text_index = @segments.rindex { |segment| !tool_segment?(segment) }
+      return unless last_text_index
+
+      @segments.delete_at(last_text_index)
+      @post_state.full_text = @segments.join("\n\n")
+      update_post unless @post_state.full_text.empty?
+    end
+
+    def create_notification_post(text)
+      @context.mattermost.create_post(
+        channel_id: @context.channel_id, message: text, root_id: @context.thread_id
+      )
     end
 
     def stop_typing
       @typing_thread&.kill
       @typing_thread = nil
+    end
+
+    def handle_tool_use_display(tool_use)
+      return if tool_use[:name] == "AskUserQuestion"
+
+      @segments << format_tool_use(tool_use)
+      @post_state.full_text = @segments.join("\n\n")
+      stop_typing
+
+      return if @post_state.create_failed
+      return create_initial_post(@post_state.full_text) unless @post_state.reply_post_id
+
+      schedule_update
+    end
+
+    def format_tool_use(tool_use)
+      name = tool_use[:name]
+      icon = TOOL_ICONS.fetch(name, "⚙️")
+      detail = extract_tool_detail(tool_use)
+
+      if detail
+        "#{icon} `#{name}`\n```\n#{detail}\n```"
+      else
+        "#{icon} `#{name}`"
+      end
+    end
+
+    # :reek:ControlParameter
+    def extract_tool_detail(tool_use)
+      input = tool_use[:input] || {}
+      case tool_use[:name]
+      when "Bash" then input["command"]
+      when "Read", "Edit", "Write" then input["file_path"]
+      when "WebFetch" then input["url"]
+      when "WebSearch" then input["query"]
+      when "Grep", "Glob" then input["pattern"]
+      else
+        compact = input.compact
+        compact.empty? ? nil : JSON.generate(compact)
+      end
+    end
+
+    def tool_segment?(segment)
+      TOOL_PREFIXES.any? { |prefix| segment.start_with?(prefix) }
     end
 
     def short_id

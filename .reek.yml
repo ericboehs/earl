@@ -28,6 +28,7 @@ detectors:
       - Earl::ClaudeSession     # Process state, callbacks, options, session_id, mutex, stats
       - Earl::CommandExecutor   # Manager, mattermost, config, working_dirs, permission_modes
       - Earl::Mcp::Config       # Env-based config with many fields
+      - Earl::StreamingResponse # Context, post state, segments, typing thread, mutex
 
   TooManyMethods:
     exclude:
@@ -35,6 +36,8 @@ detectors:
       - Earl::ClaudeSession     # Process lifecycle + CLI args + event processing (split across 3 modules)
       - Earl::Mattermost        # WebSocket handling + REST API + event dispatch (split across module)
       - Earl::CommandExecutor   # One method per command + formatting helpers
+      - Earl::StreamingResponse # Streaming lifecycle + tool display + finalize (many small focused methods)
+      - Earl::Mcp::ApprovalHandler # Permission flow: post, react, poll, persist (many small focused methods)
 
   DataClump:
     exclude:
@@ -53,18 +56,24 @@ detectors:
       - Earl::QuestionHandler#handle_reaction            # Multi-step reaction → answer flow
       - Earl::QuestionHandler#post_current_question      # Builds and posts formatted question
       - Earl::SessionStore#write_store                   # Atomic file write with temp file
+      - Earl::StreamingResponse#extract_tool_detail      # Case dispatch across tool types
+      - Earl::SessionManager#resume_or_create            # Resume with fallback to create
+      - Earl::Mattermost::ApiClient#send_request         # Retry loop with connection setup
+      - Earl::Mcp::Server#tools_call_response            # Extract params, call handler, format response
 
   FeatureEnvy:
     exclude:
       - Earl::ClaudeSession::EventProcessing#emit_text_content    # Iterates content blocks
       - Earl::ClaudeSession::EventProcessing#emit_tool_use_blocks # Iterates content blocks
       - Earl::ClaudeSession::EventProcessing#extract_model_usage  # Reads model usage hash fields
+      - Earl::ClaudeSession::EventProcessing#apply_model_stats    # Sets stats from model usage entries
       - Earl::ClaudeSession::EventProcessing#extract_usage        # Reads usage hash fields
       - Earl::ClaudeSession::EventProcessing#format_result_log    # Builds formatted log string
       - Earl::Config#parse_channels                               # Parses env var string
       - Earl::CommandExecutor#format_stats                        # Reads stats struct fields
       - Earl::CommandExecutor#append_optional_stats               # Reads stats struct fields
       - Earl::Runner#log_session_stats                            # Reads session stats
+      - Earl::Runner#build_stats_line                             # Reads session stats for footer
       - Earl::QuestionHandler#handle_tool_use                     # Reads tool_use hash fields
 
   ControlParameter:
@@ -82,7 +91,17 @@ detectors:
       - Earl::Mcp::Server#tools_call_response            # error.message in rescue
       - Earl::QuestionHandler#handle_reaction             # state field access in multi-step flow
       - Earl::QuestionHandler#build_answer_json           # question field access in iteration
+      - Earl::StreamingResponse#finalize                  # reply_post_id checked for different branch paths
+
+  NilCheck:
+    exclude:
+      - Earl::StreamingResponse#extract_tool_detail      # nil-safe compact on unknown tool input
+
+  RepeatedConditional:
+    exclude:
+      - Earl::StreamingResponse                          # reply_post_id guards at multiple lifecycle points
 
   LongParameterList:
     exclude:
       - Earl::SessionManager # create_session and build_persisted pass through session config
+      - Earl::Mcp::ApprovalHandler#poll_for_reaction # WebSocket + post_id + tool context for polling

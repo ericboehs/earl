@@ -1,39 +1,47 @@
 # frozen_string_literal: true
 
+require "set"
+
 module Earl
   module Mcp
     # Handles permission approval flow: posts a permission request to Mattermost,
     # adds reaction options, and waits for a user reaction to approve or deny.
+    # Tracks per-tool approvals persisted to disk so "always allow" applies to
+    # specific tool names (e.g., Bash) rather than blanket approval.
     class ApprovalHandler
       include Logging
 
       APPROVE_EMOJIS = %w[+1 white_check_mark].freeze
       DENY_EMOJIS = %w[-1].freeze
       REACTION_EMOJIS = %w[+1 white_check_mark -1].freeze
+      ALLOWED_TOOLS_DIR = File.expand_path("~/.config/earl/allowed_tools")
 
       def initialize(config:, api_client:)
         @config = config
         @api = api_client
-        @allow_all = false
+        @allowed_tools = load_allowed_tools
         @mutex = Mutex.new
       end
 
       def handle(tool_name:, input:)
-        return allow_result if @allow_all
+        if @allowed_tools.include?(tool_name)
+          log(:info, "Auto-allowing #{tool_name} (previously approved)")
+          return allow_result(input)
+        end
 
         post_id = post_permission_request(tool_name, input)
         return deny_result("Failed to post permission request") unless post_id
 
         add_reaction_options(post_id)
-        decision = wait_for_reaction(post_id)
+        decision = wait_for_reaction(post_id, tool_name, input)
         delete_permission_post(post_id)
         decision
       end
 
       private
 
-      def allow_result
-        { behavior: "allow", updatedInput: nil }
+      def allow_result(input)
+        { behavior: "allow", updatedInput: input }
       end
 
       def deny_result(reason = "Denied")
@@ -42,7 +50,8 @@ module Earl
 
       def post_permission_request(tool_name, input)
         input_summary = format_input(tool_name, input)
-        message = ":lock: **Permission Request**\nClaude wants to run: `#{tool_name}`\n```\n#{input_summary}\n```\nReact: :+1: allow once | :white_check_mark: allow all | :-1: deny"
+        message = ":lock: **Permission Request**\nClaude wants to run: `#{tool_name}`\n```\n#{input_summary}\n```\n" \
+                  "React: :+1: allow once | :white_check_mark: always allow `#{tool_name}` | :-1: deny"
 
         response = @api.post("/posts", {
           channel_id: @config.platform_channel_id,
@@ -76,12 +85,12 @@ module Earl
         end
       end
 
-      def wait_for_reaction(post_id)
+      def wait_for_reaction(post_id, tool_name, input)
         timeout_sec = @config.permission_timeout_ms / 1000.0
         deadline = Time.now + timeout_sec
 
         ws = connect_websocket
-        result = poll_for_reaction(ws, post_id, deadline)
+        result = poll_for_reaction(ws, post_id, tool_name, input, deadline)
         ws&.close rescue nil
 
         result || deny_result("Timed out waiting for approval")
@@ -97,7 +106,7 @@ module Earl
         nil
       end
 
-      def poll_for_reaction(ws, post_id, deadline)
+      def poll_for_reaction(ws, post_id, tool_name, input, deadline)
         reaction_queue = Queue.new
 
         ws&.on(:message) do |msg|
@@ -131,7 +140,7 @@ module Earl
           next if reaction["user_id"] == @config.platform_bot_id
           next unless allowed_reactor?(reaction["user_id"])
 
-          return process_reaction(reaction["emoji_name"])
+          return process_reaction(reaction["emoji_name"], tool_name, input)
         end
       end
 
@@ -145,12 +154,10 @@ module Earl
         @config.allowed_users.include?(user["username"])
       end
 
-      def process_reaction(emoji_name)
-        if emoji_name == "white_check_mark"
-          @allow_all = true
-          allow_result
-        elsif APPROVE_EMOJIS.include?(emoji_name)
-          allow_result
+      def process_reaction(emoji_name, tool_name, input)
+        if APPROVE_EMOJIS.include?(emoji_name)
+          @allowed_tools.add(tool_name) && save_allowed_tools if emoji_name == "white_check_mark"
+          allow_result(input)
         elsif DENY_EMOJIS.include?(emoji_name)
           deny_result("Denied by user")
         end
@@ -160,6 +167,28 @@ module Earl
         @api.delete("/posts/#{post_id}")
       rescue StandardError => error
         log(:warn, "Failed to delete permission post #{post_id}: #{error.message}")
+      end
+
+      # Persistence for per-tool allowed list
+
+      def load_allowed_tools
+        path = allowed_tools_path
+        return Set.new unless File.exist?(path)
+
+        Set.new(JSON.parse(File.read(path)))
+      rescue JSON::ParserError, Errno::ENOENT
+        Set.new
+      end
+
+      def save_allowed_tools
+        FileUtils.mkdir_p(ALLOWED_TOOLS_DIR)
+        File.write(allowed_tools_path, JSON.generate(@allowed_tools.to_a))
+      rescue StandardError => error
+        log(:warn, "Failed to save allowed tools: #{error.message}")
+      end
+
+      def allowed_tools_path
+        File.join(ALLOWED_TOOLS_DIR, "#{@config.platform_thread_id}.json")
       end
     end
   end

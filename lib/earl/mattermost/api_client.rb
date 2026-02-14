@@ -55,13 +55,26 @@ module Earl
         req
       end
 
+      MAX_RETRIES = 2
+      RETRY_DELAY = 1
+
       # :reek:FeatureEnvy
       def send_request(uri, req)
-        http = Net::HTTP.new(uri.host, uri.port)
-        http.use_ssl = @config.mattermost_url.start_with?("https")
-        http.open_timeout = 10
-        http.read_timeout = 15
-        http.request(req)
+        attempts = 0
+        begin
+          attempts += 1
+          http = Net::HTTP.new(uri.host, uri.port)
+          http.use_ssl = @config.mattermost_url.start_with?("https")
+          http.open_timeout = 10
+          http.read_timeout = 15
+          http.request(req)
+        rescue Net::ReadTimeout, Net::OpenTimeout, Errno::ECONNRESET, Errno::ECONNREFUSED, IOError => error
+          raise if attempts > MAX_RETRIES
+
+          log(:warn, "Mattermost API retry #{attempts}/#{MAX_RETRIES} after #{error.class}: #{error.message}")
+          sleep RETRY_DELAY
+          retry
+        end
       end
     end
   end

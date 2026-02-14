@@ -92,7 +92,9 @@ module Earl
         tool_name = params&.dig("arguments", "tool_name") || params&.dig("tool_name") || "unknown"
         input = params&.dig("arguments", "input") || params&.dig("input") || {}
 
+        log(:info, "MCP permission_prompt called for tool: #{tool_name}")
         result = @handler.handle(tool_name: tool_name, input: input)
+        log(:info, "MCP permission result: #{result[:behavior]} for #{tool_name}")
 
         {
           jsonrpc: "2.0",
@@ -103,6 +105,7 @@ module Earl
         }
       rescue StandardError => error
         log(:error, "MCP tool call error: #{error.class}: #{error.message}")
+        log(:error, error.backtrace&.first(3)&.join("\n"))
         error_response(id, -32603, "Internal error: #{error.message}")
       end
 
