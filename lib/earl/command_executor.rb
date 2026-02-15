@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "open3"
-
 module Earl
   # Executes `!` commands parsed by CommandParser, dispatching to the
   # appropriate session manager or mattermost action.
@@ -173,53 +171,13 @@ module Earl
       post_reply(channel_id, thread_id, format_heartbeats(statuses))
     end
 
-    USAGE_SCRIPT = File.expand_path("../../bin/claude-usage", __dir__)
-
-    # :reek:TooManyStatements
     def handle_usage(thread_id, channel_id)
-      post_reply(channel_id, thread_id, ":hourglass: Fetching usage data (takes ~15s)...")
-
-      Thread.new do
-        data = fetch_usage_data
-        message = data ? format_usage(data) : ":x: Failed to fetch usage data."
-        post_reply(channel_id, thread_id, message)
-      rescue StandardError => error
-        msg = error.message
-        log(:error, "Usage command error: #{msg}")
-        post_reply(channel_id, thread_id, ":x: Error fetching usage: #{msg}")
+      session = @session_manager.get(thread_id)
+      if session
+        session.send_message("/usage")
+      else
+        post_reply(channel_id, thread_id, "No active session for this thread.")
       end
-    end
-
-    # :reek:UtilityFunction
-    def fetch_usage_data
-      output, status = Open3.capture2(USAGE_SCRIPT, "--json", err: File::NULL)
-      return nil unless status.success?
-
-      JSON.parse(output)
-    rescue JSON::ParserError
-      nil
-    end
-
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
-    def format_usage(data)
-      lines = [ "#### :bar_chart: Claude Pro Usage" ]
-
-      session = data["session"]
-      if session && session["percent_used"]
-        lines << "- **Session:** #{session['percent_used']}% used — resets #{session['resets']}"
-      end
-
-      week = data["week"]
-      if week && week["percent_used"]
-        lines << "- **Week:** #{week['percent_used']}% used — resets #{week['resets']}"
-      end
-
-      extra = data["extra"]
-      if extra && extra["percent_used"]
-        lines << "- **Extra:** #{extra['percent_used']}% used (#{extra['spent']} / #{extra['budget']}) — resets #{extra['resets']}"
-      end
-
-      lines.join("\n")
     end
 
     def handle_context(thread_id, channel_id)

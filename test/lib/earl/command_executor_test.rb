@@ -429,68 +429,30 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "!usage"
   end
 
-  test "!usage posts loading message and then usage data" do
-    posted = []
-    executor = build_executor(posted: posted)
+  test "!usage sends /usage to active session" do
+    sent_messages = []
+    mock_session = Object.new
+    mock_session.define_singleton_method(:send_message) { |msg| sent_messages << msg }
 
-    usage_json = {
-      "session" => { "percent_used" => 66, "resets" => "5pm (America/Chicago)" },
-      "week" => { "percent_used" => 34, "resets" => "Feb 19 at 3:59pm (America/Chicago)" },
-      "extra" => { "percent_used" => 52, "spent" => "$10.47", "budget" => "$20.00", "resets" => "Mar 1 (America/Chicago)" }
-    }
-    executor.define_singleton_method(:fetch_usage_data) { usage_json }
+    posted = []
+    executor = build_executor(posted: posted, session: mock_session)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :usage, args: [])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    # Wait for the background thread to complete
-    sleep 0.2
-
-    assert_equal 2, posted.size
-    assert_includes posted[0][:message], "Fetching usage"
-    assert_includes posted[1][:message], "66% used"
-    assert_includes posted[1][:message], "34% used"
-    assert_includes posted[1][:message], "$10.47 / $20.00"
+    assert_equal [ "/usage" ], sent_messages
+    assert_empty posted
   end
 
-  test "!usage posts error when fetch fails" do
+  test "!usage reports no session when none found" do
     posted = []
-    executor = build_executor(posted: posted)
-
-    executor.define_singleton_method(:fetch_usage_data) { nil }
+    executor = build_executor(posted: posted, session: nil)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :usage, args: [])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    sleep 0.2
-
-    assert_equal 2, posted.size
-    assert_includes posted[0][:message], "Fetching usage"
-    assert_includes posted[1][:message], "Failed to fetch"
-  end
-
-  test "format_usage formats all sections" do
-    executor = build_executor
-    data = {
-      "session" => { "percent_used" => 80, "resets" => "5pm" },
-      "week" => { "percent_used" => 45, "resets" => "Feb 19" },
-      "extra" => { "percent_used" => 30, "spent" => "$6.00", "budget" => "$20.00", "resets" => "Mar 1" }
-    }
-
-    result = executor.send(:format_usage, data)
-    assert_includes result, "Claude Pro Usage"
-    assert_includes result, "**Session:** 80% used"
-    assert_includes result, "**Week:** 45% used"
-    assert_includes result, "**Extra:** 30% used ($6.00 / $20.00)"
-  end
-
-  test "format_usage handles missing sections gracefully" do
-    executor = build_executor
-    data = { "session" => { "percent_used" => nil } }
-
-    result = executor.send(:format_usage, data)
-    assert_includes result, "Claude Pro Usage"
-    assert_not_includes result, "Session"
+    assert_equal 1, posted.size
+    assert_includes posted.first[:message], "No active session"
   end
 
   test "!help includes context command" do
