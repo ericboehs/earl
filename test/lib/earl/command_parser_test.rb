@@ -107,4 +107,90 @@ class Earl::CommandParserTest < ActiveSupport::TestCase
     cmd = Earl::CommandParser.parse("  !help  ")
     assert_equal :help, cmd.name
   end
+
+  # -- Tmux session commands --
+
+  test "parse recognizes !sessions" do
+    cmd = Earl::CommandParser.parse("!sessions")
+    assert_equal :sessions, cmd.name
+    assert_empty cmd.args
+  end
+
+  test "parse recognizes !session <name>" do
+    cmd = Earl::CommandParser.parse("!session my-session")
+    assert_equal :session_show, cmd.name
+    assert_equal [ "my-session" ], cmd.args
+  end
+
+  test "parse recognizes !session <name> status" do
+    cmd = Earl::CommandParser.parse("!session my-session status")
+    assert_equal :session_status, cmd.name
+    assert_equal [ "my-session" ], cmd.args
+  end
+
+  test "parse recognizes !session <name> kill" do
+    cmd = Earl::CommandParser.parse("!session my-session kill")
+    assert_equal :session_kill, cmd.name
+    assert_equal [ "my-session" ], cmd.args
+  end
+
+  test "parse recognizes !session <name> nudge" do
+    cmd = Earl::CommandParser.parse("!session my-session nudge")
+    assert_equal :session_nudge, cmd.name
+    assert_equal [ "my-session" ], cmd.args
+  end
+
+  test "parse recognizes !session <name> with double-quoted input" do
+    cmd = Earl::CommandParser.parse('!session my-session "hello world"')
+    assert_equal :session_input, cmd.name
+    assert_equal [ "my-session", "hello world" ], cmd.args
+  end
+
+  test "parse recognizes !session <name> with single-quoted input" do
+    cmd = Earl::CommandParser.parse("!session my-session 'hello world'")
+    assert_equal :session_input, cmd.name
+    assert_equal [ "my-session", "hello world" ], cmd.args
+  end
+
+  test "parse recognizes !spawn with prompt" do
+    cmd = Earl::CommandParser.parse('!spawn "fix the tests"')
+    assert_equal :spawn, cmd.name
+    assert_equal [ "fix the tests", "" ], cmd.args
+  end
+
+  test "parse recognizes !spawn with prompt and flags" do
+    cmd = Earl::CommandParser.parse('!spawn "fix the tests" --name my-fix --dir /tmp')
+    assert_equal :spawn, cmd.name
+    assert_equal [ "fix the tests", " --name my-fix --dir /tmp" ], cmd.args
+  end
+
+  test "session status is matched before session show" do
+    # Ensures ordering: status, kill, nudge come before catch-all session_show
+    cmd_status = Earl::CommandParser.parse("!session foo status")
+    cmd_show = Earl::CommandParser.parse("!session foo")
+
+    assert_equal :session_status, cmd_status.name
+    assert_equal :session_show, cmd_show.name
+  end
+
+  test "session kill is matched before session show" do
+    cmd = Earl::CommandParser.parse("!session foo kill")
+    assert_equal :session_kill, cmd.name
+  end
+
+  test "session nudge is matched before session show" do
+    cmd = Earl::CommandParser.parse("!session foo nudge")
+    assert_equal :session_nudge, cmd.name
+  end
+
+  test "session commands are case insensitive" do
+    cmd = Earl::CommandParser.parse("!Sessions")
+    assert_equal :sessions, cmd.name
+
+    cmd = Earl::CommandParser.parse("!Session foo STATUS")
+    assert_equal :session_status, cmd.name
+
+    cmd = Earl::CommandParser.parse("!SPAWN \"hello\"")
+    assert_equal :spawn, cmd.name
+  end
 end

@@ -19,14 +19,16 @@ module Earl
       @session_store = SessionStore.new
       @session_manager = SessionManager.new(config: @config, session_store: @session_store)
       @mattermost = Mattermost.new(@config)
+      @tmux_store = TmuxSessionStore.new
       @heartbeat_scheduler = HeartbeatScheduler.new(
         config: @config, session_manager: @session_manager, mattermost: @mattermost
       )
       @command_executor = CommandExecutor.new(
         session_manager: @session_manager, mattermost: @mattermost, config: @config,
-        heartbeat_scheduler: @heartbeat_scheduler
+        heartbeat_scheduler: @heartbeat_scheduler, tmux_store: @tmux_store
       )
       @question_handler = QuestionHandler.new(mattermost: @mattermost)
+      @tmux_monitor = TmuxMonitor.new(mattermost: @mattermost, tmux_store: @tmux_store, config: @config)
       @app_state = AppState.new(shutting_down: false, message_queue: MessageQueue.new)
       @question_threads = {} # tool_use_id -> thread_id
       @active_responses = {} # thread_id -> StreamingResponse
@@ -42,8 +44,10 @@ module Earl
       setup_message_handler
       setup_reaction_handler
       @session_manager.resume_all
+      @tmux_store.cleanup!
       start_idle_checker
       @heartbeat_scheduler.start
+      @tmux_monitor.start
       @mattermost.connect
       log_startup
       sleep 0.5 until @app_state.shutting_down
@@ -81,6 +85,7 @@ module Earl
       log(:info, "Shutting down...")
       @idle_checker_thread&.kill
       @heartbeat_scheduler.stop
+      @tmux_monitor.stop
       @session_manager.pause_all
       log(:info, "Goodbye!")
       # No exit here — let the start method's sleep loop exit via shutting_down flag
@@ -104,14 +109,19 @@ module Earl
     def handle_reaction(user_id:, post_id:, emoji_name:)
       return unless allowed_reactor?(user_id)
 
+      # Try EARL's own question handler first
       result = @question_handler.handle_reaction(post_id: post_id, emoji_name: emoji_name)
-      return unless result
+      if result
+        thread_id = find_thread_for_question(result[:tool_use_id])
+        return unless thread_id
 
-      thread_id = find_thread_for_question(result[:tool_use_id])
-      return unless thread_id
+        session = @session_manager.get(thread_id)
+        session&.send_message(result[:answer_text])
+        return
+      end
 
-      session = @session_manager.get(thread_id)
-      session&.send_message(result[:answer_text])
+      # Then try tmux monitor (forwarded questions/permissions)
+      @tmux_monitor.handle_reaction(post_id: post_id, emoji_name: emoji_name)
     end
 
     def handle_incoming_message(thread_id:, text:, channel_id:, sender_name: nil)

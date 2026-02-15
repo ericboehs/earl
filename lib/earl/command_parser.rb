@@ -19,7 +19,16 @@ module Earl
       /\A!permissions\z/i => :permissions,
       /\A!heartbeats\z/i => :heartbeats,
       /\A!usage\z/i => :usage,
-      /\A!context\z/i => :context
+      /\A!context\z/i => :context,
+      /\A!sessions\z/i => :sessions,
+      # Specific !session subcommands must come before catch-all
+      /\A!session\s+(\S+)\s+status\z/i => :session_status,
+      /\A!session\s+(\S+)\s+kill\z/i => :session_kill,
+      /\A!session\s+(\S+)\s+nudge\z/i => :session_nudge,
+      /\A!session\s+(\S+)\s+"([^"]+)"\z/i => :session_input,
+      /\A!session\s+(\S+)\s+'([^']+)'\z/i => :session_input,
+      /\A!session\s+(\S+)\z/i => :session_show,
+      /\A!spawn\s+"([^"]+)"(.*)\z/i => :spawn
     }.freeze
 
     def self.command?(text)

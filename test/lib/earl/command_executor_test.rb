@@ -19,6 +19,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   teardown do
     Earl.logger = nil
+    restore_tmux_methods
     %w[MATTERMOST_URL MATTERMOST_BOT_TOKEN MATTERMOST_BOT_ID EARL_CHANNEL_ID EARL_ALLOWED_USERS EARL_SKIP_PERMISSIONS].each do |key|
       if @original_env.key?(key)
         ENV[key] = @original_env[key]
@@ -617,9 +618,219 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_not_includes result, "Messages"
   end
 
+  test "!help includes tmux session commands" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :help, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    message = posted.first[:message]
+    assert_includes message, "!sessions"
+    assert_includes message, "!session"
+    assert_includes message, "!spawn"
+  end
+
+  test "!sessions lists tmux sessions" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    sessions = [
+      { name: "dev", attached: true, created_at: "Thu Feb 13 10:00:00 2026" },
+      { name: "work", attached: false, created_at: "Thu Feb 13 09:00:00 2026" }
+    ]
+    panes = [ { index: 0, command: "claude", path: "/tmp", pid: 123 } ]
+
+    stub_tmux_method(:available?, true)
+    stub_tmux_method(:list_sessions, sessions)
+    stub_tmux_method(:list_panes, panes)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, posted.size
+    assert_includes posted.first[:message], "dev"
+    assert_includes posted.first[:message], "work"
+  end
+
+  test "!sessions reports when tmux not available" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    stub_tmux_method(:available?, false)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "not installed"
+  end
+
+  test "!sessions reports when no sessions" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    stub_tmux_method(:available?, true)
+    stub_tmux_method(:list_sessions, [])
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "No tmux sessions"
+  end
+
+  test "!session <name> shows pane output" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    stub_tmux_method(:capture_pane, "some output text")
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :session_show, args: [ "dev" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "some output text"
+    assert_includes posted.first[:message], "dev"
+  end
+
+  test "!session <name> truncates long output" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    long_output = "x" * 4000
+    stub_tmux_method(:capture_pane, long_output)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :session_show, args: [ "dev" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "…"
+    assert posted.first[:message].length < 4100
+  end
+
+  test "!session <name> reports missing session" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    Earl::Tmux.define_singleton_method(:capture_pane) { |*_args, **_opts| raise Earl::Tmux::NotFound, "not found" }
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :session_show, args: [ "missing" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "not found"
+  end
+
+  test "!session <name> kill kills session and removes from store" do
+    posted = []
+    tmux_store = build_tmux_store
+    executor = build_executor(posted: posted, tmux_store: tmux_store)
+
+    killed = []
+    Earl::Tmux.define_singleton_method(:kill_session) { |name| killed << name }
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :session_kill, args: [ "dev" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal [ "dev" ], killed
+    assert_includes posted.first[:message], "killed"
+    assert_includes tmux_store[:deleted], "dev"
+  end
+
+  test "!session <name> nudge sends nudge message" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    sent = []
+    Earl::Tmux.define_singleton_method(:send_keys) { |target, text| sent << { target: target, text: text } }
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :session_nudge, args: [ "dev" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, sent.size
+    assert_equal "dev", sent.first[:target]
+    assert_includes sent.first[:text], "stuck"
+    assert_includes posted.first[:message], "Nudged"
+  end
+
+  test "!session <name> 'text' sends input" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    sent = []
+    Earl::Tmux.define_singleton_method(:send_keys) { |target, text| sent << { target: target, text: text } }
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :session_input, args: [ "dev", "hello world" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, sent.size
+    assert_equal "dev", sent.first[:target]
+    assert_equal "hello world", sent.first[:text]
+    assert_includes posted.first[:message], "Sent to"
+  end
+
+  test "!spawn creates session and saves to store" do
+    posted = []
+    tmux_store = build_tmux_store
+    executor = build_executor(posted: posted, tmux_store: tmux_store)
+
+    created = []
+    stub_tmux_method(:session_exists?, false)
+    Earl::Tmux.define_singleton_method(:create_session) do |name:, command:, working_dir:|
+      created << { name: name, command: command, working_dir: working_dir }
+    end
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "fix tests", " --name my-fix --dir /tmp" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, created.size
+    assert_equal "my-fix", created.first[:name]
+    assert_equal "/tmp", created.first[:working_dir]
+    assert_includes created.first[:command], "fix tests"
+    assert_equal 1, tmux_store[:saved].size
+    assert_includes posted.first[:message], "Spawned"
+  end
+
+  test "!spawn rejects duplicate session name" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    stub_tmux_method(:session_exists?, true)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "fix tests", " --name existing" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "already exists"
+  end
+
+  test "!spawn rejects invalid directory" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "fix tests", " --dir /nonexistent/path/12345" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "not found"
+  end
+
   private
 
-  def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set)
+  # Saves original Tmux methods and defines stubs.
+  # Restored in teardown.
+  def stub_tmux_method(method_name, return_value)
+    @stubbed_tmux_methods ||= {}
+    unless @stubbed_tmux_methods.key?(method_name)
+      @stubbed_tmux_methods[method_name] = Earl::Tmux.method(method_name) if Earl::Tmux.respond_to?(method_name)
+    end
+    Earl::Tmux.define_singleton_method(method_name) { |*_args, **_opts| return_value }
+  end
+
+  def restore_tmux_methods
+    return unless @stubbed_tmux_methods
+
+    @stubbed_tmux_methods.each do |name, original|
+      Earl::Tmux.define_singleton_method(name) { |*args, **opts| original.call(*args, **opts) }
+    end
+    @stubbed_tmux_methods = nil
+  end
+
+  def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set, tmux_store: nil)
     config = Earl::Config.new
 
     mock_manager = Object.new
@@ -643,7 +854,19 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
       config: config
     }
     opts[:heartbeat_scheduler] = heartbeat_scheduler unless heartbeat_scheduler == :not_set
+    opts[:tmux_store] = tmux_store[:store] if tmux_store
 
     Earl::CommandExecutor.new(**opts)
+  end
+
+  def build_tmux_store
+    tracker = { saved: [], deleted: [] }
+    store = Object.new
+    svd = tracker[:saved]
+    dlt = tracker[:deleted]
+    store.define_singleton_method(:save) { |info| svd << info }
+    store.define_singleton_method(:delete) { |name| dlt << name }
+    tracker[:store] = store
+    tracker
   end
 end

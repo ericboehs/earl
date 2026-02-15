@@ -23,6 +23,13 @@ module Earl
       | `!cd <path>` | Set working directory for next session |
       | `!permissions` | Show current permission mode |
       | `!heartbeats` | Show heartbeat schedule status |
+      | `!sessions` | List all tmux sessions |
+      | `!session <name>` | Capture and show tmux pane output |
+      | `!session <name> status` | AI-summarize session state |
+      | `!session <name> kill` | Kill tmux session |
+      | `!session <name> nudge` | Send nudge message to session |
+      | `!session <name> "text"` | Send input to tmux session |
+      | `!spawn "prompt" [--name N] [--dir D]` | Spawn Claude in a new tmux session |
     HELP
 
     # Commands that pass through to Claude as slash commands.
@@ -31,23 +38,38 @@ module Earl
     USAGE_SCRIPT = File.expand_path("../../bin/claude-usage", __dir__)
     CONTEXT_SCRIPT = File.expand_path("../../bin/claude-context", __dir__)
 
-    def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil)
+    def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil, tmux_store: nil)
       @session_manager = session_manager
       @mattermost = mattermost
       @config = config
       @heartbeat_scheduler = heartbeat_scheduler
+      @tmux_store = tmux_store
       @working_dirs = {} # thread_id -> path
     end
 
     # Returns { passthrough: "/command" } for passthrough commands so the
     # runner can route them through the normal message pipeline.
     # Returns nil for all other commands (handled inline).
+    # :reek:TooManyStatements :reek:FeatureEnvy
     def execute(command, thread_id:, channel_id:)
       name = command.name
       slash = PASSTHROUGH_COMMANDS[name]
       return { passthrough: slash } if slash
 
-      arg = command.args.first
+      args = command.args
+      dispatch_command(name, thread_id, channel_id, args)
+      nil
+    end
+
+    def working_dir_for(thread_id)
+      @working_dirs[thread_id]
+    end
+
+    private
+
+    # :reek:TooManyStatements :reek:ControlParameter :reek:LongParameterList :reek:DuplicateMethodCall
+    def dispatch_command(name, thread_id, channel_id, args) # rubocop:disable Metrics/MethodLength
+      arg = args.first
       case name
       when :help then handle_help(thread_id, channel_id)
       when :stats then handle_stats(thread_id, channel_id)
@@ -59,15 +81,15 @@ module Earl
       when :heartbeats then handle_heartbeats(thread_id, channel_id)
       when :usage then handle_usage(thread_id, channel_id)
       when :context then handle_context(thread_id, channel_id)
+      when :sessions then handle_sessions(thread_id, channel_id)
+      when :session_show then handle_session_show(thread_id, channel_id, arg)
+      when :session_status then handle_session_status(thread_id, channel_id, arg)
+      when :session_kill then handle_session_kill(thread_id, channel_id, arg)
+      when :session_nudge then handle_session_nudge(thread_id, channel_id, arg)
+      when :session_input then handle_session_input(thread_id, channel_id, arg, args[1])
+      when :spawn then handle_spawn(thread_id, channel_id, arg, args[1])
       end
-      nil
     end
-
-    def working_dir_for(thread_id)
-      @working_dirs[thread_id]
-    end
-
-    private
 
     def handle_help(thread_id, channel_id)
       post_reply(channel_id, thread_id, HELP_TABLE)
@@ -328,6 +350,154 @@ module Earl
     def cleanup_and_reply(thread_id, channel_id, message)
       @session_manager.stop_session(thread_id)
       post_reply(channel_id, thread_id, message)
+    end
+
+    # -- Tmux session handlers ------------------------------------------------
+
+    # :reek:TooManyStatements
+    def handle_sessions(thread_id, channel_id)
+      unless Tmux.available?
+        post_reply(channel_id, thread_id, ":x: tmux is not installed.")
+        return
+      end
+
+      sessions = Tmux.list_sessions
+      if sessions.empty?
+        post_reply(channel_id, thread_id, "No tmux sessions running.")
+        return
+      end
+
+      lines = [
+        "#### :computer: Tmux Sessions",
+        "| Name | Attached | Claude? | Created |",
+        "|------|----------|---------|---------|"
+      ]
+      sessions.each { |session| lines << format_tmux_session_row(session) }
+      post_reply(channel_id, thread_id, lines.join("\n"))
+    end
+
+    # :reek:FeatureEnvy
+    def format_tmux_session_row(session)
+      name = session[:name]
+      claude = detect_claude_in_session(name)
+      attached = session[:attached] ? "✅" : "—"
+      claude_icon = claude ? "🤖" : "—"
+      "| #{name} | #{attached} | #{claude_icon} | #{session[:created_at]} |"
+    end
+
+    def detect_claude_in_session(session_name)
+      panes = Tmux.list_panes(session_name)
+      panes.any? { |pane| pane[:command]&.match?(/claude/i) }
+    rescue Tmux::Error
+      false
+    end
+
+    # :reek:TooManyStatements
+    def handle_session_show(thread_id, channel_id, name)
+      output = Tmux.capture_pane(name)
+      truncated = output.length > 3500 ? "…#{output[-3500..]}" : output
+      post_reply(channel_id, thread_id, "#### :computer: `#{name}` pane output\n```\n#{truncated}\n```")
+    rescue Tmux::NotFound
+      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
+    rescue Tmux::Error => error
+      post_reply(channel_id, thread_id, ":x: Error capturing pane: #{error.message}")
+    end
+
+    def handle_session_status(thread_id, channel_id, name)
+      output = Tmux.capture_pane(name, lines: 200)
+      truncated = output.length > 3000 ? "…#{output[-3000..]}" : output
+      post_reply(channel_id, thread_id,
+                 "#### :mag: `#{name}` status\n```\n#{truncated}\n```\n_AI summary not yet implemented._")
+    rescue Tmux::NotFound
+      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
+    rescue Tmux::Error => error
+      post_reply(channel_id, thread_id, ":x: Error: #{error.message}")
+    end
+
+    # :reek:LongParameterList
+    def handle_session_input(thread_id, channel_id, name, text)
+      Tmux.send_keys(name, text)
+      post_reply(channel_id, thread_id, ":keyboard: Sent to `#{name}`: `#{text}`")
+    rescue Tmux::NotFound
+      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
+    rescue Tmux::Error => error
+      post_reply(channel_id, thread_id, ":x: Error sending keys: #{error.message}")
+    end
+
+    def handle_session_nudge(thread_id, channel_id, name)
+      Tmux.send_keys(name, "Are you stuck? What's your current status?")
+      post_reply(channel_id, thread_id, ":wave: Nudged `#{name}`.")
+    rescue Tmux::NotFound
+      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
+    rescue Tmux::Error => error
+      post_reply(channel_id, thread_id, ":x: Error nudging: #{error.message}")
+    end
+
+    def handle_session_kill(thread_id, channel_id, name)
+      Tmux.kill_session(name)
+      @tmux_store&.delete(name)
+      post_reply(channel_id, thread_id, ":skull: Tmux session `#{name}` killed.")
+    rescue Tmux::NotFound
+      @tmux_store&.delete(name)
+      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found (cleaned up store).")
+    rescue Tmux::Error => error
+      post_reply(channel_id, thread_id, ":x: Error killing session: #{error.message}")
+    end
+
+    # :reek:TooManyStatements :reek:LongParameterList
+    def handle_spawn(thread_id, channel_id, prompt, flags_str)
+      flags = parse_spawn_flags(flags_str.to_s)
+      name = flags[:name] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}"
+      working_dir = flags[:dir]
+
+      if working_dir && !Dir.exist?(working_dir)
+        post_reply(channel_id, thread_id, ":x: Directory not found: `#{working_dir}`")
+        return
+      end
+
+      if Tmux.session_exists?(name)
+        post_reply(channel_id, thread_id, ":x: Session `#{name}` already exists.")
+        return
+      end
+
+      spawn_tmux_session(name: name, prompt: prompt, working_dir: working_dir,
+                         channel_id: channel_id, thread_id: thread_id)
+    rescue Tmux::Error => error
+      post_reply(channel_id, thread_id, ":x: Failed to spawn session: #{error.message}")
+    end
+
+    # :reek:TooManyStatements :reek:LongParameterList
+    def spawn_tmux_session(name:, prompt:, working_dir:, channel_id:, thread_id:)
+      command = "claude \"#{prompt.gsub('"', '\\"')}\""
+      Tmux.create_session(name: name, command: command, working_dir: working_dir)
+
+      save_tmux_session_info(name: name, channel_id: channel_id, thread_id: thread_id,
+                             working_dir: working_dir, prompt: prompt)
+
+      post_reply(channel_id, thread_id,
+                 ":rocket: Spawned tmux session `#{name}`\n" \
+                 "- **Prompt:** #{prompt}\n" \
+                 "- **Dir:** #{working_dir || Dir.pwd}\n" \
+                 "Use `!session #{name}` to check output.")
+    end
+
+    # :reek:LongParameterList
+    def save_tmux_session_info(name:, channel_id:, thread_id:, working_dir:, prompt:)
+      return unless @tmux_store
+
+      info = TmuxSessionStore::TmuxSessionInfo.new(
+        name: name, channel_id: channel_id, thread_id: thread_id,
+        working_dir: working_dir, prompt: prompt, created_at: Time.now.iso8601
+      )
+      @tmux_store.save(info)
+    end
+
+    # :reek:DuplicateMethodCall
+    def parse_spawn_flags(str)
+      flags = {}
+      flags[:dir] = Regexp.last_match(1) if str.match(/--dir\s+(\S+)/)
+      flags[:name] = Regexp.last_match(1) if str.match(/--name\s+(\S+)/)
+      flags
     end
   end
 end

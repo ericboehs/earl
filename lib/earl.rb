@@ -34,6 +34,9 @@ require_relative "earl/memory/prompt_builder"
 require_relative "earl/cron_parser"
 require_relative "earl/heartbeat_config"
 require_relative "earl/heartbeat_scheduler"
+require_relative "earl/tmux"
+require_relative "earl/tmux_session_store"
+require_relative "earl/tmux_monitor"
 require_relative "earl/runner"
 
 # Top-level module for EARL (Engineering Assistant Relay for LLMs), a Mattermost bot
