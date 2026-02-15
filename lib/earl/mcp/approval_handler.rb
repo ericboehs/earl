@@ -6,8 +6,9 @@ module Earl
   module Mcp
     # Handles permission approval flow: posts a permission request to Mattermost,
     # adds reaction options, and waits for a user reaction to approve or deny.
-    # Tracks per-tool approvals persisted to disk so "always allow" applies to
-    # specific tool names (e.g., Bash) rather than blanket approval.
+    # Tracks per-tool approvals persisted to disk per-thread (stored in
+    # allowed_tools/{thread_id}.json) so "always allow" applies to specific
+    # tool names (e.g., Bash) rather than blanket approval.
     class ApprovalHandler
       include Logging
 
@@ -56,7 +57,7 @@ module Earl
         { content: [ { type: "text", text: JSON.generate(result) } ] }
       end
 
-      # --- Original handle method (internal implementation) ---
+      # --- Core permission flow (internal implementation) ---
 
       # :reek:TooManyStatements
       def handle(tool_name:, input:)
@@ -133,9 +134,10 @@ module Earl
         end
 
         result = poll_for_reaction(ws, post_id, tool_name, input, deadline)
-        ws.close rescue nil
 
         result || deny_result("Timed out waiting for approval")
+      ensure
+        ws&.close rescue nil # rubocop:disable Style/RescueModifier
       end
 
       # :reek:TooManyStatements
@@ -165,7 +167,8 @@ module Earl
               end
             end
           rescue JSON::ParserError
-            # ignore
+            # Skip unparsable WebSocket frames (e.g., auth ack, malformed events)
+            log(:debug, "MCP approval: skipped unparsable WebSocket message")
           end
         end
 

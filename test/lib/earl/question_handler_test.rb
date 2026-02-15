@@ -389,31 +389,32 @@ class Earl::QuestionHandlerTest < ActiveSupport::TestCase
     end
   end
 
-  test "handle_tool_use handles create_post returning no id" do
+  test "handle_tool_use returns error answer when create_post fails" do
     mock_mm = Object.new
     mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No "id"
     mock_mm.define_singleton_method(:add_reaction) { |**_args| }
 
     handler = Earl::QuestionHandler.new(mattermost: mock_mm)
 
-    # Should not raise, just silently skip
-    assert_nothing_raised do
-      handler.handle_tool_use(
-        thread_id: "thread-1",
-        tool_use: {
-          id: "tu-1",
-          name: "AskUserQuestion",
-          input: {
-            "questions" => [
-              {
-                "question" => "Pick?",
-                "options" => [ { "label" => "A" }, { "label" => "B" } ]
-              }
-            ]
-          }
+    result = handler.handle_tool_use(
+      thread_id: "thread-1",
+      tool_use: {
+        id: "tu-1",
+        name: "AskUserQuestion",
+        input: {
+          "questions" => [
+            {
+              "question" => "Pick?",
+              "options" => [ { "label" => "A" }, { "label" => "B" } ]
+            }
+          ]
         }
-      )
-    end
+      }
+    )
+
+    assert_not_nil result
+    assert_equal "tu-1", result[:tool_use_id]
+    assert_includes result[:answer_text], "Failed to post question"
   end
 
   private

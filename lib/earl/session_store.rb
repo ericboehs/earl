@@ -2,7 +2,9 @@
 
 module Earl
   # Persists session metadata to ~/.config/earl/sessions.json for
-  # resuming sessions across EARL restarts.
+  # resuming sessions across EARL restarts. Uses an in-memory cache
+  # to avoid re-reading from disk on every save, preventing race
+  # conditions between concurrent save/touch calls.
   class SessionStore
     include Logging
 
@@ -16,40 +18,42 @@ module Earl
     def initialize(path: DEFAULT_PATH)
       @path = path
       @mutex = Mutex.new
+      @cache = nil # Lazy-loaded from disk on first access
     end
 
     def load
-      @mutex.synchronize { read_store }
+      @mutex.synchronize { ensure_cache.dup }
     end
 
     def save(thread_id, persisted_session)
       @mutex.synchronize do
-        data = read_store
-        data[thread_id] = persisted_session
-        write_store(data)
+        ensure_cache[thread_id] = persisted_session
+        write_store(@cache)
       end
     end
 
     def remove(thread_id)
       @mutex.synchronize do
-        data = read_store
-        data.delete(thread_id)
-        write_store(data)
+        ensure_cache.delete(thread_id)
+        write_store(@cache)
       end
     end
 
     def touch(thread_id)
       @mutex.synchronize do
-        data = read_store
-        session = data[thread_id]
+        session = ensure_cache[thread_id]
         if session
           session.last_activity_at = Time.now.iso8601
-          write_store(data)
+          write_store(@cache)
         end
       end
     end
 
     private
+
+    def ensure_cache
+      @cache ||= read_store
+    end
 
     def read_store
       return {} unless File.exist?(@path)

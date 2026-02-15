@@ -1,4 +1,4 @@
-# EARL - Eric's Automated Response Line
+# EARL - Engineering Assistant Relay for LLMs
 
 ## Context
 
@@ -39,7 +39,7 @@ Long-term goal: evolve EARL toward [OpenClaw](https://github.com/openclaw/opencl
 
 ## Current State
 
-Phase 1 is complete. EARL connects to Mattermost via WebSocket, spawns Claude CLI sessions per thread, streams responses back with debounced POST/PUT, and manages session lifecycles. Uses `--dangerously-skip-permissions`.
+Phase 1 is complete. Phases 2–6 are implemented in PR #5. EARL connects to Mattermost via WebSocket, spawns Claude CLI sessions per thread, streams responses back with debounced POST/PUT, manages session lifecycles, supports MCP-based permission approval, commands, session persistence, persistent memory, and heartbeat scheduling.
 
 **Built:**
 - `lib/earl/claude_session.rb` — Claude CLI wrapper (stream-json I/O)
@@ -64,7 +64,7 @@ Phase 1 is complete. EARL connects to Mattermost via WebSocket, spawns Claude CL
 - Streaming responses with debounce
 - Per-thread session management
 
-### Phase 2: Permission System (claude-threads parity)
+### Phase 2: Permission System (claude-threads parity) ✅
 
 Replace `--dangerously-skip-permissions` with an MCP-based approval flow so Eric gets notified in Mattermost when Claude wants to use a tool.
 
@@ -78,8 +78,8 @@ Replace `--dangerously-skip-permissions` with an MCP-based approval flow so Eric
 7. ✅ sets "allow all" for the rest of the session
 
 **New files:**
-- `lib/earl/permission_server.rb` — Ruby MCP stdio server exposing `permission_prompt` tool
-- `lib/earl/approval_handler.rb` — Posts approval messages, listens for reactions, returns decisions
+- `lib/earl/mcp/server.rb` — Ruby MCP stdio server exposing `permission_prompt` tool
+- `lib/earl/mcp/approval_handler.rb` — Posts approval messages, listens for reactions, returns decisions
 
 **Changes:**
 - `claude_session.rb` — Remove `--dangerously-skip-permissions`, add `--mcp-config` and `--permission-prompt-tool` args
@@ -98,7 +98,7 @@ PLATFORM_THREAD_ID, ALLOWED_USERS, PERMISSION_TIMEOUT_MS
 | ✅ `white_check_mark` | Allow all for this session |
 | 👎 `-1` | Deny this tool use |
 
-### Phase 3: AskUserQuestion + Commands
+### Phase 3: AskUserQuestion + Commands ✅
 
 Handle Claude's `AskUserQuestion` tool and add chat commands for session control.
 
@@ -120,7 +120,7 @@ Handle Claude's `AskUserQuestion` tool and add chat commands for session control
 | `!compact` | Compact conversation history |
 | `!permissions auto\|interactive` | Toggle auto-approve vs emoji approvals |
 
-### Phase 4: Session Persistence + Multi-Channel
+### Phase 4: Session Persistence + Multi-Channel ✅
 
 **Session persistence:**
 - Store session mapping in `~/.config/earl/sessions.json` (thread_id → session_id, working_dir, created_at)
@@ -138,7 +138,7 @@ Handle Claude's `AskUserQuestion` tool and add chat commands for session control
 
 These phases take EARL beyond claude-threads parity toward OpenClaw-style autonomous agent capabilities.
 
-### Phase 5: Persistent Memory
+### Phase 5: Persistent Memory ✅
 
 Give EARL long-term memory that survives across sessions and restarts, so it remembers past conversations and user preferences.
 
@@ -224,10 +224,10 @@ Smart context window management for long-running sessions.
 | Phase | Name | Key Deliverable | Depends On |
 |-------|------|-----------------|------------|
 | 1 ✅ | Core MVP | DM EARL → get response | — |
-| 2 | Permissions | Emoji-based tool approval in Mattermost | Phase 1 |
-| 3 | Questions + Commands | AskUserQuestion + `!` commands | Phase 2 |
-| 4 | Persistence + Multi-Channel | Session resume, `#earl-*` channels | Phase 1 |
-| 5 | Memory | Long-term memory across sessions | Phase 2 |
+| 2 ✅ | Permissions | Emoji-based tool approval in Mattermost | Phase 1 |
+| 3 ✅ | Questions + Commands | AskUserQuestion + `!` commands | Phase 2 |
+| 4 ✅ | Persistence + Multi-Channel | Session resume, `#earl-*` channels | Phase 1 |
+| 5 ✅ | Memory | Long-term memory across sessions | Phase 2 |
 | 6 ✅ | Heartbeats | Scheduled autonomous tasks | Phase 5 |
 | 7 | Multi-Platform | Slack/Discord adapters | Phase 4 |
 | 8 | Skills | Self-authoring tool plugins | Phase 5 |

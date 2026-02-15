@@ -31,6 +31,7 @@ module Earl
       @question_threads = {} # tool_use_id -> thread_id
       @active_responses = {} # thread_id -> StreamingResponse
       @idle_checker_thread = nil
+      @shutdown_mutex = Mutex.new
 
       configure_channels
     end
@@ -65,9 +66,14 @@ module Earl
     end
 
     def handle_shutdown_signal
-      return if @app_state.shutting_down
+      proceed = @shutdown_mutex.synchronize do
+        next false if @app_state.shutting_down
 
-      @app_state.shutting_down = true
+        @app_state.shutting_down = true
+        true
+      end
+      return unless proceed
+
       Thread.new { shutdown }
     end
 
@@ -91,11 +97,13 @@ module Earl
 
     def setup_reaction_handler
       @mattermost.on_reaction do |user_id:, post_id:, emoji_name:|
-        handle_reaction(post_id: post_id, emoji_name: emoji_name)
+        handle_reaction(user_id: user_id, post_id: post_id, emoji_name: emoji_name)
       end
     end
 
-    def handle_reaction(post_id:, emoji_name:)
+    def handle_reaction(user_id:, post_id:, emoji_name:)
+      return unless allowed_reactor?(user_id)
+
       result = @question_handler.handle_reaction(post_id: post_id, emoji_name: emoji_name)
       return unless result
 
@@ -132,6 +140,18 @@ module Earl
       end
 
       true
+    end
+
+    # :reek:FeatureEnvy
+    def allowed_reactor?(user_id)
+      allowed = @config.allowed_users
+      return true if allowed.empty?
+
+      user_data = @mattermost.get_user(user_id: user_id)
+      username = user_data["username"]
+      return false unless username
+
+      allowed.include?(username)
     end
 
     def enqueue_message(thread_id:, text:, channel_id: nil, sender_name: nil)
@@ -257,10 +277,14 @@ module Earl
         end
       end
 
+      # :reek:FeatureEnvy
       def stop_if_idle(thread_id, persisted)
         return if persisted.is_paused
 
-        idle_seconds = Time.now - Time.parse(persisted.last_activity_at)
+        last_activity = persisted.last_activity_at
+        return unless last_activity
+
+        idle_seconds = Time.now - Time.parse(last_activity)
         return unless idle_seconds > IDLE_TIMEOUT
 
         log(:info, "Stopping idle session for thread #{thread_id[0..7]} (idle #{(idle_seconds / 60).round}min)")

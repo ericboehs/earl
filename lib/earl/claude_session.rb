@@ -172,6 +172,8 @@ module Earl
     def open_process
       working_dir = @options.working_dir
       popen_opts = working_dir ? { chdir: working_dir } : {}
+      # Clear TMUX vars to prevent Claude CLI from detecting a tmux session,
+      # which would change its UI behavior (e.g., window title manipulation).
       env = { "TMUX" => nil, "TMUX_PANE" => nil }
       Open3.popen3(env, *cli_args, **popen_opts)
     end
@@ -250,15 +252,19 @@ module Earl
         }
         path = File.join(Dir.tmpdir, "earl-mcp-#{@session_id}.json")
         json = JSON.generate(config)
+        # Create with restricted permissions (0o600) to protect bot token
         File.open(path, File::CREAT | File::EXCL | File::WRONLY, 0o600) do |file|
           file.write(json)
         end
         path
       rescue Errno::EEXIST
         # File already exists from a prior session with this ID — overwrite securely
-        File.write(path, json)
-        File.chmod(0o600, path)
+        write_file_securely(path, json)
         path
+      end
+
+      def write_file_securely(path, content)
+        File.open(path, File::WRONLY | File::TRUNC, 0o600) { |file| file.write(content) }
       end
     end
 

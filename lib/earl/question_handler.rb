@@ -18,6 +18,7 @@ module Earl
       @mutex = Mutex.new
     end
 
+    # :reek:TooManyStatements
     def handle_tool_use(thread_id:, tool_use:, channel_id: nil)
       return nil unless tool_use[:name] == "AskUserQuestion"
 
@@ -25,8 +26,9 @@ module Earl
       questions = input["questions"] || []
       return nil if questions.empty?
 
+      tool_use_id = tool_use[:id]
       state = QuestionState.new(
-        tool_use_id: tool_use[:id],
+        tool_use_id: tool_use_id,
         questions: questions,
         answers: {},
         current_index: 0,
@@ -34,8 +36,12 @@ module Earl
         channel_id: channel_id
       )
 
-      post_current_question(state)
-      { tool_use_id: state.tool_use_id }
+      unless post_current_question(state)
+        log(:error, "Failed to post question for tool_use #{tool_use_id}, returning error answer")
+        return { tool_use_id: tool_use_id, answer_text: "Failed to post question to chat" }
+      end
+
+      { tool_use_id: tool_use_id }
     end
 
     def handle_reaction(post_id:, emoji_name:)
@@ -89,6 +95,9 @@ module Earl
         state.current_post_id = post_id
         add_emoji_options(post_id, options.size)
         @mutex.synchronize { @pending_questions[post_id] = state }
+        true
+      else
+        false
       end
     end
 

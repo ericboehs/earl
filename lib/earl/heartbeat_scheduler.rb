@@ -125,6 +125,11 @@ module Earl
       return unless header_post
 
       thread_id = header_post["id"]
+      unless thread_id
+        log(:error, "Heartbeat '#{definition.name}': failed to get post ID from Mattermost")
+        return
+      end
+
       session = create_heartbeat_session(definition, state)
       run_session(session, definition, thread_id, state)
     rescue StandardError => error
@@ -244,14 +249,19 @@ module Earl
       path = @heartbeat_config_path
       return unless File.exist?(path)
 
-      data = YAML.safe_load_file(path)
-      return unless data.is_a?(Hash) && data.dig("heartbeats", name).is_a?(Hash)
+      # Use file lock to coordinate with HeartbeatHandler YAML writes
+      File.open(path, "r+") do |lockfile|
+        lockfile.flock(File::LOCK_EX)
 
-      data["heartbeats"][name]["enabled"] = false
-      tmp_path = "#{path}.tmp.#{Process.pid}"
-      File.write(tmp_path, YAML.dump(data))
-      File.rename(tmp_path, path)
-      log(:info, "One-off heartbeat '#{name}' disabled in YAML")
+        data = YAML.safe_load_file(path)
+        return unless data.is_a?(Hash) && data.dig("heartbeats", name).is_a?(Hash)
+
+        data["heartbeats"][name]["enabled"] = false
+        tmp_path = "#{path}.tmp.#{Process.pid}"
+        File.write(tmp_path, YAML.dump(data))
+        File.rename(tmp_path, path)
+        log(:info, "One-off heartbeat '#{name}' disabled in YAML")
+      end
     rescue StandardError => error
       log(:warn, "Failed to disable heartbeat '#{name}': #{error.message}")
     end

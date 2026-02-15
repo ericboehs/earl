@@ -21,7 +21,7 @@ Requires env vars (see `.envrc`):
 - `MATTERMOST_BOT_TOKEN` — Bot authentication token
 - `MATTERMOST_BOT_ID` — Bot user ID (to ignore own messages)
 - `EARL_CHANNEL_ID` — Default channel to listen in
-- `EARL_CHANNELS` — Multi-channel config (JSON: `{"channel_id": "/working/dir", ...}`)
+- `EARL_CHANNELS` — Multi-channel config (comma-separated `channel_id:/working/dir` pairs, e.g. `chan1:/path1,chan2:/path2`)
 - `EARL_ALLOWED_USERS` — Comma-separated usernames allowed to interact
 - `EARL_SKIP_PERMISSIONS` — Set to `true` to use `--dangerously-skip-permissions` instead of MCP approval
 
@@ -35,7 +35,7 @@ Optional config files:
 
 ```
 bin/earl                          # Entry point
-bin/earl-permission-server        # MCP permission server (spawned by Claude)
+bin/earl-permission-server        # MCP permission server (spawned by Claude CLI as subprocess)
 lib/
   earl.rb                         # Module root, requires, shared logger
   earl/

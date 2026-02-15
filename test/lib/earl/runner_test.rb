@@ -520,9 +520,13 @@ class Earl::RunnerTest < ActiveSupport::TestCase
   test "handle_reaction does nothing when question handler returns nil" do
     runner = Earl::Runner.new
 
+    # Mock get_user to return a valid allowed username
+    mm = runner.instance_variable_get(:@mattermost)
+    mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+
     # No pending questions, so reaction handling returns nil
     assert_nothing_raised do
-      runner.send(:handle_reaction, post_id: "unknown-post", emoji_name: "one")
+      runner.send(:handle_reaction, user_id: "user-1", post_id: "unknown-post", emoji_name: "one")
     end
   end
 
@@ -691,8 +695,11 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     handler = runner.instance_variable_get(:@question_handler)
     handler.define_singleton_method(:handle_reaction) { |**_args| nil }
 
+    mm = runner.instance_variable_get(:@mattermost)
+    mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+
     assert_nothing_raised do
-      runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
+      runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
     end
   end
 
@@ -701,9 +708,12 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     handler = runner.instance_variable_get(:@question_handler)
     handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
+    mm = runner.instance_variable_get(:@mattermost)
+    mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+
     # @question_threads is empty, so find_thread_for_question returns nil
     assert_nothing_raised do
-      runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
+      runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
     end
   end
 
@@ -863,6 +873,21 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert stopped
   end
 
+  test "stop_if_idle handles nil last_activity_at gracefully" do
+    runner = Earl::Runner.new
+    persisted = Earl::SessionStore::PersistedSession.new(
+      is_paused: false,
+      last_activity_at: nil
+    )
+
+    stopped = false
+    manager = runner.instance_variable_get(:@session_manager)
+    manager.define_singleton_method(:stop_session) { |_id| stopped = true }
+
+    assert_nothing_raised { runner.send(:stop_if_idle, "thread-12345678", persisted) }
+    assert_not stopped
+  end
+
   test "handle_reaction sends answer when thread found and session exists" do
     runner = Earl::Runner.new
     handler = runner.instance_variable_get(:@question_handler)
@@ -871,6 +896,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     # Populate @question_threads to simulate a prior tool_use capture
     runner.instance_variable_get(:@question_threads)["tu-1"] = "thread-12345678"
 
+    mm = runner.instance_variable_get(:@mattermost)
+    mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+
     sent_messages = []
     mock_session = Object.new
     mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
@@ -878,7 +906,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     manager = runner.instance_variable_get(:@session_manager)
     manager.define_singleton_method(:get) { |_id| mock_session }
 
-    runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
+    runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
     assert_equal [ "yes" ], sent_messages
   end
 
@@ -890,13 +918,43 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     # Populate @question_threads to simulate a prior tool_use capture
     runner.instance_variable_get(:@question_threads)["tu-1"] = "thread-12345678"
 
+    mm = runner.instance_variable_get(:@mattermost)
+    mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+
     # session_manager.get returns nil
     manager = runner.instance_variable_get(:@session_manager)
     manager.define_singleton_method(:get) { |_id| nil }
 
     # Should not raise (session&.send_message with nil session)
     assert_nothing_raised do
-      runner.send(:handle_reaction, post_id: "post-1", emoji_name: "one")
+      runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
+    end
+  end
+
+  test "handle_reaction blocks non-allowed users" do
+    runner = Earl::Runner.new
+
+    mm = runner.instance_variable_get(:@mattermost)
+    mm.define_singleton_method(:get_user) { |user_id:| { "username" => "eve" } }
+
+    handler = runner.instance_variable_get(:@question_handler)
+    handler_called = false
+    handler.define_singleton_method(:handle_reaction) { |**_args| handler_called = true; nil }
+
+    runner.send(:handle_reaction, user_id: "user-eve", post_id: "post-1", emoji_name: "one")
+    assert_not handler_called, "Expected non-allowed user reaction to be blocked"
+  end
+
+  test "handle_reaction allows all users when allowlist is empty" do
+    ENV["EARL_ALLOWED_USERS"] = ""
+    runner = Earl::Runner.new
+
+    handler = runner.instance_variable_get(:@question_handler)
+    handler.define_singleton_method(:handle_reaction) { |**_args| nil }
+
+    # Should not need get_user when allowlist is empty
+    assert_nothing_raised do
+      runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
     end
   end
 

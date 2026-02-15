@@ -109,7 +109,11 @@ module Earl
 
       def save_yaml(data)
         FileUtils.mkdir_p(File.dirname(@config_path))
-        File.write(@config_path, YAML.dump(data))
+        # Use file lock to coordinate with HeartbeatScheduler#disable_heartbeat
+        File.open(@config_path, File::CREAT | File::WRONLY | File::TRUNC) do |file|
+          file.flock(File::LOCK_EX)
+          file.write(YAML.dump(data))
+        end
       end
 
       # --- Entry building ---
