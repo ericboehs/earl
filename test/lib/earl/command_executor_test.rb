@@ -19,7 +19,6 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   teardown do
     Earl.logger = nil
-    restore_tmux_methods
     %w[MATTERMOST_URL MATTERMOST_BOT_TOKEN MATTERMOST_BOT_ID EARL_CHANNEL_ID EARL_ALLOWED_USERS EARL_SKIP_PERMISSIONS].each do |key|
       if @original_env.key?(key)
         ENV[key] = @original_env[key]
@@ -633,17 +632,15 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   test "!sessions lists tmux sessions" do
     posted = []
-    executor = build_executor(posted: posted)
-
-    sessions = [
+    tmux = build_mock_tmux_adapter
+    tmux.available_result = true
+    tmux.list_sessions_result = [
       { name: "dev", attached: true, created_at: "Thu Feb 13 10:00:00 2026" },
       { name: "work", attached: false, created_at: "Thu Feb 13 09:00:00 2026" }
     ]
-    panes = [ { index: 0, command: "claude", path: "/tmp", pid: 123 } ]
+    tmux.list_panes_result = [ { index: 0, command: "claude", path: "/tmp", pid: 123 } ]
 
-    stub_tmux_method(:available?, true)
-    stub_tmux_method(:list_sessions, sessions)
-    stub_tmux_method(:list_panes, panes)
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -655,9 +652,10 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   test "!sessions reports when tmux not available" do
     posted = []
-    executor = build_executor(posted: posted)
+    tmux = build_mock_tmux_adapter
+    tmux.available_result = false
 
-    stub_tmux_method(:available?, false)
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -667,10 +665,11 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   test "!sessions reports when no sessions" do
     posted = []
-    executor = build_executor(posted: posted)
+    tmux = build_mock_tmux_adapter
+    tmux.available_result = true
+    tmux.list_sessions_result = []
 
-    stub_tmux_method(:available?, true)
-    stub_tmux_method(:list_sessions, [])
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -680,9 +679,10 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   test "!session <name> shows pane output" do
     posted = []
-    executor = build_executor(posted: posted)
+    tmux = build_mock_tmux_adapter
+    tmux.capture_pane_result = "some output text"
 
-    stub_tmux_method(:capture_pane, "some output text")
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :session_show, args: [ "dev" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -693,10 +693,10 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   test "!session <name> truncates long output" do
     posted = []
-    executor = build_executor(posted: posted)
+    tmux = build_mock_tmux_adapter
+    tmux.capture_pane_result = "x" * 4000
 
-    long_output = "x" * 4000
-    stub_tmux_method(:capture_pane, long_output)
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :session_show, args: [ "dev" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -707,9 +707,10 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   test "!session <name> reports missing session" do
     posted = []
-    executor = build_executor(posted: posted)
+    tmux = build_mock_tmux_adapter
+    tmux.capture_pane_error = Earl::Tmux::NotFound.new("not found")
 
-    Earl::Tmux.define_singleton_method(:capture_pane) { |*_args, **_opts| raise Earl::Tmux::NotFound, "not found" }
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :session_show, args: [ "missing" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -719,79 +720,70 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
 
   test "!session <name> kill kills session and removes from store" do
     posted = []
+    tmux = build_mock_tmux_adapter
     tmux_store = build_tmux_store
-    executor = build_executor(posted: posted, tmux_store: tmux_store)
-
-    killed = []
-    Earl::Tmux.define_singleton_method(:kill_session) { |name| killed << name }
+    executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :session_kill, args: [ "dev" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    assert_equal [ "dev" ], killed
+    assert_equal [ "dev" ], tmux.killed_sessions
     assert_includes posted.first[:message], "killed"
     assert_includes tmux_store[:deleted], "dev"
   end
 
   test "!session <name> nudge sends nudge message" do
     posted = []
-    executor = build_executor(posted: posted)
-
-    sent = []
-    Earl::Tmux.define_singleton_method(:send_keys) { |target, text| sent << { target: target, text: text } }
+    tmux = build_mock_tmux_adapter
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :session_nudge, args: [ "dev" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    assert_equal 1, sent.size
-    assert_equal "dev", sent.first[:target]
-    assert_includes sent.first[:text], "stuck"
+    assert_equal 1, tmux.send_keys_calls.size
+    assert_equal "dev", tmux.send_keys_calls.first[:target]
+    assert_includes tmux.send_keys_calls.first[:text], "stuck"
     assert_includes posted.first[:message], "Nudged"
   end
 
   test "!session <name> 'text' sends input" do
     posted = []
-    executor = build_executor(posted: posted)
-
-    sent = []
-    Earl::Tmux.define_singleton_method(:send_keys) { |target, text| sent << { target: target, text: text } }
+    tmux = build_mock_tmux_adapter
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :session_input, args: [ "dev", "hello world" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    assert_equal 1, sent.size
-    assert_equal "dev", sent.first[:target]
-    assert_equal "hello world", sent.first[:text]
+    assert_equal 1, tmux.send_keys_calls.size
+    assert_equal "dev", tmux.send_keys_calls.first[:target]
+    assert_equal "hello world", tmux.send_keys_calls.first[:text]
     assert_includes posted.first[:message], "Sent to"
   end
 
   test "!spawn creates session and saves to store" do
     posted = []
+    tmux = build_mock_tmux_adapter
+    tmux.session_exists_result = false
     tmux_store = build_tmux_store
-    executor = build_executor(posted: posted, tmux_store: tmux_store)
-
-    created = []
-    stub_tmux_method(:session_exists?, false)
-    Earl::Tmux.define_singleton_method(:create_session) do |name:, command:, working_dir:|
-      created << { name: name, command: command, working_dir: working_dir }
-    end
+    executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "fix tests", " --name my-fix --dir /tmp" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    assert_equal 1, created.size
-    assert_equal "my-fix", created.first[:name]
-    assert_equal "/tmp", created.first[:working_dir]
-    assert_includes created.first[:command], "fix tests"
+    assert_equal 1, tmux.created_sessions.size
+    assert_equal "my-fix", tmux.created_sessions.first[:name]
+    assert_equal "/tmp", tmux.created_sessions.first[:working_dir]
+    assert_includes tmux.created_sessions.first[:command], "claude"
+    assert_equal "claude fix\\ tests", tmux.created_sessions.first[:command]
     assert_equal 1, tmux_store[:saved].size
     assert_includes posted.first[:message], "Spawned"
   end
 
   test "!spawn rejects duplicate session name" do
     posted = []
-    executor = build_executor(posted: posted)
-
-    stub_tmux_method(:session_exists?, true)
+    tmux = build_mock_tmux_adapter
+    tmux.session_exists_result = true
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "fix tests", " --name existing" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -809,28 +801,144 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "not found"
   end
 
+  # -- New tests: empty prompt, invalid name, shell-safe prompt ---------------
+
+  test "!spawn rejects empty prompt" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "", "" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Usage"
+  end
+
+  test "!spawn rejects nil prompt" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ nil, "" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Usage"
+  end
+
+  test "!spawn rejects whitespace-only prompt" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "   ", "" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Usage"
+  end
+
+  test "!spawn rejects name containing dot" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "fix tests", " --name bad.name" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Invalid session name"
+    assert_includes posted.first[:message], "bad.name"
+  end
+
+  test "!spawn rejects name containing colon" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ "fix tests", " --name bad:name" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Invalid session name"
+    assert_includes posted.first[:message], "bad:name"
+  end
+
+  test "!spawn shell-escapes prompt to prevent injection" do
+    posted = []
+    tmux = build_mock_tmux_adapter
+    tmux.session_exists_result = false
+    tmux_store = build_tmux_store
+    executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
+
+    malicious_prompt = 'hello"; rm -rf /'
+    command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: [ malicious_prompt, " --name safe-test --dir /tmp" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, tmux.created_sessions.size
+    # The command should be properly escaped, not containing unescaped quotes
+    cmd = tmux.created_sessions.first[:command]
+    assert_includes cmd, "claude"
+    assert_not_includes cmd, '";'
+    assert_equal "claude hello\\\"\\;\\ rm\\ -rf\\ /", cmd
+  end
+
   private
 
-  # Saves original Tmux methods and defines stubs.
-  # Restored in teardown.
-  def stub_tmux_method(method_name, return_value)
-    @stubbed_tmux_methods ||= {}
-    unless @stubbed_tmux_methods.key?(method_name)
-      @stubbed_tmux_methods[method_name] = Earl::Tmux.method(method_name) if Earl::Tmux.respond_to?(method_name)
+  # -- Mock tmux adapter for DI (no global singleton mutation) ---------------
+
+  class MockTmuxAdapter
+    attr_accessor :available_result, :session_exists_result, :capture_pane_result,
+                  :capture_pane_error, :list_sessions_result, :list_panes_result,
+                  :send_keys_error
+    attr_reader :send_keys_calls, :created_sessions, :killed_sessions
+
+    def initialize
+      @available_result = true
+      @session_exists_result = true
+      @capture_pane_result = ""
+      @capture_pane_error = nil
+      @list_sessions_result = []
+      @list_panes_result = []
+      @send_keys_error = nil
+      @send_keys_calls = []
+      @created_sessions = []
+      @killed_sessions = []
     end
-    Earl::Tmux.define_singleton_method(method_name) { |*_args, **_opts| return_value }
+
+    def available?
+      @available_result
+    end
+
+    def session_exists?(_name)
+      @session_exists_result
+    end
+
+    def capture_pane(_name, **_opts)
+      raise @capture_pane_error if @capture_pane_error
+
+      @capture_pane_result
+    end
+
+    def list_sessions
+      @list_sessions_result
+    end
+
+    def list_panes(_session)
+      @list_panes_result
+    end
+
+    def send_keys(target, text)
+      raise @send_keys_error if @send_keys_error
+
+      @send_keys_calls << { target: target, text: text }
+    end
+
+    def create_session(name:, command: nil, working_dir: nil)
+      @created_sessions << { name: name, command: command, working_dir: working_dir }
+    end
+
+    def kill_session(name)
+      @killed_sessions << name
+    end
   end
 
-  def restore_tmux_methods
-    return unless @stubbed_tmux_methods
-
-    @stubbed_tmux_methods.each do |name, original|
-      Earl::Tmux.define_singleton_method(name) { |*args, **opts| original.call(*args, **opts) }
-    end
-    @stubbed_tmux_methods = nil
+  def build_mock_tmux_adapter
+    MockTmuxAdapter.new
   end
 
-  def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set, tmux_store: nil)
+  def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set, tmux_store: nil, tmux_adapter: nil)
     config = Earl::Config.new
 
     mock_manager = Object.new
@@ -855,6 +963,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     }
     opts[:heartbeat_scheduler] = heartbeat_scheduler unless heartbeat_scheduler == :not_set
     opts[:tmux_store] = tmux_store[:store] if tmux_store
+    opts[:tmux_adapter] = tmux_adapter if tmux_adapter
 
     Earl::CommandExecutor.new(**opts)
   end

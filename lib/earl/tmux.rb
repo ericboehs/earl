@@ -13,6 +13,9 @@ module Earl
     # Raised when a tmux session or pane cannot be found.
     class NotFound < Error; end
 
+    # Delay between sending literal text and pressing Enter in send_keys.
+    SEND_KEYS_DELAY = 0.1
+
     module_function
 
     def available?
@@ -69,11 +72,16 @@ module Earl
     end
 
     # Sends text to a tmux pane using the two-step pattern required by
-    # Claude Code TUI apps: send text with -l (literal), sleep 0.1s, then
+    # Claude Code TUI apps: send text with -l (literal), sleep briefly, then
     # send Enter separately. This prevents Claude from treating it as paste.
+    #
+    # NOTE: There is an inherent race window between the two tmux commands.
+    # Another process could interleave keystrokes between the literal text
+    # and the Enter press. The SEND_KEYS_DELAY mitigates but cannot eliminate
+    # this; tmux has no atomic "send text + enter" primitive.
     def send_keys(target, text)
       execute("tmux", "send-keys", "-t", target, "-l", "--", text)
-      sleep 0.1
+      sleep SEND_KEYS_DELAY
       execute("tmux", "send-keys", "-t", target, "Enter")
     end
 

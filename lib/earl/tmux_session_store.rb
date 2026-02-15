@@ -57,12 +57,17 @@ module Earl
       @cache ||= read_store
     end
 
+    # :reek:TooManyStatements
     def read_store
       return {} unless File.exist?(@path)
 
       raw = JSON.parse(File.read(@path))
-      raw.transform_values { |value| TmuxSessionInfo.new(**value.transform_keys(&:to_sym)) }
-    rescue JSON::ParserError, Errno::ENOENT => error
+      valid_keys = TmuxSessionInfo.members.map(&:to_s)
+      raw.transform_values do |value|
+        filtered = value.slice(*valid_keys).transform_keys(&:to_sym)
+        TmuxSessionInfo.new(**filtered)
+      end
+    rescue JSON::ParserError, ArgumentError, Errno::ENOENT => error
       log(:warn, "Failed to read tmux session store: #{error.message}")
       {}
     end
@@ -77,7 +82,7 @@ module Earl
       File.write(tmp_path, JSON.pretty_generate(serialized))
       File.rename(tmp_path, @path)
     rescue StandardError => error
-      log(:error, "Failed to write tmux session store: #{error.message}")
+      log(:error, "Failed to write tmux session store: #{error.message} (in-memory cache may diverge from disk)")
       FileUtils.rm_f(tmp_path) if tmp_path
     end
   end

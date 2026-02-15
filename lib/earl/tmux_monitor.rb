@@ -17,41 +17,46 @@ module Earl
 
     # Pattern matchers for detecting session state from captured output.
     # Order matters: more specific patterns are checked first.
+    # NOTE: :completed is handled separately via SHELL_PROMPT_PATTERN on last lines.
     STATE_PATTERNS = {
       asking_question: /\?\s*\n\s*(?:1[\.\)]\s|❯)/m,
       requesting_permission: /(?:Allow|Deny|approve|permission|Do you want to allow)/i,
-      errored: /(?:Error:|error:|FAILED|panic:|Traceback|fatal:)/,
-      completed: nil # Special: detected by shell prompt in last lines
+      errored: /(?:Error:|error:|FAILED|panic:|Traceback|fatal:)/
     }.freeze
 
-    SHELL_PROMPT_PATTERN = /[❯$#%]\s*\z/
+    SHELL_PROMPT_PATTERN = /[❯#%]\s*\z|\$\s+\z/
 
-    # :reek:TooManyStatements :reek:DataClump
-    def initialize(mattermost:, tmux_store:, config:, tmux_adapter: Tmux)
+    # :reek:TooManyStatements :reek:DataClump :reek:UnusedParameters
+    def initialize(mattermost:, tmux_store:, config: nil, tmux_adapter: Tmux)
       @mattermost = mattermost
       @tmux_store = tmux_store
       @tmux = tmux_adapter
       @poll_interval = Integer(ENV.fetch("EARL_TMUX_POLL_INTERVAL", DEFAULT_POLL_INTERVAL))
       @stall_threshold = Integer(ENV.fetch("EARL_TMUX_STALL_THRESHOLD", DEFAULT_STALL_THRESHOLD))
-      @config = config
 
       @last_states = {}    # session_name -> state symbol
       @output_hashes = {}  # session_name -> { hash:, count: }
       @pending_interactions = {} # post_id -> { session_name:, type:, options: }
       @mutex = Mutex.new
       @thread = nil
+      @shutdown = false
     end
 
     def start
       return if @thread&.alive?
 
+      @shutdown = false
       @thread = Thread.new { poll_loop }
       log(:info, "TmuxMonitor started (interval: #{@poll_interval}s)")
     end
 
     def stop
-      @thread&.kill
-      @thread = nil
+      @shutdown = true
+      if @thread
+        @thread.join(5)
+        @thread.kill if @thread.alive?
+        @thread = nil
+      end
       log(:info, "TmuxMonitor stopped")
     end
 
@@ -72,11 +77,15 @@ module Earl
     private
 
     def poll_loop
-      loop do
+      until @shutdown
         sleep @poll_interval
-        poll_sessions
-      rescue StandardError => error
-        log(:error, "TmuxMonitor poll error: #{error.message}")
+        break if @shutdown
+
+        begin
+          poll_sessions
+        rescue StandardError => error
+          log(:error, "TmuxMonitor poll error: #{error.message}")
+        end
       end
     end
 
@@ -93,6 +102,8 @@ module Earl
 
         state = detect_state(output, name)
         handle_state_change(name, state, output, info) if state_changed?(name, state)
+      rescue StandardError => error
+        log(:error, "TmuxMonitor: error polling session '#{name}': #{error.message}")
       end
     end
 
@@ -122,11 +133,11 @@ module Earl
       # Check for shell prompt → completed (Claude exited back to shell)
       return :completed if last_lines.match?(SHELL_PROMPT_PATTERN)
 
-      # Check pattern-based states
+      # Check pattern-based states against recent output only to avoid
+      # matching keywords that appear in discussion text further up.
+      recent = output.lines.last(15)&.join || ""
       STATE_PATTERNS.each do |state, pattern|
-        next unless pattern
-
-        return state if output.match?(pattern)
+        return state if recent.match?(pattern)
       end
 
       # Stall detection: compare output hashes between polls
@@ -153,8 +164,8 @@ module Earl
     def state_changed?(name, state)
       previous = @last_states[name]
       return true if previous != state
-      # Re-trigger for interactive states even if same, in case user missed it
-      return true if %i[asking_question requesting_permission].include?(state) && previous != state
+      # Re-trigger for interactive states even if same, so user sees repeated prompts
+      return true if %i[asking_question requesting_permission].include?(state)
 
       false
     end
@@ -289,9 +300,12 @@ module Earl
 
     # -- Helpers ---------------------------------------------------------------
 
+    # :reek:DuplicateMethodCall
     def add_emoji_reactions(post_id, count)
       [ count, EMOJI_NUMBERS.size ].min.times do |idx|
         @mattermost.add_reaction(post_id: post_id, emoji_name: EMOJI_NUMBERS[idx])
+      rescue StandardError => error
+        log(:warn, "TmuxMonitor: failed to add reaction :#{EMOJI_NUMBERS[idx]}: #{error.message}")
       end
     end
 

@@ -46,6 +46,16 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     assert_equal :completed, call_detect_state(output)
   end
 
+  test "detect_state does not false-positive on dollar amounts like $0.05" do
+    output = "Processing...\nCost: $0.05\nStill running\n"
+    assert_equal :running, call_detect_state(output)
+  end
+
+  test "detect_state detects shell prompt with $ followed by space" do
+    output = "some output\nmore output\nuser@host:~$ "
+    assert_equal :completed, call_detect_state(output)
+  end
+
   test "detect_state returns :asking_question for numbered options" do
     output = "Which file do you want to edit?\n  1. foo.rb\n  2. bar.rb\n"
     assert_equal :asking_question, call_detect_state(output)
@@ -79,6 +89,13 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
   test "detect_state returns :running for normal output" do
     output = "Processing files...\nDone with step 1\nStarting step 2\n"
     assert_equal :running, call_detect_state(output)
+  end
+
+  test "detect_state ignores error patterns beyond last 15 lines" do
+    old_lines = (1..20).map { |i| "Line #{i}: doing stuff\n" }.join
+    error_in_old_output = "Error: old problem that was already resolved\n" + old_lines
+    # The Error: line is line 1, but the last 15 lines are lines 7-21 (no error)
+    assert_equal :running, call_detect_state(error_in_old_output)
   end
 
   test "detect_state returns :stalled after threshold consecutive identical outputs" do
@@ -124,6 +141,16 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
   test "state_changed? returns false when state is the same" do
     set_last_state("session", :running)
     assert_not call_state_changed?("session", :running)
+  end
+
+  test "state_changed? re-triggers for repeated asking_question state" do
+    set_last_state("session", :asking_question)
+    assert call_state_changed?("session", :asking_question)
+  end
+
+  test "state_changed? re-triggers for repeated requesting_permission state" do
+    set_last_state("session", :requesting_permission)
+    assert call_state_changed?("session", :requesting_permission)
   end
 
   # -- parse_question tests ----------------------------------------------------
@@ -292,6 +319,23 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     assert_empty @mattermost_posts
   end
 
+  test "poll_sessions continues polling other sessions when one raises" do
+    @tmux_store.save(build_info(name: "broken-session"))
+    @tmux_store.save(build_info(name: "good-session"))
+    # Build a custom adapter that errors on one session but works on another
+    adapter = build_selective_error_adapter("broken-session", "Error: something broke\n")
+    @monitor = Earl::TmuxMonitor.new(
+      mattermost: @mattermost, tmux_store: @tmux_store,
+      tmux_adapter: adapter
+    )
+
+    call_poll_sessions
+
+    # Should have posted an alert for the good session (errored state)
+    error_posts = @mattermost_posts.select { |p| p[:message].include?("good-session") }
+    assert error_posts.size >= 1, "Expected alert for good-session even though broken-session raised"
+  end
+
   test "poll_sessions posts completed alert for shell prompt" do
     @tmux_store.save(build_info(name: "done-session"))
     @tmux_adapter.session_exists_result = true
@@ -336,6 +380,27 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
 
   # -- forward_permission tests ------------------------------------------------
 
+  test "forward_question continues adding reactions when one fails" do
+    @tmux_store.save(build_info(name: "q-session"))
+    @tmux_adapter.session_exists_result = true
+    @tmux_adapter.capture_pane_result = "Which option?\n1. foo\n2. bar\n3. baz\n"
+
+    # Make the second reaction fail
+    call_count = 0
+    @mattermost.define_singleton_method(:add_reaction) do |post_id:, emoji_name:|
+      call_count += 1
+      raise "network error" if call_count == 2
+
+      @mattermost_reactions_for_partial ||= []
+      @mattermost_reactions_for_partial << { post_id: post_id, emoji_name: emoji_name }
+    end
+
+    # Should not raise
+    assert_nothing_raised { call_poll_sessions }
+  end
+
+  # -- forward_permission tests ------------------------------------------------
+
   test "forward_permission posts permission prompt with reactions" do
     @tmux_store.save(build_info(name: "perm-session"))
     @tmux_adapter.session_exists_result = true
@@ -367,6 +432,12 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     @monitor.start
     sleep 0.05
     @monitor.stop
+    assert_nil @monitor.instance_variable_get(:@thread)
+  end
+
+  test "stop handles nil thread gracefully" do
+    # Should not raise when called without start
+    assert_nothing_raised { @monitor.stop }
     assert_nil @monitor.instance_variable_get(:@thread)
   end
 
@@ -518,5 +589,21 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
       prompt: "hello world",
       created_at: Time.now.iso8601
     )
+  end
+
+  # Adapter that raises on one session but returns error output for others.
+  def build_selective_error_adapter(error_session, default_output)
+    adapter = Object.new
+    err_name = error_session
+    output = default_output
+
+    adapter.define_singleton_method(:session_exists?) { |_name| true }
+    adapter.define_singleton_method(:capture_pane) do |name, **_opts|
+      raise StandardError, "unexpected error" if name == err_name
+
+      output
+    end
+    adapter.define_singleton_method(:send_keys) { |_target, _text| nil }
+    adapter
   end
 end

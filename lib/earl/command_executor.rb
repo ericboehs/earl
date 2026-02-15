@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "open3"
+require "shellwords"
 
 module Earl
   # Executes `!` commands parsed by CommandParser, dispatching to the
@@ -38,12 +39,14 @@ module Earl
     USAGE_SCRIPT = File.expand_path("../../bin/claude-usage", __dir__)
     CONTEXT_SCRIPT = File.expand_path("../../bin/claude-context", __dir__)
 
-    def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil, tmux_store: nil)
+    # :reek:LongParameterList
+    def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil, tmux_store: nil, tmux_adapter: Tmux)
       @session_manager = session_manager
       @mattermost = mattermost
       @config = config
       @heartbeat_scheduler = heartbeat_scheduler
       @tmux_store = tmux_store
+      @tmux = tmux_adapter
       @working_dirs = {} # thread_id -> path
     end
 
@@ -356,12 +359,12 @@ module Earl
 
     # :reek:TooManyStatements
     def handle_sessions(thread_id, channel_id)
-      unless Tmux.available?
+      unless @tmux.available?
         post_reply(channel_id, thread_id, ":x: tmux is not installed.")
         return
       end
 
-      sessions = Tmux.list_sessions
+      sessions = @tmux.list_sessions
       if sessions.empty?
         post_reply(channel_id, thread_id, "No tmux sessions running.")
         return
@@ -386,7 +389,7 @@ module Earl
     end
 
     def detect_claude_in_session(session_name)
-      panes = Tmux.list_panes(session_name)
+      panes = @tmux.list_panes(session_name)
       panes.any? { |pane| pane[:command]&.match?(/claude/i) }
     rescue Tmux::Error
       false
@@ -394,47 +397,39 @@ module Earl
 
     # :reek:TooManyStatements
     def handle_session_show(thread_id, channel_id, name)
-      output = Tmux.capture_pane(name)
-      truncated = output.length > 3500 ? "…#{output[-3500..]}" : output
-      post_reply(channel_id, thread_id, "#### :computer: `#{name}` pane output\n```\n#{truncated}\n```")
-    rescue Tmux::NotFound
-      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
-    rescue Tmux::Error => error
-      post_reply(channel_id, thread_id, ":x: Error capturing pane: #{error.message}")
+      with_tmux_session(thread_id, channel_id, name) do
+        output = @tmux.capture_pane(name)
+        truncated = truncate_output(output)
+        post_reply(channel_id, thread_id, "#### :computer: `#{name}` pane output\n```\n#{truncated}\n```")
+      end
     end
 
     def handle_session_status(thread_id, channel_id, name)
-      output = Tmux.capture_pane(name, lines: 200)
-      truncated = output.length > 3000 ? "…#{output[-3000..]}" : output
-      post_reply(channel_id, thread_id,
-                 "#### :mag: `#{name}` status\n```\n#{truncated}\n```\n_AI summary not yet implemented._")
-    rescue Tmux::NotFound
-      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
-    rescue Tmux::Error => error
-      post_reply(channel_id, thread_id, ":x: Error: #{error.message}")
+      with_tmux_session(thread_id, channel_id, name) do
+        output = @tmux.capture_pane(name, lines: 200)
+        truncated = truncate_output(output, 3000)
+        post_reply(channel_id, thread_id,
+                   "#### :mag: `#{name}` status\n```\n#{truncated}\n```\n_AI summary not yet implemented._")
+      end
     end
 
     # :reek:LongParameterList
     def handle_session_input(thread_id, channel_id, name, text)
-      Tmux.send_keys(name, text)
-      post_reply(channel_id, thread_id, ":keyboard: Sent to `#{name}`: `#{text}`")
-    rescue Tmux::NotFound
-      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
-    rescue Tmux::Error => error
-      post_reply(channel_id, thread_id, ":x: Error sending keys: #{error.message}")
+      with_tmux_session(thread_id, channel_id, name) do
+        @tmux.send_keys(name, text)
+        post_reply(channel_id, thread_id, ":keyboard: Sent to `#{name}`: `#{text}`")
+      end
     end
 
     def handle_session_nudge(thread_id, channel_id, name)
-      Tmux.send_keys(name, "Are you stuck? What's your current status?")
-      post_reply(channel_id, thread_id, ":wave: Nudged `#{name}`.")
-    rescue Tmux::NotFound
-      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
-    rescue Tmux::Error => error
-      post_reply(channel_id, thread_id, ":x: Error nudging: #{error.message}")
+      with_tmux_session(thread_id, channel_id, name) do
+        @tmux.send_keys(name, "Are you stuck? What's your current status?")
+        post_reply(channel_id, thread_id, ":wave: Nudged `#{name}`.")
+      end
     end
 
     def handle_session_kill(thread_id, channel_id, name)
-      Tmux.kill_session(name)
+      @tmux.kill_session(name)
       @tmux_store&.delete(name)
       post_reply(channel_id, thread_id, ":skull: Tmux session `#{name}` killed.")
     rescue Tmux::NotFound
@@ -446,16 +441,26 @@ module Earl
 
     # :reek:TooManyStatements :reek:LongParameterList
     def handle_spawn(thread_id, channel_id, prompt, flags_str)
+      if prompt.to_s.strip.empty?
+        post_reply(channel_id, thread_id, ":x: Usage: `!spawn \"prompt\" [--name N] [--dir D]`")
+        return
+      end
+
       flags = parse_spawn_flags(flags_str.to_s)
       name = flags[:name] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}"
       working_dir = flags[:dir]
+
+      if name.match?(/[.:]/)
+        post_reply(channel_id, thread_id, ":x: Invalid session name `#{name}`: cannot contain `.` or `:` (tmux reserved).")
+        return
+      end
 
       if working_dir && !Dir.exist?(working_dir)
         post_reply(channel_id, thread_id, ":x: Directory not found: `#{working_dir}`")
         return
       end
 
-      if Tmux.session_exists?(name)
+      if @tmux.session_exists?(name)
         post_reply(channel_id, thread_id, ":x: Session `#{name}` already exists.")
         return
       end
@@ -468,8 +473,8 @@ module Earl
 
     # :reek:TooManyStatements :reek:LongParameterList
     def spawn_tmux_session(name:, prompt:, working_dir:, channel_id:, thread_id:)
-      command = "claude \"#{prompt.gsub('"', '\\"')}\""
-      Tmux.create_session(name: name, command: command, working_dir: working_dir)
+      command = "claude #{Shellwords.shellescape(prompt)}"
+      @tmux.create_session(name: name, command: command, working_dir: working_dir)
 
       save_tmux_session_info(name: name, channel_id: channel_id, thread_id: thread_id,
                              working_dir: working_dir, prompt: prompt)
@@ -492,12 +497,24 @@ module Earl
       @tmux_store.save(info)
     end
 
+    def truncate_output(output, max_length = 3500)
+      output.length > max_length ? "…#{output[-max_length..]}" : output
+    end
+
+    def with_tmux_session(thread_id, channel_id, name)
+      yield
+    rescue Tmux::NotFound
+      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
+    rescue Tmux::Error => error
+      post_reply(channel_id, thread_id, ":x: Error: #{error.message}")
+    end
+
     # :reek:DuplicateMethodCall
     def parse_spawn_flags(str)
-      flags = {}
-      flags[:dir] = Regexp.last_match(1) if str.match(/--dir\s+(\S+)/)
-      flags[:name] = Regexp.last_match(1) if str.match(/--name\s+(\S+)/)
-      flags
+      {
+        dir: str[/--dir\s+(\S+)/, 1],
+        name: str[/--name\s+(\S+)/, 1]
+      }.compact
     end
   end
 end

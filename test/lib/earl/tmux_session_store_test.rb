@@ -109,6 +109,28 @@ class Earl::TmuxSessionStoreTest < ActiveSupport::TestCase
     assert_equal({}, @store.all)
   end
 
+  test "handles unknown keys in JSON gracefully" do
+    json_with_extra_keys = {
+      "my-session" => {
+        "name" => "my-session",
+        "channel_id" => "ch-1",
+        "thread_id" => "th-1",
+        "working_dir" => "/tmp",
+        "prompt" => "hello",
+        "created_at" => "2026-02-15T00:00:00-06:00",
+        "unknown_field" => "should be ignored",
+        "another_extra" => 42
+      }
+    }
+    File.write(@store_path, JSON.pretty_generate(json_with_extra_keys))
+
+    store = Earl::TmuxSessionStore.new(path: @store_path)
+    session = store.get("my-session")
+    assert_equal "my-session", session.name
+    assert_equal "ch-1", session.channel_id
+    assert_equal "hello", session.prompt
+  end
+
   test "save uses atomic write" do
     @store.save(build_info(name: "session-1"))
 
@@ -149,6 +171,20 @@ class Earl::TmuxSessionStoreTest < ActiveSupport::TestCase
     assert_nothing_raised { store.save(build_info(name: "session-2")) }
   ensure
     File.chmod(0o755, readonly_dir) if Dir.exist?(readonly_dir)
+  end
+
+  test "read_store handles missing struct members gracefully" do
+    json_with_partial_keys = {
+      "partial-session" => {
+        "name" => "partial-session"
+      }
+    }
+    File.write(@store_path, JSON.pretty_generate(json_with_partial_keys))
+
+    store = Earl::TmuxSessionStore.new(path: @store_path)
+    session = store.get("partial-session")
+    assert_equal "partial-session", session.name
+    assert_nil session.channel_id
   end
 
   private
