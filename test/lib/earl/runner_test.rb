@@ -72,6 +72,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -136,6 +137,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_text_callback = nil
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -196,6 +198,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -233,6 +236,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_text_callback = nil
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -310,6 +314,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     stats = mock_stats
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
     mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
@@ -363,6 +368,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     stats = mock_stats
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -454,6 +460,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_tool_use_callback = nil
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -477,6 +484,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_tool_use_callback = nil
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -552,6 +560,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -592,6 +601,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -703,6 +713,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_tool_use_callback = nil
     mock_session = Object.new
     mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
     mock_session.define_singleton_method(:send_message) { |_text| }
@@ -765,13 +776,49 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert queue.try_claim("thread-12345678"), "Queue claim should have been released after error"
   end
 
+  test "process_message releases queue and stops typing when send_message returns false" do
+    runner = Earl::Runner.new
+
+    mock_session = Object.new
+    mock_session.define_singleton_method(:on_text) { |&_block| }
+    mock_session.define_singleton_method(:on_system) { |&_block| }
+    mock_session.define_singleton_method(:on_complete) { |&_block| }
+    mock_session.define_singleton_method(:on_tool_use) { |&_block| }
+    mock_session.define_singleton_method(:send_message) { |_text| false } # Dead session
+    mock_session.define_singleton_method(:stats) do
+      Earl::ClaudeSession::Stats.new(
+        total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
+        turn_input_tokens: 0, turn_output_tokens: 0,
+        cache_read_tokens: 0, cache_creation_tokens: 0
+      )
+    end
+
+    mock_manager = build_mock_manager(mock_session)
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
+
+    queue = runner.instance_variable_get(:@app_state).message_queue
+    queue.try_claim("thread-12345678")
+
+    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+
+    # Queue should be released
+    assert queue.try_claim("thread-12345678"), "Queue claim should have been released after dead session"
+
+    # Active response should be cleaned up
+    assert_nil runner.instance_variable_get(:@active_responses)["thread-12345678"]
+  end
+
   test "find_thread_for_question returns thread_id for known tool_use_id" do
     runner = Earl::Runner.new
     runner.instance_variable_get(:@question_threads)["tu-42"] = "thread-abcd1234"
     assert_equal "thread-abcd1234", runner.send(:find_thread_for_question, "tu-42")
   end
 
-  test "pause_if_idle skips paused sessions" do
+  test "stop_if_idle skips paused sessions" do
     runner = Earl::Runner.new
     persisted = Earl::SessionStore::PersistedSession.new(
       is_paused: true,
@@ -782,11 +829,11 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     manager = runner.instance_variable_get(:@session_manager)
     manager.define_singleton_method(:stop_session) { |_id| stopped = true }
 
-    runner.send(:pause_if_idle, "thread-12345678", persisted)
+    runner.send(:stop_if_idle, "thread-12345678", persisted)
     assert_not stopped
   end
 
-  test "pause_if_idle skips recently active sessions" do
+  test "stop_if_idle skips recently active sessions" do
     runner = Earl::Runner.new
     persisted = Earl::SessionStore::PersistedSession.new(
       is_paused: false,
@@ -797,11 +844,11 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     manager = runner.instance_variable_get(:@session_manager)
     manager.define_singleton_method(:stop_session) { |_id| stopped = true }
 
-    runner.send(:pause_if_idle, "thread-12345678", persisted)
+    runner.send(:stop_if_idle, "thread-12345678", persisted)
     assert_not stopped
   end
 
-  test "pause_if_idle stops idle sessions" do
+  test "stop_if_idle stops idle sessions" do
     runner = Earl::Runner.new
     persisted = Earl::SessionStore::PersistedSession.new(
       is_paused: false,
@@ -812,7 +859,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     manager = runner.instance_variable_get(:@session_manager)
     manager.define_singleton_method(:stop_session) { |_id| stopped = true }
 
-    runner.send(:pause_if_idle, "thread-12345678", persisted)
+    runner.send(:stop_if_idle, "thread-12345678", persisted)
     assert stopped
   end
 
@@ -860,18 +907,13 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     thread = Thread.new { sleep 60 }
     runner.instance_variable_set(:@idle_checker_thread, thread)
 
-    # Stub session_manager.pause_all and exit
+    # Stub session_manager.pause_all
     manager = runner.instance_variable_get(:@session_manager)
     manager.define_singleton_method(:pause_all) { }
-
-    # Stub exit to prevent test from exiting
-    exited = false
-    runner.define_singleton_method(:exit) { |_code| exited = true }
 
     runner.send(:shutdown)
     sleep 0.05 # Allow thread to be killed
     assert_not thread.alive?
-    assert exited
   end
 
   test "shutdown works when idle_checker_thread is nil" do
@@ -881,12 +923,8 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     manager = runner.instance_variable_get(:@session_manager)
     manager.define_singleton_method(:pause_all) { }
 
-    exited = false
-    runner.define_singleton_method(:exit) { |_code| exited = true }
-
     # Should not raise even with nil thread
     assert_nothing_raised { runner.send(:shutdown) }
-    assert exited
   end
 
   test "check_idle_sessions iterates persisted sessions" do
@@ -911,6 +949,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
   def build_mock_session(on_send: nil)
     mock = Object.new
     mock.define_singleton_method(:on_text) { |&_block| }
+    mock.define_singleton_method(:on_system) { |&_block| }
     mock.define_singleton_method(:on_complete) { |&_block| }
     mock.define_singleton_method(:on_tool_use) { |&_block| }
     mock.define_singleton_method(:send_message) { |text| on_send&.call(text) }

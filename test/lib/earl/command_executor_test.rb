@@ -223,17 +223,13 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "EARL_SKIP_PERMISSIONS"
   end
 
-  test "!compact sends /compact to session" do
-    sent_messages = []
-    mock_session = Object.new
-    mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
-
-    executor = build_executor(session: mock_session)
+  test "!compact returns passthrough to /compact" do
+    executor = build_executor
 
     command = Earl::CommandParser::ParsedCommand.new(name: :compact, args: [])
-    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+    result = executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    assert_equal [ "/compact" ], sent_messages
+    assert_equal({ passthrough: "/compact" }, result)
   end
 
   test "!escape sends SIGINT to active session" do
@@ -303,14 +299,13 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "No active session"
   end
 
-  test "!compact does nothing when no session" do
+  test "!compact returns passthrough even without session" do
     executor = build_executor(session: nil)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :compact, args: [])
-    # Should not raise — session&.send_message with nil session
-    assert_nothing_raised do
-      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
-    end
+    result = executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal({ passthrough: "/compact" }, result)
   end
 
   test "execute handles unknown command gracefully" do
@@ -429,30 +424,13 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "!usage"
   end
 
-  test "!usage sends /usage to active session" do
-    sent_messages = []
-    mock_session = Object.new
-    mock_session.define_singleton_method(:send_message) { |msg| sent_messages << msg }
-
-    posted = []
-    executor = build_executor(posted: posted, session: mock_session)
+  test "!usage returns passthrough to /usage" do
+    executor = build_executor
 
     command = Earl::CommandParser::ParsedCommand.new(name: :usage, args: [])
-    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+    result = executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    assert_equal [ "/usage" ], sent_messages
-    assert_empty posted
-  end
-
-  test "!usage reports no session when none found" do
-    posted = []
-    executor = build_executor(posted: posted, session: nil)
-
-    command = Earl::CommandParser::ParsedCommand.new(name: :usage, args: [])
-    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
-
-    assert_equal 1, posted.size
-    assert_includes posted.first[:message], "No active session"
+    assert_equal({ passthrough: "/usage" }, result)
   end
 
   test "!help includes context command" do
@@ -465,30 +443,13 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "!context"
   end
 
-  test "!context reports no session when none found" do
-    posted = []
-    executor = build_executor(posted: posted, session: nil)
+  test "!context returns passthrough to /context" do
+    executor = build_executor
 
     command = Earl::CommandParser::ParsedCommand.new(name: :context, args: [])
-    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+    result = executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    assert_equal 1, posted.size
-    assert_includes posted.first[:message], "No active session"
-  end
-
-  test "!context sends /context to active session" do
-    sent_messages = []
-    mock_session = Object.new
-    mock_session.define_singleton_method(:send_message) { |msg| sent_messages << msg }
-
-    posted = []
-    executor = build_executor(posted: posted, session: mock_session)
-
-    command = Earl::CommandParser::ParsedCommand.new(name: :context, args: [])
-    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
-
-    assert_equal [ "/context" ], sent_messages
-    assert_empty posted
+    assert_equal({ passthrough: "/context" }, result)
   end
 
   private

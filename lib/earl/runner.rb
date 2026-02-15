@@ -6,6 +6,7 @@ module Earl
   # and streaming response delivery.
   class Runner
     include Logging
+    include Formatting
 
     # Tracks runtime state: shutdown flag and per-thread message queue.
     AppState = Struct.new(:shutting_down, :message_queue, keyword_init: true)
@@ -76,7 +77,7 @@ module Earl
       @heartbeat_scheduler.stop
       @session_manager.pause_all
       log(:info, "Goodbye!")
-      exit 0
+      # No exit here — let the start method's sleep loop exit via shutting_down flag
     end
 
     def setup_message_handler
@@ -109,7 +110,11 @@ module Earl
       if CommandParser.command?(text)
         command = CommandParser.parse(text)
         if command
-          @command_executor.execute(command, thread_id: thread_id, channel_id: channel_id)
+          result = @command_executor.execute(command, thread_id: thread_id, channel_id: channel_id)
+          if result&.dig(:passthrough)
+            enqueue_message(thread_id: thread_id, text: result[:passthrough], channel_id: channel_id,
+                            sender_name: sender_name)
+          end
           stop_active_response(thread_id) if %i[stop kill].include?(command.name)
         end
       else
@@ -153,22 +158,23 @@ module Earl
       response.start_typing
 
       setup_callbacks(session, response, thread_id)
-      session.send_message(text)
-      @session_manager.touch(thread_id)
+      sent = session.send_message(text)
+      @session_manager.touch(thread_id) if sent
     rescue StandardError => error
       log(:error, "Error processing message for thread #{thread_id[0..7]}: #{error.message}")
       log(:error, error.backtrace&.first(5)&.join("\n"))
-      # Release the queue claim so future messages aren't permanently stuck
-      @app_state.message_queue.dequeue(thread_id)
+    ensure
+      cleanup_failed_send(response, thread_id) unless sent
     end
 
     def resolve_working_dir(thread_id, channel_id)
       @command_executor.working_dir_for(thread_id) || @config.channels[channel_id] || Dir.pwd
     end
 
-    # :reek:FeatureEnvy
+    # :reek:FeatureEnvy :reek:TooManyStatements
     def setup_callbacks(session, response, thread_id)
       session.on_text { |text| response.on_text(text) }
+      session.on_system { |event| response.on_text(event[:message]) }
       session.on_complete { |_| handle_response_complete(session, response, thread_id) }
       session.on_tool_use do |tool_use|
         response.on_tool_use(tool_use)
@@ -224,10 +230,10 @@ module Earl
       @app_state.message_queue.dequeue(thread_id)
     end
 
-    def format_number(num)
-      return "0" unless num
-
-      num.to_s.reverse.gsub(/(\d{3})(?=\d)/, '\\1,').reverse
+    def cleanup_failed_send(response, thread_id)
+      response&.stop_typing
+      @active_responses.delete(thread_id)
+      @app_state.message_queue.release(thread_id)
     end
 
     # Idle session management extracted to reduce class method count.
@@ -247,17 +253,17 @@ module Earl
 
       def check_idle_sessions
         @session_store.load.each do |thread_id, persisted|
-          pause_if_idle(thread_id, persisted)
+          stop_if_idle(thread_id, persisted)
         end
       end
 
-      def pause_if_idle(thread_id, persisted)
+      def stop_if_idle(thread_id, persisted)
         return if persisted.is_paused
 
         idle_seconds = Time.now - Time.parse(persisted.last_activity_at)
         return unless idle_seconds > IDLE_TIMEOUT
 
-        log(:info, "Pausing idle session for thread #{thread_id[0..7]}")
+        log(:info, "Stopping idle session for thread #{thread_id[0..7]} (idle #{(idle_seconds / 60).round}min)")
         @session_manager.stop_session(thread_id)
       end
     end

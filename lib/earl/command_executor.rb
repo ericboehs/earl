@@ -23,6 +23,9 @@ module Earl
       | `!heartbeats` | Show heartbeat schedule status |
     HELP
 
+    # Commands that pass through to Claude as slash commands.
+    PASSTHROUGH_COMMANDS = { compact: "/compact", usage: "/usage", context: "/context" }.freeze
+
     def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil)
       @session_manager = session_manager
       @mattermost = mattermost
@@ -31,21 +34,26 @@ module Earl
       @working_dirs = {} # thread_id -> path
     end
 
+    # Returns { passthrough: "/command" } for passthrough commands so the
+    # runner can route them through the normal message pipeline.
+    # Returns nil for all other commands (handled inline).
     def execute(command, thread_id:, channel_id:)
+      name = command.name
+      slash = PASSTHROUGH_COMMANDS[name]
+      return { passthrough: slash } if slash
+
       arg = command.args.first
-      case command.name
+      case name
       when :help then handle_help(thread_id, channel_id)
       when :stats then handle_stats(thread_id, channel_id)
       when :stop then handle_stop(thread_id, channel_id)
       when :escape then handle_escape(thread_id, channel_id)
       when :kill then handle_kill(thread_id, channel_id)
-      when :compact then handle_compact(thread_id)
       when :cd then handle_cd(thread_id, channel_id, arg)
       when :permissions then post_reply(channel_id, thread_id, "Permission mode is controlled via `EARL_SKIP_PERMISSIONS` env var.")
       when :heartbeats then handle_heartbeats(thread_id, channel_id)
-      when :usage then handle_usage(thread_id, channel_id)
-      when :context then handle_context(thread_id, channel_id)
       end
+      nil
     end
 
     def working_dir_for(thread_id)
@@ -135,11 +143,6 @@ module Earl
       cleanup_and_reply(thread_id, channel_id, "Process already exited, session cleaned up.")
     end
 
-    def handle_compact(thread_id)
-      session = @session_manager.get(thread_id)
-      session&.send_message("/compact")
-    end
-
     def handle_cd(thread_id, channel_id, path)
       cleaned = path.to_s.strip
       if cleaned.empty?
@@ -169,24 +172,6 @@ module Earl
       end
 
       post_reply(channel_id, thread_id, format_heartbeats(statuses))
-    end
-
-    def handle_usage(thread_id, channel_id)
-      session = @session_manager.get(thread_id)
-      if session
-        session.send_message("/usage")
-      else
-        post_reply(channel_id, thread_id, "No active session for this thread.")
-      end
-    end
-
-    def handle_context(thread_id, channel_id)
-      session = @session_manager.get(thread_id)
-      if session
-        session.send_message("/context")
-      else
-        post_reply(channel_id, thread_id, "No active session for this thread.")
-      end
     end
 
     # :reek:FeatureEnvy

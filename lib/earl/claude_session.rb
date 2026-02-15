@@ -18,8 +18,8 @@ module Earl
         stdin.flush
       end
     end
-    # Holds text-streaming and completion callback procs.
-    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, keyword_init: true)
+    # Holds text-streaming, tool-use, and completion callback procs.
+    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_system, keyword_init: true)
     # Groups session launch options to keep instance variable count low.
     Options = Struct.new(:permission_config, :resume, :working_dir, :username, keyword_init: true)
 
@@ -119,6 +119,10 @@ module Earl
       @callbacks.on_tool_use = block
     end
 
+    def on_system(&block)
+      @callbacks.on_system = block
+    end
+
     def start
       stdin, stdout, stderr, wait_thread = open_process
       @process_state = ProcessState.new(process: wait_thread, stdin: stdin, wait_thread: wait_thread)
@@ -127,19 +131,23 @@ module Earl
       spawn_io_threads(stdout, stderr)
     end
 
+    # :reek:TooManyStatements
     def send_message(text)
       unless alive?
         log(:warn, "Cannot send message to dead session #{short_id} — process not running")
-        return
+        return false
       end
-
-      @stats.reset_turn
-      @stats.message_sent_at = Time.now
 
       payload = JSON.generate({ type: "user", message: { role: "user", content: text } }) + "\n"
       @mutex.synchronize { @process_state.write(payload) }
 
+      @stats.reset_turn
+      @stats.message_sent_at = Time.now
       log(:debug, "Sent message to Claude #{short_id}: #{text[0..60]}")
+      true
+    rescue IOError, Errno::EPIPE => error
+      log(:error, "Failed to write to Claude #{short_id}: #{error.message}")
+      false
     end
 
     def alive?
@@ -227,6 +235,7 @@ module Earl
         @mcp_config_path ||= write_mcp_config
       end
 
+      # :reek:TooManyStatements
       def write_mcp_config
         config = {
           mcpServers: {
@@ -240,7 +249,14 @@ module Earl
           }
         }
         path = File.join(Dir.tmpdir, "earl-mcp-#{@session_id}.json")
-        File.write(path, JSON.generate(config))
+        json = JSON.generate(config)
+        File.open(path, File::CREAT | File::EXCL | File::WRONLY, 0o600) do |file|
+          file.write(json)
+        end
+        path
+      rescue Errno::EEXIST
+        # File already exists from a prior session with this ID — overwrite securely
+        File.write(path, json)
         File.chmod(0o600, path)
         path
       end
@@ -296,7 +312,10 @@ module Earl
       end
 
       def handle_system_event(event)
-        log(:debug, "Claude system: #{event['subtype']}")
+        subtype = event["subtype"]
+        log(:debug, "Claude system: #{subtype}")
+        message = event["message"]
+        @callbacks.on_system&.call(subtype: subtype, message: message) if message
       end
 
       def handle_assistant_event(event)
