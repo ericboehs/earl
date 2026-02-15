@@ -182,14 +182,45 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "not found"
   end
 
-  test "!permissions sets mode" do
+  test "!cd with no args shows usage" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :cd, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Usage"
+    assert_nil executor.working_dir_for("thread-1")
+  end
+
+  test "!cd with nil arg shows usage" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :cd, args: [ nil ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Usage"
+  end
+
+  test "!cd with whitespace-only arg shows usage" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :cd, args: [ "   " ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Usage"
+  end
+
+  test "!permissions shows info message" do
     posted = []
     executor = build_executor(posted: posted)
 
     command = Earl::CommandParser::ParsedCommand.new(name: :permissions, args: [ "auto" ])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
-    assert_equal :auto, executor.permission_mode_for("thread-1")
+    assert_includes posted.first[:message], "EARL_SKIP_PERMISSIONS"
   end
 
   test "!compact sends /compact to session" do
@@ -203,11 +234,6 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
     assert_equal [ "/compact" ], sent_messages
-  end
-
-  test "permission_mode_for defaults to interactive" do
-    executor = build_executor
-    assert_equal :interactive, executor.permission_mode_for("thread-1")
   end
 
   test "!escape sends SIGINT to active session" do
@@ -485,124 +511,22 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
     assert_equal 1, posted.size
-    assert_includes posted.first[:message], "No session found"
+    assert_includes posted.first[:message], "No active session"
   end
 
-  test "!context works for closed sessions via session store" do
-    posted = []
-    executor = build_executor(posted: posted, session: nil)
-
-    # Override claude_session_id_for to simulate a persisted (closed) session
-    executor.instance_variable_get(:@session_manager)
-            .define_singleton_method(:claude_session_id_for) { |_id| "persisted-abc-123" }
-
-    context_json = {
-      "model" => "claude-opus-4-6",
-      "used_tokens" => "150k",
-      "total_tokens" => "200k",
-      "percent_used" => "75%",
-      "categories" => {
-        "messages" => { "tokens" => "100k", "percent" => "50.0%" }
-      }
-    }
-    executor.define_singleton_method(:fetch_context_data) { |_sid| context_json }
-
-    command = Earl::CommandParser::ParsedCommand.new(name: :context, args: [])
-    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
-    sleep 0.2
-
-    assert_equal 2, posted.size
-    assert_includes posted[0][:message], "Fetching context"
-    assert_includes posted[1][:message], "150k / 200k"
-  end
-
-  test "!context posts loading message and then context data" do
-    posted = []
+  test "!context sends /context to active session" do
+    sent_messages = []
     mock_session = Object.new
-    mock_session.define_singleton_method(:session_id) { "abc-123" }
+    mock_session.define_singleton_method(:send_message) { |msg| sent_messages << msg }
 
-    executor = build_executor(posted: posted, session: mock_session)
-    context_json = {
-      "model" => "claude-opus-4-6",
-      "used_tokens" => "79k",
-      "total_tokens" => "200k",
-      "percent_used" => "39%",
-      "categories" => {
-        "messages" => { "tokens" => "27.5k", "percent" => "13.8%" },
-        "system_tools" => { "tokens" => "23.7k", "percent" => "11.9%" },
-        "free_space" => { "tokens" => "106k", "percent" => "53.0%" }
-      }
-    }
-    executor.define_singleton_method(:fetch_context_data) { |_sid| context_json }
-
-    command = Earl::CommandParser::ParsedCommand.new(name: :context, args: [])
-    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
-    sleep 0.2
-
-    assert_equal 2, posted.size
-    assert_includes posted[0][:message], "Fetching context"
-    assert_includes posted[1][:message], "79k / 200k"
-    assert_includes posted[1][:message], "27.5k tokens (13.8%)"
-    assert_includes posted[1][:message], "claude-opus-4-6"
-  end
-
-  test "!context posts error when fetch fails" do
     posted = []
-    mock_session = Object.new
-    mock_session.define_singleton_method(:session_id) { "abc-123" }
-
     executor = build_executor(posted: posted, session: mock_session)
-    executor.define_singleton_method(:fetch_context_data) { |_sid| nil }
 
     command = Earl::CommandParser::ParsedCommand.new(name: :context, args: [])
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
-    sleep 0.2
 
-    assert_equal 2, posted.size
-    assert_includes posted[0][:message], "Fetching context"
-    assert_includes posted[1][:message], "Failed to fetch"
-  end
-
-  test "format_context formats all categories" do
-    executor = build_executor
-    data = {
-      "model" => "claude-opus-4-6",
-      "used_tokens" => "79k",
-      "total_tokens" => "200k",
-      "percent_used" => "39%",
-      "categories" => {
-        "messages" => { "tokens" => "27.5k", "percent" => "13.8%" },
-        "system_prompt" => { "tokens" => "3k", "percent" => "1.5%" },
-        "system_tools" => { "tokens" => "23.7k", "percent" => "11.9%" },
-        "free_space" => { "tokens" => "106k", "percent" => "53.0%" },
-        "autocompact_buffer" => { "tokens" => "33k", "percent" => "16.5%" }
-      }
-    }
-
-    result = executor.send(:format_context, data)
-    assert_includes result, "Context Window Usage"
-    assert_includes result, "claude-opus-4-6"
-    assert_includes result, "79k / 200k tokens (39%)"
-    assert_includes result, "**Messages:** 27.5k tokens (13.8%)"
-    assert_includes result, "**Free space:** 106k tokens (53.0%)"
-    assert_includes result, "**Autocompact buffer:** 33k tokens (16.5%)"
-  end
-
-  test "format_context handles missing categories gracefully" do
-    executor = build_executor
-    data = {
-      "model" => "claude-opus-4-6",
-      "used_tokens" => "34k",
-      "total_tokens" => "200k",
-      "percent_used" => "17%",
-      "categories" => {
-        "messages" => { "tokens" => nil, "percent" => nil }
-      }
-    }
-
-    result = executor.send(:format_context, data)
-    assert_includes result, "Context Window Usage"
-    assert_not_includes result, "Messages"
+    assert_equal [ "/context" ], sent_messages
+    assert_empty posted
   end
 
   private

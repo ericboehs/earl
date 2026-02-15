@@ -7,6 +7,7 @@ module Earl
   # appropriate session manager or mattermost action.
   class CommandExecutor
     include Logging
+    include Formatting
 
     HELP_TABLE = <<~HELP
       | Command | Description |
@@ -20,7 +21,7 @@ module Earl
       | `!kill` | Force kill session |
       | `!compact` | Compact Claude's context |
       | `!cd <path>` | Set working directory for next session |
-      | `!permissions auto\\|interactive` | Toggle permission mode |
+      | `!permissions` | Show current permission mode |
       | `!heartbeats` | Show heartbeat schedule status |
     HELP
 
@@ -30,7 +31,6 @@ module Earl
       @config = config
       @heartbeat_scheduler = heartbeat_scheduler
       @working_dirs = {} # thread_id -> path
-      @permission_modes = {} # thread_id -> :auto | :interactive
     end
 
     def execute(command, thread_id:, channel_id:)
@@ -43,7 +43,7 @@ module Earl
       when :kill then handle_kill(thread_id, channel_id)
       when :compact then handle_compact(thread_id)
       when :cd then handle_cd(thread_id, channel_id, arg)
-      when :permissions then handle_permissions(thread_id, channel_id, arg)
+      when :permissions then post_reply(channel_id, thread_id, "Permission mode is controlled via `EARL_SKIP_PERMISSIONS` env var.")
       when :heartbeats then handle_heartbeats(thread_id, channel_id)
       when :usage then handle_usage(thread_id, channel_id)
       when :context then handle_context(thread_id, channel_id)
@@ -52,10 +52,6 @@ module Earl
 
     def working_dir_for(thread_id)
       @working_dirs[thread_id]
-    end
-
-    def permission_mode_for(thread_id)
-      @permission_modes.fetch(thread_id, :interactive)
     end
 
     private
@@ -147,18 +143,19 @@ module Earl
     end
 
     def handle_cd(thread_id, channel_id, path)
-      expanded = File.expand_path(path)
+      cleaned = path.to_s.strip
+      if cleaned.empty?
+        post_reply(channel_id, thread_id, ":x: Usage: `!cd <path>`")
+        return
+      end
+
+      expanded = File.expand_path(cleaned)
       if Dir.exist?(expanded)
         @working_dirs[thread_id] = expanded
         post_reply(channel_id, thread_id, ":file_folder: Working directory set to `#{expanded}` (applies to next new session)")
       else
         post_reply(channel_id, thread_id, ":x: Directory not found: `#{expanded}`")
       end
-    end
-
-    def handle_permissions(thread_id, channel_id, mode)
-      @permission_modes[thread_id] = mode.to_sym
-      post_reply(channel_id, thread_id, ":lock: Permission mode set to `#{mode}` for this thread.")
     end
 
     def handle_heartbeats(thread_id, channel_id)
@@ -177,7 +174,6 @@ module Earl
     end
 
     USAGE_SCRIPT = File.expand_path("../../bin/claude-usage", __dir__)
-    CONTEXT_SCRIPT = File.expand_path("../../bin/claude-context", __dir__)
 
     # :reek:TooManyStatements
     def handle_usage(thread_id, channel_id)
@@ -226,68 +222,13 @@ module Earl
       lines.join("\n")
     end
 
-    # :reek:TooManyStatements
     def handle_context(thread_id, channel_id)
-      sid = @session_manager.claude_session_id_for(thread_id)
-      unless sid
-        post_reply(channel_id, thread_id, "No session found for this thread.")
-        return
+      session = @session_manager.get(thread_id)
+      if session
+        session.send_message("/context")
+      else
+        post_reply(channel_id, thread_id, "No active session for this thread.")
       end
-
-      post_reply(channel_id, thread_id, ":hourglass: Fetching context data (takes ~20s)...")
-
-      Thread.new do
-        data = fetch_context_data(sid)
-        message = data ? format_context(data) : ":x: Failed to fetch context data."
-        post_reply(channel_id, thread_id, message)
-      rescue StandardError => error
-        msg = error.message
-        log(:error, "Context command error: #{msg}")
-        post_reply(channel_id, thread_id, ":x: Error fetching context: #{msg}")
-      end
-    end
-
-    # :reek:UtilityFunction
-    def fetch_context_data(session_id)
-      output, status = Open3.capture2(CONTEXT_SCRIPT, session_id, "--json", err: File::NULL)
-      return nil unless status.success?
-
-      JSON.parse(output)
-    rescue JSON::ParserError
-      nil
-    end
-
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall :reek:TooManyStatements
-    def format_context(data)
-      lines = [ "#### :brain: Context Window Usage" ]
-      lines << "- **Model:** `#{data['model']}`"
-      lines << "- **Used:** #{data['used_tokens']} / #{data['total_tokens']} tokens (#{data['percent_used']})"
-
-      cats = data["categories"]
-      if cats
-        lines << ""
-        format_context_category(lines, cats, "messages", "Messages")
-        format_context_category(lines, cats, "system_prompt", "System prompt")
-        format_context_category(lines, cats, "system_tools", "System tools")
-        format_context_category(lines, cats, "custom_agents", "Custom agents")
-        format_context_category(lines, cats, "memory_files", "Memory files")
-        format_context_category(lines, cats, "skills", "Skills")
-        format_context_category(lines, cats, "free_space", "Free space")
-        format_context_category(lines, cats, "autocompact_buffer", "Autocompact buffer")
-      end
-
-      lines.join("\n")
-    end
-
-    # :reek:LongParameterList
-    def format_context_category(lines, cats, key, label)
-      cat = cats[key]
-      tokens = cat&.fetch("tokens", nil)
-      return unless tokens
-
-      pct_val = cat["percent"]
-      pct = pct_val ? " (#{pct_val})" : ""
-      lines << "- **#{label}:** #{tokens} tokens#{pct}"
     end
 
     # :reek:FeatureEnvy
@@ -332,12 +273,6 @@ module Earl
     def cleanup_and_reply(thread_id, channel_id, message)
       @session_manager.stop_session(thread_id)
       post_reply(channel_id, thread_id, message)
-    end
-
-    def format_number(num)
-      return "0" unless num
-
-      num.to_s.reverse.gsub(/(\d{3})(?=\d)/, '\\1,').reverse
     end
   end
 end
