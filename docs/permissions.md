@@ -47,18 +47,18 @@ claude --dangerously-skip-permissions \
 Permission requests appear in the Mattermost thread as:
 
 ```
-🔒 **Permission Request**
+:lock: **Permission Request**
 Claude wants to run: `Bash`
 \```
 ls -la /tmp
 \```
-React: 👍 allow once | ✅ always allow `Bash` | 👎 deny
+React: :+1: allow once | :white_check_mark: always allow `Bash` | :-1: deny
 ```
 
 The displayed input varies by tool:
 - **Bash**: Shows the `command` field (truncated to 500 chars)
 - **Edit/Write**: Shows `file_path` and a preview of content (truncated to 300 chars)
-- **Other tools**: Shows JSON-serialized input (truncated to 500 chars)
+- **Read and other tools**: Shows JSON-serialized input (truncated to 500 chars)
 
 ## Per-Thread Tool Allowlists
 

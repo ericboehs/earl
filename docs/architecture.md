@@ -21,6 +21,8 @@ Each Mattermost thread maps to an independent Claude CLI process. EARL manages t
 bin/
   earl                          # Entry point
   earl-permission-server        # MCP permission server (spawned as subprocess by Claude CLI)
+  claude-context                # Context window usage helper (spawned by !context command)
+  claude-usage                  # Claude Pro usage helper (spawned by !usage command)
 
 lib/
   earl.rb                       # Module root, requires, shared logger

@@ -16,7 +16,7 @@ module Earl
       /\A!cost\z/i => :stats,
       /\A!compact\z/i => :compact,
       /\A!cd\s+(.+)\z/i => :cd,
-      /\A!permissions\s+(auto|interactive)\z/i => :permissions,
+      /\A!permissions\z/i => :permissions,
       /\A!heartbeats\z/i => :heartbeats,
       /\A!usage\z/i => :usage,
       /\A!context\z/i => :context

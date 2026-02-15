@@ -36,6 +36,8 @@ Optional config files:
 ```
 bin/earl                          # Entry point
 bin/earl-permission-server        # MCP permission server (spawned by Claude CLI as subprocess)
+bin/claude-context                # Context window usage helper (spawned by !context command)
+bin/claude-usage                  # Claude Pro usage helper (spawned by !usage command)
 lib/
   earl.rb                         # Module root, requires, shared logger
   earl/

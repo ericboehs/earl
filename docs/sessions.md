@@ -85,6 +85,8 @@ On EARL startup, `SessionManager#resume_all` iterates persisted sessions:
 2. For each active session, spawn a new Claude process with `--resume <session-id>`
 3. If resume fails (e.g., session expired), fall back to creating a new session
 
+After a graceful shutdown (SIGINT), all sessions are marked as paused. On restart, these sessions are not automatically resumed — they are resumed lazily when a user sends the next message in the thread (via `get_or_create`).
+
 When a user sends a message in a thread with a persisted session:
 
 1. `SessionManager#get_or_create` checks for a live session first

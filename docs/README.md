@@ -12,6 +12,9 @@ export MATTERMOST_BOT_ID="your-bot-user-id"
 export EARL_CHANNEL_ID="default-channel-id"
 export EARL_ALLOWED_USERS="alice,bob"
 
+# For multi-channel support, use EARL_CHANNELS instead of EARL_CHANNEL_ID
+# See configuration.md for details
+
 # Start EARL
 ruby bin/earl
 ```

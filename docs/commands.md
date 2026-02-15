@@ -7,7 +7,7 @@ All commands start with `!` and are sent as regular messages in a Mattermost thr
 | Command | Description |
 |---------|-------------|
 | `!help` | Show the help table |
-| `!stats` | Show session stats (tokens, context, cost) |
+| `!stats` (or `!cost`) | Show session stats (tokens, context, cost) |
 | `!usage` | Show Claude Pro subscription usage limits |
 | `!context` | Show context window usage for current session |
 | `!stop` | Kill current session |
@@ -70,6 +70,8 @@ Fetches detailed context window usage for the current session. Runs asynchronous
 - **System tools:** 8,000 tokens (4.0%)
 - **Free space:** 155,000 tokens (77.5%)
 ```
+
+Additional categories (Custom agents, Memory files, Skills, Autocompact buffer) appear when present in the session context.
 
 ### !stop
 

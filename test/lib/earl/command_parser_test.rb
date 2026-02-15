@@ -71,16 +71,10 @@ class Earl::CommandParserTest < ActiveSupport::TestCase
     assert_equal [ "~/Code/project" ], cmd.args
   end
 
-  test "parse recognizes !permissions auto" do
-    cmd = Earl::CommandParser.parse("!permissions auto")
+  test "parse recognizes !permissions" do
+    cmd = Earl::CommandParser.parse("!permissions")
     assert_equal :permissions, cmd.name
-    assert_equal [ "auto" ], cmd.args
-  end
-
-  test "parse recognizes !permissions interactive" do
-    cmd = Earl::CommandParser.parse("!permissions interactive")
-    assert_equal :permissions, cmd.name
-    assert_equal [ "interactive" ], cmd.args
+    assert_empty cmd.args
   end
 
   test "parse recognizes !heartbeats" do

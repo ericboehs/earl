@@ -71,7 +71,8 @@ Run once at a specific Unix timestamp:
 
 ```yaml
 schedule:
-  run_at: 1705334400    # 2024-01-15 16:00:00 UTC
+  run_at: 1769529600    # 2026-01-27 16:00:00 UTC
+
 once: true               # Auto-disable after execution
 ```
 
@@ -90,7 +91,7 @@ A heartbeat won't fire again if its previous run is still active. The scheduler 
 
 ### One-Off Tasks
 
-Heartbeats with `once: true` are automatically disabled in the YAML file after execution (sets `enabled: false`). Combine with `run_at` for scheduled one-shots. If `once: true` is set without a schedule, the heartbeat fires immediately.
+Heartbeats with `once: true` are automatically disabled in the YAML file after execution (sets `enabled: false`). Combine with `run_at` for scheduled one-shots. Note: when creating one-off tasks via the `manage_heartbeat` MCP tool without a schedule, `run_at` is auto-set to fire immediately. In YAML, a `schedule` block is always required — heartbeats without one are silently filtered out.
 
 ### Config Auto-Reload
 
@@ -163,7 +164,7 @@ heartbeats:
   deploy-reminder:
     description: "Remind about Friday deploy"
     schedule:
-      run_at: 1705334400
+      run_at: 1769529600
     channel_id: "abc123"
     prompt: "Remind the team about the Friday deploy freeze"
     permission_mode: auto

@@ -80,7 +80,7 @@ On completion, a stats summary line is appended after a horizontal rule:
 
 ```
 ---
-📊 42,000 tokens (turn: in:35,000 out:7,000) | 21% context | TTFT: 1.2s | 85 tok/s | model=claude-sonnet-4-5-20250929
+42,000 tokens · 21% context
 ```
 
 ## AskUserQuestion Flow

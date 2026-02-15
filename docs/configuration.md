@@ -14,7 +14,7 @@
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `EARL_CHANNELS` | Multi-channel config (comma-separated `channel_id:/working/dir` pairs) | Uses `EARL_CHANNEL_ID` with `Dir.pwd` |
-| `EARL_ALLOWED_USERS` | Comma-separated usernames allowed to interact | Empty (all users allowed) |
+| `EARL_ALLOWED_USERS` | Comma-separated usernames allowed to interact | Empty (all users allowed — no access restriction) |
 | `EARL_SKIP_PERMISSIONS` | Set to `true` to use `--dangerously-skip-permissions` | `false` |
 
 ### EARL_CHANNELS Format
@@ -57,7 +57,7 @@ These are set automatically by EARL when spawning the MCP permission server. Lis
 | `PLATFORM_THREAD_ID` | Thread for permission posts |
 | `PLATFORM_BOT_ID` | Bot user ID (from `MATTERMOST_BOT_ID`) |
 | `ALLOWED_USERS` | Comma-separated allowed usernames |
-| `PERMISSION_TIMEOUT_MS` | Permission approval timeout in ms (default: `120000`) |
+| `PERMISSION_TIMEOUT_MS` | Permission approval timeout in ms (default: `120000`). Set in EARL's parent environment to override; inherited by the MCP subprocess. |
 | `EARL_CURRENT_USERNAME` | Username of the message sender |
 
 ## Example .envrc
