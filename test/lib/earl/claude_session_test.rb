@@ -37,9 +37,9 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     assert_not session.alive?
   end
 
-  test "send_message does nothing when not alive" do
+  test "send_message returns false when not alive" do
     session = Earl::ClaudeSession.new
-    assert_nothing_raised { session.send_message("hello") }
+    assert_equal false, session.send_message("hello")
   end
 
   test "process_pid returns nil before start" do
@@ -358,15 +358,60 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     process_state.stdin = stdin
     process_state.process = wait_thread
 
-    session.send_message("Hello")
+    result = session.send_message("Hello")
     stdin.close
 
     written = stdout.read
     parsed = JSON.parse(written.strip)
 
+    assert_equal true, result
     assert_equal "user", parsed["type"]
     assert_equal "user", parsed.dig("message", "role")
     assert_equal "Hello", parsed.dig("message", "content")
+  ensure
+    [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
+    wait_thread&.value rescue nil
+  end
+
+  test "send_message returns false on IOError" do
+    session = Earl::ClaudeSession.new(session_id: "test-session")
+
+    # Use a process that stays alive
+    stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.stdin = stdin
+    process_state.process = wait_thread
+
+    # Close stdin to trigger IOError on write
+    stdin.close
+
+    result = session.send_message("Hello")
+    assert_equal false, result
+  ensure
+    [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
+    wait_thread&.value rescue nil
+  end
+
+  test "send_message does not reset stats when write fails" do
+    session = Earl::ClaudeSession.new(session_id: "test-session")
+
+    # Set some stats that should NOT be reset on failure
+    session.stats.turn_input_tokens = 500
+    session.stats.turn_output_tokens = 200
+    session.stats.message_sent_at = Time.now - 10
+
+    # Use a process that stays alive but close stdin
+    stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.stdin = stdin
+    process_state.process = wait_thread
+    stdin.close
+
+    session.send_message("Hello")
+
+    # Stats should still reflect the previous turn (not reset)
+    assert_equal 500, session.stats.turn_input_tokens
+    assert_equal 200, session.stats.turn_output_tokens
   ensure
     [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
     wait_thread&.value rescue nil
@@ -725,6 +770,18 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
     assert config.dig("mcpServers", "earl"), "Expected 'earl' key in mcpServers"
     assert_nil config.dig("mcpServers", "earl_permissions"), "Should not have old 'earl_permissions' key"
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
+  test "write_mcp_config creates file with 0600 permissions" do
+    session = Earl::ClaudeSession.new(
+      permission_config: { "PLATFORM_URL" => "http://localhost" }
+    )
+    path = session.send(:write_mcp_config)
+
+    mode = File.stat(path).mode & 0o777
+    assert_equal 0o600, mode, "Expected MCP config file to have 0600 permissions, got #{format('%04o', mode)}"
   ensure
     File.delete(path) if path && File.exist?(path)
   end

@@ -278,6 +278,15 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     assert_not handler.handles?("Bash")
   end
 
+  test "wait_for_reaction denies when WS connection fails" do
+    handler = build_handler
+    handler.define_singleton_method(:connect_websocket) { nil }
+
+    result = handler.send(:wait_for_reaction, "post-123", "Bash", { "command" => "ls" })
+    assert_equal "deny", result[:behavior]
+    assert_includes result[:message], "WebSocket"
+  end
+
   test "call delegates to handle and wraps result in MCP content format" do
     handler = build_handler
     handler.instance_variable_get(:@allowed_tools).add("Bash")
@@ -301,6 +310,105 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     assert allowed.include?("Bash")
     assert allowed.include?("Read")
     assert_not allowed.include?("Edit")
+  end
+
+  # --- WebSocket poll_for_reaction tests ---
+
+  test "poll_for_reaction returns allow on thumbsup reaction" do
+    handler = build_handler
+    mock_ws = build_mock_websocket
+
+    # Fire reaction in a thread after a short delay
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+
+    assert_equal "allow", result[:behavior]
+  end
+
+  test "poll_for_reaction returns allow and persists tool on white_check_mark" do
+    handler = build_handler
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "white_check_mark", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+
+    assert_equal "allow", result[:behavior]
+    assert handler.instance_variable_get(:@allowed_tools).include?("Bash")
+  end
+
+  test "poll_for_reaction returns deny on thumbsdown" do
+    handler = build_handler
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "-1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+
+    assert_equal "deny", result[:behavior]
+  end
+
+  test "poll_for_reaction returns nil on timeout" do
+    handler = build_handler
+    mock_ws = build_mock_websocket
+
+    # No reaction emitted — should time out
+    deadline = Time.now + 0.2
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+
+    assert_nil result
+  end
+
+  test "poll_for_reaction ignores bot's own reactions" do
+    handler = build_handler
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      # Emit bot's own reaction (should be ignored)
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "bot-1")
+      # Then emit a real user's reaction
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "-1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+
+    # Should skip bot reaction and process user's deny
+    assert_equal "deny", result[:behavior]
+  end
+
+  test "poll_for_reaction ignores reactions on other posts" do
+    handler = build_handler
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      # Reaction on wrong post (should be ignored)
+      emit_reaction(mock_ws, post_id: "other-post", emoji_name: "+1", user_id: "user-42")
+      # Then reaction on correct post
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+
+    assert_equal "allow", result[:behavior]
   end
 
   private
@@ -407,5 +515,37 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     Earl::Mcp::ApprovalHandler.new(config: config, api_client: api)
+  end
+
+  def build_mock_websocket
+    ws = Object.new
+    ws.instance_variable_set(:@handlers, {})
+    ws.define_singleton_method(:on) do |event, &block|
+      @handlers[event] = block
+    end
+    ws.define_singleton_method(:close) { }
+    ws.define_singleton_method(:fire_message) do |data|
+      handler = @handlers[:message]
+      return unless handler
+
+      msg = Object.new
+      msg.define_singleton_method(:data) { data }
+      msg.define_singleton_method(:empty?) { data.nil? || data.empty? }
+      handler.call(msg)
+    end
+    ws
+  end
+
+  def emit_reaction(mock_ws, post_id:, emoji_name:, user_id:)
+    reaction = JSON.generate({
+      "post_id" => post_id,
+      "user_id" => user_id,
+      "emoji_name" => emoji_name
+    })
+    event = JSON.generate({
+      "event" => "reaction_added",
+      "data" => { "reaction" => reaction }
+    })
+    mock_ws.fire_message(event)
   end
 end

@@ -109,6 +109,23 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_equal({}, result)
   end
 
+  test "parse_post_response returns empty hash on JSON parse error" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+
+    api.define_singleton_method(:post) do |_path, _body|
+      response = Object.new
+      response.define_singleton_method(:body) { "not json{{{" }
+      response.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
+
+    result = mm.create_post(channel_id: "ch-1", message: "Hello")
+    assert_equal({}, result)
+  end
+
   # --- Private HTTP method tests (via ApiClient) ---
 
   test "api_client post builds correct HTTP request with auth and SSL" do

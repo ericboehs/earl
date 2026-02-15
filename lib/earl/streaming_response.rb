@@ -5,12 +5,9 @@ module Earl
   # including post creation, debounced updates, and typing indicators.
   class StreamingResponse
     include Logging
+    include ToolInputFormatter
     DEBOUNCE_MS = 300
-    TOOL_ICONS = {
-      "Bash" => "🔧", "Read" => "📖", "WebFetch" => "🌐", "WebSearch" => "🌐",
-      "Edit" => "✏️", "Write" => "📝", "Glob" => "🔍", "Grep" => "🔍"
-    }.freeze
-    TOOL_PREFIXES = TOOL_ICONS.values.uniq.concat([ "⚙️" ]).freeze
+    TOOL_PREFIXES = ToolInputFormatter::TOOL_ICONS.values.uniq.concat([ "⚙️" ]).freeze
 
     # Holds the Mattermost thread and channel context for posting.
     Context = Struct.new(:thread_id, :mattermost, :channel_id, keyword_init: true)
@@ -125,6 +122,7 @@ module Earl
     end
 
     def finalize(stats_line)
+      @post_state.debounce_timer&.join(1) # Wait for any pending debounce
       stop_typing
       return if @post_state.full_text.empty? && !@post_state.reply_post_id
 
@@ -181,31 +179,9 @@ module Earl
       schedule_update
     end
 
+    # :reek:FeatureEnvy
     def format_tool_use(tool_use)
-      name = tool_use[:name]
-      icon = TOOL_ICONS.fetch(name, "⚙️")
-      detail = extract_tool_detail(tool_use)
-
-      if detail
-        "#{icon} `#{name}`\n```\n#{detail}\n```"
-      else
-        "#{icon} `#{name}`"
-      end
-    end
-
-    # :reek:ControlParameter
-    def extract_tool_detail(tool_use)
-      input = tool_use[:input] || {}
-      case tool_use[:name]
-      when "Bash" then input["command"]
-      when "Read", "Edit", "Write" then input["file_path"]
-      when "WebFetch" then input["url"]
-      when "WebSearch" then input["query"]
-      when "Grep", "Glob" then input["pattern"]
-      else
-        compact = input.compact
-        compact.empty? ? nil : JSON.generate(compact)
-      end
+      format_tool_display(tool_use[:name], tool_use[:input])
     end
 
     def tool_segment?(segment)

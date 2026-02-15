@@ -93,4 +93,31 @@ class Earl::MessageQueueTest < ActiveSupport::TestCase
     assert_equal "for-1", @queue.dequeue("thread-1")
     assert_equal "for-2", @queue.dequeue("thread-2")
   end
+
+  test "release unconditionally frees the claim for a thread" do
+    @queue.try_claim("thread-1")
+    @queue.enqueue("thread-1", "msg-1")
+    @queue.enqueue("thread-1", "msg-2")
+
+    @queue.release("thread-1")
+
+    # Thread can now be re-claimed
+    assert @queue.try_claim("thread-1")
+  end
+
+  test "release discards pending messages" do
+    @queue.try_claim("thread-1")
+    @queue.enqueue("thread-1", "msg-1")
+
+    @queue.release("thread-1")
+
+    # After release, dequeue returns nil (no leftover messages)
+    assert_nil @queue.dequeue("thread-1")
+  end
+
+  test "release is safe to call on unclaimed thread" do
+    assert_nothing_raised { @queue.release("thread-1") }
+    # Can still claim after no-op release
+    assert @queue.try_claim("thread-1")
+  end
 end

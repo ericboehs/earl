@@ -58,8 +58,9 @@ module Earl
 
       # --- Original handle method (internal implementation) ---
 
+      # :reek:TooManyStatements
       def handle(tool_name:, input:)
-        if @allowed_tools.include?(tool_name)
+        if @mutex.synchronize { @allowed_tools.include?(tool_name) }
           log(:info, "Auto-allowing #{tool_name} (previously approved)")
           return allow_result(input)
         end
@@ -120,13 +121,19 @@ module Earl
         end
       end
 
+      # :reek:TooManyStatements
       def wait_for_reaction(post_id, tool_name, input)
         timeout_sec = @config.permission_timeout_ms / 1000.0
         deadline = Time.now + timeout_sec
 
         ws = connect_websocket
+        unless ws
+          log(:error, "WebSocket connection failed, denying permission")
+          return deny_result("WebSocket connection failed")
+        end
+
         result = poll_for_reaction(ws, post_id, tool_name, input, deadline)
-        ws&.close rescue nil
+        ws.close rescue nil
 
         result || deny_result("Timed out waiting for approval")
       end
@@ -193,7 +200,10 @@ module Earl
 
       def process_reaction(emoji_name, tool_name, input)
         if APPROVE_EMOJIS.include?(emoji_name)
-          @allowed_tools.add(tool_name) && save_allowed_tools if emoji_name == "white_check_mark"
+          if emoji_name == "white_check_mark"
+            @mutex.synchronize { @allowed_tools.add(tool_name) }
+            save_allowed_tools
+          end
           allow_result(input)
         elsif DENY_EMOJIS.include?(emoji_name)
           deny_result("Denied by user")

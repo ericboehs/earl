@@ -29,9 +29,11 @@ module Earl
       @mutex = Mutex.new
       @scheduler_thread = nil
       @config_mtime = nil
+      @stop_requested = false
     end
 
     def start
+      @stop_requested = false
       definitions = @heartbeat_config.definitions
       initialize_states(definitions) unless definitions.empty?
       @config_mtime = config_file_mtime
@@ -42,13 +44,18 @@ module Earl
       @scheduler_thread = Thread.new { scheduler_loop }
     end
 
+    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def stop
-      @scheduler_thread&.kill
+      @stop_requested = true
+      @scheduler_thread&.join(5)
+      @scheduler_thread&.kill if @scheduler_thread&.alive?
       @scheduler_thread = nil
 
       @mutex.synchronize do
         @states.each_value do |state|
-          state.run_thread&.kill
+          thread = state.run_thread
+          thread&.join(3)
+          thread&.kill if thread&.alive?
         end
       end
     end
@@ -77,6 +84,8 @@ module Earl
 
     def scheduler_loop
       loop do
+        break if @stop_requested
+
         check_for_reload
         check_and_dispatch
         sleep CHECK_INTERVAL
@@ -154,6 +163,8 @@ module Earl
     def permission_config(definition)
       return nil if definition.permission_mode == :auto
 
+      # Heartbeats use per-definition permission_mode, bypassing the global
+      # skip_permissions setting. Build the env hash directly.
       {
         "PLATFORM_URL" => @config.mattermost_url,
         "PLATFORM_TOKEN" => @config.bot_token,
@@ -237,7 +248,9 @@ module Earl
       return unless data.is_a?(Hash) && data.dig("heartbeats", name).is_a?(Hash)
 
       data["heartbeats"][name]["enabled"] = false
-      File.write(path, YAML.dump(data))
+      tmp_path = "#{path}.tmp.#{Process.pid}"
+      File.write(tmp_path, YAML.dump(data))
+      File.rename(tmp_path, path)
       log(:info, "One-off heartbeat '#{name}' disabled in YAML")
     rescue StandardError => error
       log(:warn, "Failed to disable heartbeat '#{name}': #{error.message}")

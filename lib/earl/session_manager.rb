@@ -5,6 +5,7 @@ module Earl
   # thread ID, with lazy creation, coordinated shutdown, and optional persistence.
   class SessionManager
     include Logging
+    include PermissionConfig
 
     def initialize(config: nil, session_store: nil)
       @config = config
@@ -173,16 +174,9 @@ module Earl
     end
 
     def build_permission_config(thread_id, channel_id)
-      return nil unless @config && !@config.skip_permissions?
+      return nil unless @config
 
-      {
-        "PLATFORM_URL" => @config.mattermost_url,
-        "PLATFORM_TOKEN" => @config.bot_token,
-        "PLATFORM_CHANNEL_ID" => channel_id || @config.channel_id,
-        "PLATFORM_THREAD_ID" => thread_id,
-        "PLATFORM_BOT_ID" => @config.bot_id,
-        "ALLOWED_USERS" => @config.allowed_users.join(",")
-      }
+      build_permission_env(@config, channel_id: channel_id, thread_id: thread_id)
     end
 
     def build_persisted(session, channel_id: nil, working_dir: nil, paused: :active)

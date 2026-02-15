@@ -103,7 +103,8 @@ module Earl
 
       def write_with_header(path, today, entry)
         File.open(path, "a") do |file|
-          unless File.size?(path)
+          file.flock(File::LOCK_EX)
+          if file.size.zero?
             file.puts "# Memories for #{today}"
             file.puts
           end

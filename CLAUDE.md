@@ -41,6 +41,9 @@ lib/
   earl/
     config.rb                     # ENV-based configuration
     logging.rb                    # Shared logging mixin
+    formatting.rb                 # Shared number formatting helpers
+    permission_config.rb          # Shared permission env builder
+    tool_input_formatter.rb       # Shared tool display formatting
     mattermost.rb                 # WebSocket + REST API client
     mattermost/api_client.rb      # HTTP client with retry logic
     claude_session.rb             # Single Claude CLI process wrapper
@@ -49,7 +52,7 @@ lib/
     streaming_response.rb         # Mattermost post lifecycle (create/update/debounce)
     message_queue.rb              # Per-thread message queuing for busy sessions
     command_parser.rb             # Parses !commands from message text
-    command_executor.rb           # Executes !help, !stats, !kill, !cd, etc.
+    command_executor.rb           # Executes !help, !stats, !stop, !kill, !escape, !compact, !cd, !permissions, !heartbeats, !usage, !context
     question_handler.rb           # AskUserQuestion tool -> emoji reaction flow
     runner.rb                     # Main event loop, wires everything together
     cron_parser.rb                # Minimal 5-field cron expression parser
@@ -99,6 +102,29 @@ User posts in channel
 - **Shutdown**: SIGINT sends INT to Claude process, waits ~2s, then TERM. Runner calls `pause_all` to persist sessions before exit.
 - **Memory**: Persistent facts stored as markdown in `~/.config/earl/memory/`. Injected into Claude sessions via `--append-system-prompt`. Claude can save/search via MCP tools.
 - **Heartbeats**: Scheduled tasks (cron/interval/one-shot via `run_at`) that spawn Claude sessions, posting results to configured channels. One-off tasks (`once: true`) auto-disable after execution. Config auto-reloads on file change. Claude can manage schedules via the `manage_heartbeat` MCP tool.
+
+## Testing with Mattermost MCP
+
+A Mattermost MCP server is configured in `.mcp.json` (gitignored), authenticated as `@eric`. This lets you interact with EARL as a real user for integration testing while EARL is running (`ruby bin/earl`).
+
+**Available tools:** `mcp__mattermost__send_message`, `mcp__mattermost__get_channel_messages`, `mcp__mattermost__search_messages`, `mcp__mattermost__list_channels`, etc.
+
+**Key IDs:**
+- EARL channel: `bt36n3e7qj837qoi1mmho54xhh`
+- Eric's user ID: `ip5xzirtgf8ebe1xrt4nngxwty`
+- Bot user ID: `x1pomjhc9f8xjx7nwj1o6s33gc`
+
+**Example workflow — send a message and check EARL's reply:**
+```
+# Send a message to EARL (starts a new thread)
+mcp__mattermost__send_message(channel_id: "bt36n3e7qj837qoi1mmho54xhh", message: "Hello EARL")
+
+# Or reply in an existing thread
+mcp__mattermost__send_message(channel_id: "bt36n3e7qj837qoi1mmho54xhh", message: "!usage", reply_to: "<root_post_id>")
+
+# Read recent messages to see EARL's response
+mcp__mattermost__get_channel_messages(channel_id: "bt36n3e7qj837qoi1mmho54xhh", limit: 5)
+```
 
 ## Development Commands
 

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "open3"
+
 module Earl
   # Executes `!` commands parsed by CommandParser, dispatching to the
   # appropriate session manager or mattermost action.
@@ -24,7 +26,10 @@ module Earl
     HELP
 
     # Commands that pass through to Claude as slash commands.
-    PASSTHROUGH_COMMANDS = { compact: "/compact", usage: "/usage", context: "/context" }.freeze
+    PASSTHROUGH_COMMANDS = { compact: "/compact" }.freeze
+
+    USAGE_SCRIPT = File.expand_path("../../bin/claude-usage", __dir__)
+    CONTEXT_SCRIPT = File.expand_path("../../bin/claude-context", __dir__)
 
     def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil)
       @session_manager = session_manager
@@ -52,6 +57,8 @@ module Earl
       when :cd then handle_cd(thread_id, channel_id, arg)
       when :permissions then post_reply(channel_id, thread_id, "Permission mode is controlled via `EARL_SKIP_PERMISSIONS` env var.")
       when :heartbeats then handle_heartbeats(thread_id, channel_id)
+      when :usage then handle_usage(thread_id, channel_id)
+      when :context then handle_context(thread_id, channel_id)
       end
       nil
     end
@@ -172,6 +179,111 @@ module Earl
       end
 
       post_reply(channel_id, thread_id, format_heartbeats(statuses))
+    end
+
+    # :reek:TooManyStatements
+    def handle_usage(thread_id, channel_id)
+      post_reply(channel_id, thread_id, ":hourglass: Fetching usage data (takes ~15s)...")
+
+      Thread.new do
+        data = fetch_usage_data
+        message = data ? format_usage(data) : ":x: Failed to fetch usage data."
+        post_reply(channel_id, thread_id, message)
+      rescue StandardError => error
+        msg = error.message
+        log(:error, "Usage command error: #{msg}")
+        post_reply(channel_id, thread_id, ":x: Error fetching usage: #{msg}")
+      end
+    end
+
+    # :reek:UtilityFunction
+    def fetch_usage_data
+      output, status = Open3.capture2(USAGE_SCRIPT, "--json", err: File::NULL)
+      return nil unless status.success?
+
+      JSON.parse(output)
+    rescue JSON::ParserError
+      nil
+    end
+
+    # :reek:FeatureEnvy :reek:DuplicateMethodCall
+    def format_usage(data)
+      lines = [ "#### :bar_chart: Claude Pro Usage" ]
+
+      session = data["session"]
+      lines << "- **Session:** #{session['percent_used']}% used — resets #{session['resets']}" if session&.dig("percent_used")
+
+      week = data["week"]
+      lines << "- **Week:** #{week['percent_used']}% used — resets #{week['resets']}" if week&.dig("percent_used")
+
+      extra = data["extra"]
+      lines << "- **Extra:** #{extra['percent_used']}% used (#{extra['spent']} / #{extra['budget']}) — resets #{extra['resets']}" if extra&.dig("percent_used")
+
+      lines.join("\n")
+    end
+
+    # :reek:TooManyStatements
+    def handle_context(thread_id, channel_id)
+      sid = @session_manager.claude_session_id_for(thread_id)
+      unless sid
+        post_reply(channel_id, thread_id, "No session found for this thread.")
+        return
+      end
+
+      post_reply(channel_id, thread_id, ":hourglass: Fetching context data (takes ~20s)...")
+
+      Thread.new do
+        data = fetch_context_data(sid)
+        message = data ? format_context(data) : ":x: Failed to fetch context data."
+        post_reply(channel_id, thread_id, message)
+      rescue StandardError => error
+        msg = error.message
+        log(:error, "Context command error: #{msg}")
+        post_reply(channel_id, thread_id, ":x: Error fetching context: #{msg}")
+      end
+    end
+
+    # :reek:UtilityFunction
+    def fetch_context_data(session_id)
+      output, status = Open3.capture2(CONTEXT_SCRIPT, session_id, "--json", err: File::NULL)
+      return nil unless status.success?
+
+      JSON.parse(output)
+    rescue JSON::ParserError
+      nil
+    end
+
+    # :reek:FeatureEnvy :reek:DuplicateMethodCall :reek:TooManyStatements
+    def format_context(data)
+      lines = [ "#### :brain: Context Window Usage" ]
+      lines << "- **Model:** `#{data['model']}`"
+      lines << "- **Used:** #{data['used_tokens']} / #{data['total_tokens']} tokens (#{data['percent_used']})"
+
+      cats = data["categories"]
+      if cats
+        lines << ""
+        format_context_category(lines, cats, "messages", "Messages")
+        format_context_category(lines, cats, "system_prompt", "System prompt")
+        format_context_category(lines, cats, "system_tools", "System tools")
+        format_context_category(lines, cats, "custom_agents", "Custom agents")
+        format_context_category(lines, cats, "memory_files", "Memory files")
+        format_context_category(lines, cats, "skills", "Skills")
+        format_context_category(lines, cats, "free_space", "Free space")
+        format_context_category(lines, cats, "autocompact_buffer", "Autocompact buffer")
+      end
+
+      lines.join("\n")
+    end
+
+    # :reek:LongParameterList
+    def format_context_category(lines, cats, key, label)
+      cat = cats[key]
+      tokens = cat&.fetch("tokens", nil)
+      return unless tokens
+
+      pct_val = cat["percent"]
+      pct = pct_val ? " (#{pct_val})" : ""
+      lines << "- **#{label}:** #{tokens} tokens#{pct}"
     end
 
     # :reek:FeatureEnvy

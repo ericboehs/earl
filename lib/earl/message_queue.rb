@@ -42,5 +42,15 @@ module Earl
         end
       end
     end
+
+    # Unconditionally releases the processing claim for a thread,
+    # discarding any pending messages. Use when the session is dead
+    # and queued messages cannot be delivered.
+    def release(thread_id)
+      @mutex.synchronize do
+        @processing_threads.delete(thread_id)
+        @pending_messages.delete(thread_id)
+      end
+    end
   end
 end

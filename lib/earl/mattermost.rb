@@ -191,10 +191,14 @@ module Earl
       }
     end
 
+    # :reek:FeatureEnvy
     def parse_post_response(response)
       return {} unless response.is_a?(Net::HTTPSuccess)
 
       JSON.parse(response.body)
+    rescue JSON::ParserError => parse_error
+      log(:warn, "Failed to parse API response: #{parse_error.message}")
+      {}
     end
   end
 end
