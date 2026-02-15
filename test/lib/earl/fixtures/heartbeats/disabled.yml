@@ -1,0 +1,16 @@
+heartbeats:
+  disabled_beat:
+    description: "This one is disabled"
+    schedule:
+      cron: "0 9 * * *"
+    channel_id: "abc123"
+    prompt: "Should not appear."
+    enabled: false
+
+  enabled_beat:
+    description: "This one is enabled"
+    schedule:
+      interval: 60
+    channel_id: "abc123"
+    prompt: "Hello."
+    enabled: true

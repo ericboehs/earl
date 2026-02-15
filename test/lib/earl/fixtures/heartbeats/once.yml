@@ -1,0 +1,27 @@
+heartbeats:
+  scheduled_reminder:
+    description: "One-off reminder at specific time"
+    schedule:
+      run_at: 1739559600
+    channel_id: "abc123def456"
+    prompt: "Remind Eric to check the deploy."
+    once: true
+    enabled: true
+
+  immediate_task:
+    description: "Immediate one-off task"
+    schedule:
+      run_at: 1700000000
+    channel_id: "abc123def456"
+    prompt: "Run a quick health check."
+    once: true
+    enabled: true
+
+  recurring_without_once:
+    description: "Recurring task with once: false"
+    schedule:
+      interval: 3600
+    channel_id: "abc123def456"
+    prompt: "Recurring check."
+    once: false
+    enabled: true

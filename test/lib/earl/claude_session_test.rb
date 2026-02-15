@@ -24,14 +24,27 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     assert_equal 0.0, session.total_cost
   end
 
+  test "stats starts with zero tokens" do
+    session = Earl::ClaudeSession.new
+    assert_equal 0, session.stats.total_input_tokens
+    assert_equal 0, session.stats.total_output_tokens
+    assert_equal 0, session.stats.turn_input_tokens
+    assert_equal 0, session.stats.turn_output_tokens
+  end
+
   test "alive? returns false before start" do
     session = Earl::ClaudeSession.new
     assert_not session.alive?
   end
 
-  test "send_message does nothing when not alive" do
+  test "send_message returns false when not alive" do
     session = Earl::ClaudeSession.new
-    assert_nothing_raised { session.send_message("hello") }
+    assert_equal false, session.send_message("hello")
+  end
+
+  test "process_pid returns nil before start" do
+    session = Earl::ClaudeSession.new
+    assert_nil session.process_pid
   end
 
   test "handle_event fires on_text for assistant events" do
@@ -71,7 +84,50 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     assert_equal "Hello world", received_text
   end
 
-  test "handle_event ignores non-text content blocks" do
+  test "handle_event fires on_tool_use for tool_use content blocks" do
+    session = Earl::ClaudeSession.new
+    received_tool_use = nil
+    session.on_tool_use { |tu| received_tool_use = tu }
+
+    event = {
+      "type" => "assistant",
+      "message" => {
+        "content" => [
+          { "type" => "tool_use", "id" => "tu-1", "name" => "Bash", "input" => { "command" => "ls" } }
+        ]
+      }
+    }
+    session.send(:handle_event, event)
+
+    assert_not_nil received_tool_use
+    assert_equal "tu-1", received_tool_use[:id]
+    assert_equal "Bash", received_tool_use[:name]
+    assert_equal({ "command" => "ls" }, received_tool_use[:input])
+  end
+
+  test "handle_event fires on_text and on_tool_use for mixed content" do
+    session = Earl::ClaudeSession.new
+    received_text = nil
+    received_tool_use = nil
+    session.on_text { |text| received_text = text }
+    session.on_tool_use { |tu| received_tool_use = tu }
+
+    event = {
+      "type" => "assistant",
+      "message" => {
+        "content" => [
+          { "type" => "text", "text" => "result" },
+          { "type" => "tool_use", "id" => "tu-2", "name" => "Read", "input" => { "path" => "/tmp" } }
+        ]
+      }
+    }
+    session.send(:handle_event, event)
+
+    assert_equal "result", received_text
+    assert_equal "Read", received_tool_use[:name]
+  end
+
+  test "handle_event ignores non-text content blocks for on_text" do
     session = Earl::ClaudeSession.new
     received_text = nil
     session.on_text { |text| received_text = text }
@@ -80,7 +136,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
       "type" => "assistant",
       "message" => {
         "content" => [
-          { "type" => "tool_use", "name" => "read" },
+          { "type" => "tool_use", "id" => "tu-1", "name" => "read", "input" => {} },
           { "type" => "text", "text" => "result" }
         ]
       }
@@ -99,7 +155,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
       "type" => "assistant",
       "message" => {
         "content" => [
-          { "type" => "tool_use", "name" => "read" }
+          { "type" => "tool_use", "id" => "tu-1", "name" => "read", "input" => {} }
         ]
       }
     }
@@ -141,6 +197,109 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     session.send(:handle_event, event)
 
     assert_equal 0.123, session.total_cost
+  end
+
+  test "handle_event parses usage from result events" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = {
+      "type" => "result", "total_cost_usd" => 0.05, "subtype" => "success",
+      "usage" => {
+        "input_tokens" => 500,
+        "output_tokens" => 200,
+        "cache_read_input_tokens" => 100,
+        "cache_creation_input_tokens" => 50
+      }
+    }
+    session.send(:handle_event, event)
+
+    assert_equal 500, session.stats.turn_input_tokens
+    assert_equal 200, session.stats.turn_output_tokens
+    assert_equal 100, session.stats.cache_read_tokens
+    assert_equal 50, session.stats.cache_creation_tokens
+  end
+
+  test "handle_event parses modelUsage from result events" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = {
+      "type" => "result", "total_cost_usd" => 0.05, "subtype" => "success",
+      "modelUsage" => {
+        "claude-sonnet-4-20250514" => {
+          "inputTokens" => 1500,
+          "outputTokens" => 800,
+          "contextWindow" => 200_000,
+          "costUSD" => 0.05
+        }
+      }
+    }
+    session.send(:handle_event, event)
+
+    assert_equal 1500, session.stats.total_input_tokens
+    assert_equal 800, session.stats.total_output_tokens
+    assert_equal 200_000, session.stats.context_window
+    assert_equal "claude-sonnet-4-20250514", session.stats.model_id
+  end
+
+  test "stats context_percent calculates correctly" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = {
+      "type" => "result", "subtype" => "success",
+      "usage" => {
+        "input_tokens" => 10_000,
+        "output_tokens" => 0,
+        "cache_read_input_tokens" => 35_000,
+        "cache_creation_input_tokens" => 5_000
+      },
+      "modelUsage" => {
+        "claude-sonnet-4-20250514" => {
+          "inputTokens" => 10_000,
+          "outputTokens" => 0,
+          "contextWindow" => 200_000
+        }
+      }
+    }
+    session.send(:handle_event, event)
+
+    # context_percent = (10_000 + 35_000 + 5_000) / 200_000 * 100 = 25%
+    assert_in_delta 25.0, session.stats.context_percent, 0.1
+  end
+
+  test "stats tracks time to first token" do
+    session = Earl::ClaudeSession.new
+    text_received = nil
+    session.on_text { |text| text_received = text }
+
+    # Simulate send_message timing
+    session.stats.message_sent_at = Time.now - 1.5
+
+    event = {
+      "type" => "assistant",
+      "message" => { "content" => [ { "type" => "text", "text" => "Hello" } ] }
+    }
+    session.send(:handle_event, event)
+
+    assert_not_nil session.stats.first_token_at
+    assert_in_delta 1.5, session.stats.time_to_first_token, 0.2
+  end
+
+  test "stats reset_turn clears per-turn data" do
+    session = Earl::ClaudeSession.new
+    session.stats.turn_input_tokens = 500
+    session.stats.turn_output_tokens = 200
+    session.stats.message_sent_at = Time.now
+    session.stats.first_token_at = Time.now
+
+    session.stats.reset_turn
+
+    assert_equal 0, session.stats.turn_input_tokens
+    assert_equal 0, session.stats.turn_output_tokens
+    assert_nil session.stats.message_sent_at
+    assert_nil session.stats.first_token_at
   end
 
   test "handle_event does not update cost when nil" do
@@ -199,15 +358,60 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     process_state.stdin = stdin
     process_state.process = wait_thread
 
-    session.send_message("Hello")
+    result = session.send_message("Hello")
     stdin.close
 
     written = stdout.read
     parsed = JSON.parse(written.strip)
 
+    assert_equal true, result
     assert_equal "user", parsed["type"]
     assert_equal "user", parsed.dig("message", "role")
     assert_equal "Hello", parsed.dig("message", "content")
+  ensure
+    [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
+    wait_thread&.value rescue nil
+  end
+
+  test "send_message returns false on IOError" do
+    session = Earl::ClaudeSession.new(session_id: "test-session")
+
+    # Use a process that stays alive
+    stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.stdin = stdin
+    process_state.process = wait_thread
+
+    # Close stdin to trigger IOError on write
+    stdin.close
+
+    result = session.send_message("Hello")
+    assert_equal false, result
+  ensure
+    [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
+    wait_thread&.value rescue nil
+  end
+
+  test "send_message does not reset stats when write fails" do
+    session = Earl::ClaudeSession.new(session_id: "test-session")
+
+    # Set some stats that should NOT be reset on failure
+    session.stats.turn_input_tokens = 500
+    session.stats.turn_output_tokens = 200
+    session.stats.message_sent_at = Time.now - 10
+
+    # Use a process that stays alive but close stdin
+    stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.stdin = stdin
+    process_state.process = wait_thread
+    stdin.close
+
+    session.send_message("Hello")
+
+    # Stats should still reflect the previous turn (not reset)
+    assert_equal 500, session.stats.turn_input_tokens
+    assert_equal 200, session.stats.turn_output_tokens
   ensure
     [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
     wait_thread&.value rescue nil
@@ -365,6 +569,374 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     event = { "type" => "result", "total_cost_usd" => 0.05, "subtype" => "success" }
     assert_nothing_raised { session.send(:handle_event, event) }
     assert_equal 0.05, session.total_cost
+  end
+
+  # --- CLI args tests ---
+
+  test "cli_args includes --dangerously-skip-permissions without permission_config" do
+    session = Earl::ClaudeSession.new
+    args = session.send(:cli_args)
+
+    assert_includes args, "--dangerously-skip-permissions"
+    assert_not_includes args, "--permission-prompt-tool"
+  end
+
+  test "cli_args includes --permission-prompt-tool with permission_config" do
+    session = Earl::ClaudeSession.new(permission_config: { "PLATFORM_URL" => "http://localhost" })
+    args = session.send(:cli_args)
+
+    assert_includes args, "--permission-prompt-tool"
+    assert_includes args, "mcp__earl__permission_prompt"
+    assert_not_includes args, "--dangerously-skip-permissions"
+  end
+
+  test "cli_args uses --session-id by default" do
+    session = Earl::ClaudeSession.new(session_id: "test-123")
+    args = session.send(:cli_args)
+
+    idx = args.index("--session-id")
+    assert_not_nil idx
+    assert_equal "test-123", args[idx + 1]
+  end
+
+  test "cli_args uses --resume when mode is :resume" do
+    session = Earl::ClaudeSession.new(session_id: "test-123", mode: :resume)
+    args = session.send(:cli_args)
+
+    assert_includes args, "--resume"
+    assert_not_includes args, "--session-id"
+
+    idx = args.index("--resume")
+    assert_equal "test-123", args[idx + 1]
+  end
+
+  test "cli_args always includes stream-json and verbose" do
+    session = Earl::ClaudeSession.new
+    args = session.send(:cli_args)
+
+    assert_includes args, "--input-format"
+    assert_includes args, "stream-json"
+    assert_includes args, "--output-format"
+    assert_includes args, "--verbose"
+  end
+
+  test "handle_event result without usage still fires on_complete" do
+    session = Earl::ClaudeSession.new
+    completed = false
+    session.on_complete { |_sess| completed = true }
+
+    event = { "type" => "result", "subtype" => "success" }
+    session.send(:handle_event, event)
+
+    assert completed
+    assert_equal 0, session.stats.turn_input_tokens
+  end
+
+  test "handle_event result with nil modelUsage is handled" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = { "type" => "result", "subtype" => "success", "modelUsage" => nil }
+    session.send(:handle_event, event)
+
+    assert_equal 0, session.stats.total_input_tokens
+  end
+
+  test "stats tokens_per_second returns nil without timing" do
+    session = Earl::ClaudeSession.new
+    assert_nil session.stats.tokens_per_second
+  end
+
+  test "stats tokens_per_second calculates correctly" do
+    session = Earl::ClaudeSession.new
+    session.stats.first_token_at = Time.now - 2.0
+    session.stats.complete_at = Time.now
+    session.stats.turn_output_tokens = 100
+
+    assert_in_delta 50.0, session.stats.tokens_per_second, 5.0
+  end
+
+  test "stats tokens_per_second returns nil with zero output tokens" do
+    session = Earl::ClaudeSession.new
+    session.stats.first_token_at = Time.now - 1.0
+    session.stats.complete_at = Time.now
+    session.stats.turn_output_tokens = 0
+
+    assert_nil session.stats.tokens_per_second
+  end
+
+  test "stats context_percent returns nil without context_window" do
+    session = Earl::ClaudeSession.new
+    assert_nil session.stats.context_percent
+  end
+
+  test "stats time_to_first_token returns nil without timing" do
+    session = Earl::ClaudeSession.new
+    assert_nil session.stats.time_to_first_token
+  end
+
+  test "send_message resets turn stats when alive" do
+    session = Earl::ClaudeSession.new(session_id: "test-session")
+    session.stats.turn_input_tokens = 500
+    session.stats.turn_output_tokens = 200
+    session.stats.first_token_at = Time.now
+
+    # Use cat as a process that stays alive
+    stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
+    process_state = session.instance_variable_get(:@process_state)
+    process_state.stdin = stdin
+    process_state.process = wait_thread
+
+    session.send_message("test")
+
+    assert_equal 0, session.stats.turn_input_tokens
+    assert_equal 0, session.stats.turn_output_tokens
+    assert_nil session.stats.first_token_at
+    assert_not_nil session.stats.message_sent_at
+  ensure
+    [ stdin, stdout, stderr ].each { |io| io&.close rescue nil }
+    wait_thread&.value rescue nil
+  end
+
+  # --- System prompt args tests ---
+
+  test "cli_args includes --append-system-prompt when memory exists" do
+    tmp_dir = Dir.mktmpdir("earl-memory-cli-test")
+    File.write(File.join(tmp_dir, "SOUL.md"), "I am EARL.")
+
+    # Temporarily override the default memory dir
+    original_default = Earl::Memory::Store::DEFAULT_DIR
+    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
+    Earl::Memory::Store.const_set(:DEFAULT_DIR, tmp_dir)
+
+    session = Earl::ClaudeSession.new
+    args = session.send(:cli_args)
+
+    assert_includes args, "--append-system-prompt"
+    idx = args.index("--append-system-prompt")
+    assert_includes args[idx + 1], "I am EARL."
+    assert_includes args[idx + 1], "<earl-memory>"
+  ensure
+    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
+    Earl::Memory::Store.const_set(:DEFAULT_DIR, original_default)
+    FileUtils.rm_rf(tmp_dir)
+  end
+
+  test "cli_args omits --append-system-prompt when no memory" do
+    tmp_dir = Dir.mktmpdir("earl-memory-cli-empty-test")
+
+    original_default = Earl::Memory::Store::DEFAULT_DIR
+    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
+    Earl::Memory::Store.const_set(:DEFAULT_DIR, tmp_dir)
+
+    session = Earl::ClaudeSession.new
+    args = session.send(:cli_args)
+
+    assert_not_includes args, "--append-system-prompt"
+  ensure
+    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
+    Earl::Memory::Store.const_set(:DEFAULT_DIR, original_default)
+    FileUtils.rm_rf(tmp_dir)
+  end
+
+  # --- Username tests ---
+
+  test "initialize accepts username option" do
+    session = Earl::ClaudeSession.new(username: "ericboehs")
+    options = session.instance_variable_get(:@options)
+    assert_equal "ericboehs", options.username
+  end
+
+  test "write_mcp_config includes EARL_CURRENT_USERNAME in env" do
+    session = Earl::ClaudeSession.new(
+      permission_config: { "PLATFORM_URL" => "http://localhost" },
+      username: "ericboehs"
+    )
+    path = session.send(:write_mcp_config)
+    config = JSON.parse(File.read(path))
+
+    env = config.dig("mcpServers", "earl", "env")
+    assert_equal "ericboehs", env["EARL_CURRENT_USERNAME"]
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
+  test "write_mcp_config uses earl as server name" do
+    session = Earl::ClaudeSession.new(
+      permission_config: { "PLATFORM_URL" => "http://localhost" }
+    )
+    path = session.send(:write_mcp_config)
+    config = JSON.parse(File.read(path))
+
+    assert config.dig("mcpServers", "earl"), "Expected 'earl' key in mcpServers"
+    assert_nil config.dig("mcpServers", "earl_permissions"), "Should not have old 'earl_permissions' key"
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
+  test "write_mcp_config creates file with 0600 permissions" do
+    session = Earl::ClaudeSession.new(
+      permission_config: { "PLATFORM_URL" => "http://localhost" }
+    )
+    path = session.send(:write_mcp_config)
+
+    mode = File.stat(path).mode & 0o777
+    assert_equal 0o600, mode, "Expected MCP config file to have 0600 permissions, got #{format('%04o', mode)}"
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
+  test "stats tokens_per_second returns nil when duration is zero" do
+    session = Earl::ClaudeSession.new
+    now = Time.now
+    session.stats.first_token_at = now
+    session.stats.complete_at = now # zero duration
+    session.stats.turn_output_tokens = 100
+
+    assert_nil session.stats.tokens_per_second
+  end
+
+  test "stats context_percent returns nil when context_tokens are zero" do
+    session = Earl::ClaudeSession.new
+    session.stats.context_window = 200_000
+    session.stats.turn_input_tokens = 0
+    session.stats.cache_read_tokens = 0
+    session.stats.cache_creation_tokens = 0
+
+    assert_nil session.stats.context_percent
+  end
+
+  test "open_process uses no chdir when working_dir is nil" do
+    session = Earl::ClaudeSession.new(working_dir: nil)
+    args = session.send(:cli_args)
+    assert_includes args, "claude"
+  end
+
+  test "handle_event result with empty modelUsage hash" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = {
+      "type" => "result", "subtype" => "success",
+      "modelUsage" => {}
+    }
+    session.send(:handle_event, event)
+
+    assert_equal 0, session.stats.total_input_tokens
+  end
+
+  test "handle_event result with modelUsage missing contextWindow" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = {
+      "type" => "result", "subtype" => "success",
+      "modelUsage" => {
+        "claude-sonnet-4-20250514" => {
+          "inputTokens" => 100, "outputTokens" => 50
+        }
+      }
+    }
+    session.send(:handle_event, event)
+
+    assert_nil session.stats.context_window
+  end
+
+  test "format_timing returns nil when no timing data" do
+    session = Earl::ClaudeSession.new
+    result = session.send(:format_timing)
+    assert_nil result
+  end
+
+  test "format_context_usage returns nil when no context" do
+    session = Earl::ClaudeSession.new
+    result = session.send(:format_context_usage)
+    assert_nil result
+  end
+
+  test "stats format_summary includes all optional fields when present" do
+    session = Earl::ClaudeSession.new
+    session.stats.total_input_tokens = 5000
+    session.stats.total_output_tokens = 1500
+    session.stats.turn_input_tokens = 1000
+    session.stats.turn_output_tokens = 500
+    session.stats.cache_read_tokens = 3000
+    session.stats.cache_creation_tokens = 1000
+    session.stats.context_window = 200_000
+    session.stats.model_id = "claude-sonnet-4-20250514"
+    session.stats.message_sent_at = Time.now - 2.0
+    session.stats.first_token_at = Time.now - 1.0
+    session.stats.complete_at = Time.now
+
+    summary = session.stats.format_summary("Test")
+    assert_includes summary, "Test:"
+    assert_includes summary, "6500 tokens"
+    assert_includes summary, "context"
+    assert_includes summary, "TTFT"
+    assert_includes summary, "tok/s"
+    assert_includes summary, "model=claude-sonnet-4-20250514"
+  end
+
+  test "format_timing returns timing string when data present" do
+    session = Earl::ClaudeSession.new
+    session.stats.message_sent_at = Time.now - 2.0
+    session.stats.first_token_at = Time.now - 1.0
+    session.stats.complete_at = Time.now
+    session.stats.turn_output_tokens = 100
+
+    result = session.send(:format_timing)
+    assert_not_nil result
+    assert_includes result, "TTFT"
+    assert_includes result, "tok/s"
+  end
+
+  test "format_context_usage returns string when context data present" do
+    session = Earl::ClaudeSession.new
+    session.stats.context_window = 200_000
+    session.stats.turn_input_tokens = 10_000
+    session.stats.cache_read_tokens = 5_000
+    session.stats.cache_creation_tokens = 5_000
+
+    result = session.send(:format_context_usage)
+    assert_not_nil result
+    assert_includes result, "context used"
+  end
+
+  test "stats format_summary omits optional fields when nil" do
+    session = Earl::ClaudeSession.new
+    summary = session.stats.format_summary("Test")
+    assert_includes summary, "Test:"
+    assert_includes summary, "0 tokens"
+    assert_not_includes summary, "context"
+    assert_not_includes summary, "TTFT"
+    assert_not_includes summary, "tok/s"
+    assert_not_includes summary, "model="
+  end
+
+  test "format_result_log includes all available stats" do
+    session = Earl::ClaudeSession.new
+    session.on_complete { |_sess| }
+
+    event = {
+      "type" => "result", "total_cost_usd" => 0.05, "subtype" => "success",
+      "usage" => { "input_tokens" => 500, "output_tokens" => 200 },
+      "modelUsage" => {
+        "claude-sonnet-4-20250514" => {
+          "inputTokens" => 1500, "outputTokens" => 800,
+          "contextWindow" => 200_000
+        }
+      }
+    }
+    session.stats.message_sent_at = Time.now - 2.0
+    session.send(:handle_event, event)
+
+    log = session.send(:format_result_log)
+    assert_includes log, "2300 total tokens"
+    assert_includes log, "in:500"
+    assert_includes log, "out:200"
+    assert_includes log, "context used"
+    assert_includes log, "cost=$0.0500"
+    assert_includes log, "claude-sonnet-4-20250514"
   end
 
   private

@@ -7,12 +7,15 @@ module Earl
     # Groups Mattermost server URL and bot authentication credentials.
     MattermostCredentials = Struct.new(:url, :bot_token, :bot_id, keyword_init: true)
 
-    attr_reader :credentials, :channel_id, :allowed_users
+    attr_reader :credentials, :channel_id, :allowed_users, :skip_permissions
+
+    alias skip_permissions? skip_permissions
 
     def initialize
       @credentials = build_credentials
       @channel_id = required_env("EARL_CHANNEL_ID")
       @allowed_users = ENV.fetch("EARL_ALLOWED_USERS", "").split(",").map(&:strip)
+      @skip_permissions = ENV.fetch("EARL_SKIP_PERMISSIONS", "false").downcase == "true"
     end
 
     def mattermost_url
@@ -35,7 +38,22 @@ module Earl
       "#{mattermost_url}/api/v4#{path}"
     end
 
+    def channels
+      @channels ||= parse_channels
+    end
+
     private
+
+    def parse_channels
+      raw = ENV.fetch("EARL_CHANNELS", "")
+      default_dir = Dir.pwd
+      return { channel_id => default_dir } if raw.empty?
+
+      raw.split(",").each_with_object({}) do |entry, hash|
+        channel, path = entry.strip.split(":", 2)
+        hash[channel] = path || default_dir
+      end
+    end
 
     def build_credentials
       url = required_env("MATTERMOST_URL")

@@ -1,0 +1,4 @@
+heartbeats:
+  not_really:
+    - this is a list
+    - not a hash

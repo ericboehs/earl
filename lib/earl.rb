@@ -6,17 +6,37 @@ require "uri"
 require "logger"
 require "open3"
 require "securerandom"
+require "fileutils"
+require "tmpdir"
+require "time"
 
 require_relative "earl/logging"
+require_relative "earl/formatting"
+require_relative "earl/permission_config"
+require_relative "earl/tool_input_formatter"
 require_relative "earl/config"
 require_relative "earl/mattermost"
 require_relative "earl/claude_session"
+require_relative "earl/session_store"
 require_relative "earl/session_manager"
 require_relative "earl/streaming_response"
 require_relative "earl/message_queue"
+require_relative "earl/command_parser"
+require_relative "earl/command_executor"
+require_relative "earl/question_handler"
+require_relative "earl/mcp/config"
+require_relative "earl/mcp/approval_handler"
+require_relative "earl/mcp/memory_handler"
+require_relative "earl/mcp/heartbeat_handler"
+require_relative "earl/mcp/server"
+require_relative "earl/memory/store"
+require_relative "earl/memory/prompt_builder"
+require_relative "earl/cron_parser"
+require_relative "earl/heartbeat_config"
+require_relative "earl/heartbeat_scheduler"
 require_relative "earl/runner"
 
-# Top-level module for EARL (Extensible AI Response Layer), a Mattermost bot
+# Top-level module for EARL (Engineering Assistant Relay for LLMs), a Mattermost bot
 # that bridges team chat with Claude AI sessions for interactive assistance.
 module Earl
   def self.logger

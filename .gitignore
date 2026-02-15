@@ -10,6 +10,9 @@
 # Ignore all environment files.
 /.env*
 
+# Ignore MCP config (contains env var references to secrets).
+/.mcp.json
+
 # Ignore all logfiles and tempfiles.
 /log/*
 /tmp/*

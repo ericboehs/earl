@@ -109,6 +109,23 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_equal({}, result)
   end
 
+  test "parse_post_response returns empty hash on JSON parse error" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+
+    api.define_singleton_method(:post) do |_path, _body|
+      response = Object.new
+      response.define_singleton_method(:body) { "not json{{{" }
+      response.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
+
+    result = mm.create_post(channel_id: "ch-1", message: "Hello")
+    assert_equal({}, result)
+  end
+
   # --- Private HTTP method tests (via ApiClient) ---
 
   test "api_client post builds correct HTTP request with auth and SSL" do
@@ -177,6 +194,23 @@ class Earl::MattermostTest < ActiveSupport::TestCase
       assert_not_nil response
       assert_equal "401", response.code
     end
+  end
+
+  test "api_client delete builds correct HTTP request without body" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+    captured_req = nil
+
+    with_http_mock(
+      on_request: ->(req) { captured_req = req },
+      response_body: '{"status":"OK"}'
+    ) do
+      api.delete("/posts/post-1")
+    end
+
+    assert_instance_of Net::HTTP::Delete, captured_req
+    assert_equal "Bearer test-token", captured_req["Authorization"]
+    assert_nil captured_req.body
   end
 
   # --- WebSocket connect tests ---
@@ -438,12 +472,199 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_raises(SystemExit) { fake_ws.fire(:close, nil) }
   end
 
+  # --- add_reaction tests ---
+
+  test "add_reaction sends POST to reactions endpoint" do
+    @mattermost.add_reaction(post_id: "post-1", emoji_name: "+1")
+
+    req = @requests.last
+    assert_equal :post, req[:method]
+    assert_equal "/reactions", req[:path]
+    assert_equal "bot-123", req[:body][:user_id]
+    assert_equal "post-1", req[:body][:post_id]
+    assert_equal "+1", req[:body][:emoji_name]
+  end
+
+  # --- delete_post tests ---
+
+  test "delete_post sends DELETE request" do
+    @mattermost.delete_post(post_id: "post-1")
+
+    req = @requests.last
+    assert_equal :delete, req[:method]
+    assert_equal "/posts/post-1", req[:path]
+  end
+
+  # --- get_user tests ---
+
+  test "get_user sends GET and returns parsed user" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+
+    api.define_singleton_method(:get) do |path|
+      response = Object.new
+      response.define_singleton_method(:body) { JSON.generate({ "id" => "user-1", "username" => "alice" }) }
+      response.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
+
+    user = mm.get_user(user_id: "user-1")
+    assert_equal "alice", user["username"]
+  end
+
+  test "get_user returns empty hash on failure" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+
+    api.define_singleton_method(:get) do |path|
+      response = Object.new
+      response.define_singleton_method(:body) { '{"error":"not found"}' }
+      response.define_singleton_method(:code) { "404" }
+      response.define_singleton_method(:is_a?) do |klass|
+        Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
+
+    assert_equal({}, mm.get_user(user_id: "user-unknown"))
+  end
+
+  # --- on_reaction callback tests ---
+
+  test "on_reaction stores callback" do
+    mm = Earl::Mattermost.new(@config)
+    called = false
+    mm.on_reaction { called = true }
+    assert_not called
+  end
+
+  test "reaction_added event fires on_reaction callback" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    received = nil
+    mm.on_reaction { |**kwargs| received = kwargs }
+    mm.connect
+
+    reaction_data = { "user_id" => "user-999", "post_id" => "post-abc", "emoji_name" => "+1" }
+    event = { "event" => "reaction_added", "data" => { "reaction" => JSON.generate(reaction_data) } }
+
+    fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+    assert_not_nil received
+    assert_equal "user-999", received[:user_id]
+    assert_equal "post-abc", received[:post_id]
+    assert_equal "+1", received[:emoji_name]
+  end
+
+  test "reaction_added ignores bot's own reactions" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    received = nil
+    mm.on_reaction { |**kwargs| received = kwargs }
+    mm.connect
+
+    reaction_data = { "user_id" => "bot-123", "post_id" => "post-abc", "emoji_name" => "+1" }
+    event = { "event" => "reaction_added", "data" => { "reaction" => JSON.generate(reaction_data) } }
+
+    fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+    assert_nil received
+  end
+
+  test "reaction_added handles nil reaction data" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    received = nil
+    mm.on_reaction { |**kwargs| received = kwargs }
+    mm.connect
+
+    event = { "event" => "reaction_added", "data" => {} }
+
+    assert_nothing_raised { fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event))) }
+    assert_nil received
+  end
+
+  test "reaction_added handles invalid JSON reaction data" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    received = nil
+    mm.on_reaction { |**kwargs| received = kwargs }
+    mm.connect
+
+    event = { "event" => "reaction_added", "data" => { "reaction" => "not json{{" } }
+
+    assert_nothing_raised { fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event))) }
+    assert_nil received
+  end
+
+  # --- channel_id in message params ---
+
+  test "connect includes channel_id in message params" do
+    fake_ws = build_fake_ws
+    install_fake_ws(fake_ws)
+
+    mm = Earl::Mattermost.new(@config)
+    received = nil
+    mm.on_message { |**kwargs| received = kwargs }
+    mm.connect
+
+    post_data = {
+      "id" => "post-abc", "user_id" => "user-999",
+      "channel_id" => "channel-456", "root_id" => "", "message" => "Hello Earl"
+    }
+    event = { "event" => "posted", "data" => { "post" => JSON.generate(post_data), "sender_name" => "@alice" } }
+
+    fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+    assert_not_nil received
+    assert_equal "channel-456", received[:channel_id]
+  end
+
+  # --- API client GET test ---
+
+  test "api_client get builds correct HTTP request without body" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+    captured_req = nil
+
+    with_http_mock(
+      on_request: ->(req) { captured_req = req },
+      response_body: '{"id":"user-1","username":"alice"}'
+    ) do
+      api.get("/users/user-1")
+    end
+
+    assert_instance_of Net::HTTP::Get, captured_req
+    assert_equal "Bearer test-token", captured_req["Authorization"]
+    assert_nil captured_req.body
+  end
+
   private
 
   def build_testable_mattermost
     requests = @requests
     mm = Earl::Mattermost.new(@config)
     api = mm.instance_variable_get(:@api)
+
+    api.define_singleton_method(:get) do |path|
+      requests << { method: :get, path: path, body: nil, auth: "Bearer test-token" }
+      response = Object.new
+      response.define_singleton_method(:body) { JSON.generate({ "id" => "fake-id" }) }
+      response.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
 
     api.define_singleton_method(:post) do |path, body|
       requests << { method: :post, path: path, body: body, auth: "Bearer test-token" }
@@ -457,6 +678,11 @@ class Earl::MattermostTest < ActiveSupport::TestCase
 
     api.define_singleton_method(:put) do |path, body|
       requests << { method: :put, path: path, body: body, auth: "Bearer test-token" }
+      Object.new
+    end
+
+    api.define_singleton_method(:delete) do |path|
+      requests << { method: :delete, path: path, body: nil, auth: "Bearer test-token" }
       Object.new
     end
 

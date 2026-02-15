@@ -1,0 +1,23 @@
+heartbeats:
+  morning_briefing:
+    description: "Morning briefing for Eric"
+    schedule:
+      cron: "0 9 * * 1-5"
+    channel_id: "abc123def456"
+    working_dir: "/tmp"
+    prompt: "Summarize my calendar for today."
+    permission_mode: auto
+    persistent: false
+    timeout: 300
+    enabled: true
+
+  repo_health:
+    description: "Weekly dependency audit"
+    schedule:
+      interval: 604800
+    channel_id: "abc123def456"
+    working_dir: "/tmp"
+    prompt: "Run bundle audit and summarize vulnerabilities."
+    permission_mode: interactive
+    timeout: 600
+    enabled: true

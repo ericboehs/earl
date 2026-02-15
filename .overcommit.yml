@@ -20,11 +20,15 @@ PreCommit:
       - '**/*.gif'
   YamlSyntax:
     enabled: true
+    exclude:
+      - 'test/lib/earl/fixtures/**/*.yml'
   JsonSyntax:
     enabled: true
   RuboCop:
     enabled: true
     on_warn: fail
+    env:
+      RUBYOPT: '-W0'
   ErbLint:
     enabled: true
   Reek:

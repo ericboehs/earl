@@ -9,3 +9,104 @@ exclude_paths:
 detectors:
   UtilityFunction:
     public_methods_only: true
+    exclude:
+      - Earl::Mcp::ApprovalHandler#handles?    # Handler interface method — intentionally stateless
+      - Earl::Mcp::MemoryHandler#handles?      # Handler interface method — intentionally stateless
+
+  IrresponsibleModule:
+    exclude:
+      - Earl::QuestionHandler::QuestionState    # Simple state struct
+      - Earl::SessionStore::PersistedSession    # Simple data struct
+      - Earl::Mcp::Config::ApiConfig            # Simple config struct
+
+  UncommunicativeVariableName:
+    exclude:
+      - Earl::QuestionHandler   # Short block vars (i, q) in compact iteration
+      - Earl::SessionStore      # Short block var (v) in transform_values
+
+  TooManyInstanceVariables:
+    exclude:
+      - Earl::Runner            # Main coordinator: config, store, manager, mattermost, executor, handler, state, thread
+      - Earl::Mattermost        # WebSocket client: config, api, callbacks (x2), channel_ids, ws
+      - Earl::ClaudeSession     # Process state, callbacks, options, session_id, mutex, stats
+      - Earl::CommandExecutor   # Manager, mattermost, config, working_dirs, permission_modes
+      - Earl::Mcp::Config       # Env-based config with many fields
+      - Earl::StreamingResponse # Context, post state, segments, typing thread, mutex
+
+  TooManyMethods:
+    exclude:
+      - Earl::Runner            # Coordinator wires many concerns: signals, messages, commands, reactions, idle
+      - Earl::ClaudeSession     # Process lifecycle + CLI args + event processing (split across 3 modules)
+      - Earl::Mattermost        # WebSocket handling + REST API + event dispatch (split across module)
+      - Earl::CommandExecutor   # One method per command + formatting helpers
+      - Earl::StreamingResponse # Streaming lifecycle + tool display + finalize (many small focused methods)
+      - Earl::Mcp::ApprovalHandler # Permission flow: post, react, poll, persist + handler interface
+
+  DataClump:
+    exclude:
+      - Earl::Runner            # thread_id, text, channel_id, sender_name travel together through message routing
+      - Earl::SessionManager    # channel_id, working_dir, username travel together for session creation
+      - Earl::CommandExecutor   # thread_id, channel_id travel together through command routing
+      - Earl::Mcp::ApprovalHandler # tool_name, input travel together through approval flow
+
+  TooManyStatements:
+    max_statements: 8
+    exclude:
+      - Earl::ClaudeSession::Stats#format_summary       # Builds multi-field summary string
+      - Earl::Runner#initialize                          # Main coordinator initializes many collaborators
+      - Earl::CommandExecutor#execute                    # Case statement dispatches to 8 commands
+      - Earl::Mcp::ApprovalHandler#poll_for_reaction     # WebSocket polling loop with reaction matching
+      - Earl::QuestionHandler#handle_reaction            # Multi-step reaction → answer flow
+      - Earl::QuestionHandler#post_current_question      # Builds and posts formatted question
+      - Earl::SessionStore#write_store                   # Atomic file write with temp file
+      - Earl::StreamingResponse#extract_tool_detail      # Case dispatch across tool types
+      - Earl::SessionManager#resume_or_create            # Resume with fallback to create
+      - Earl::Mattermost::ApiClient#send_request         # Retry loop with connection setup
+      - Earl::Mcp::Server#tools_call_response            # Extract params, call handler, format response
+
+  FeatureEnvy:
+    exclude:
+      - Earl::ClaudeSession::EventProcessing#emit_tool_use_blocks # Iterates content blocks
+      - Earl::ClaudeSession::EventProcessing#format_result_log    # Builds formatted log string
+      - Earl::Config#parse_channels                               # Parses env var string
+      - Earl::QuestionHandler#handle_tool_use                     # Reads tool_use hash fields
+      - Earl::Mcp::ApprovalHandler#call                           # Reads arguments hash to delegate
+      - Earl::Memory::PromptBuilder#build                         # Assembles sections array into string
+      - Earl::Memory::Store#collect_entries                         # Builds entries array from file lines
+      - Earl::Memory::Store#grep_files                              # Builds results array from file matches
+
+  ControlParameter:
+    exclude:
+      - Earl::Runner#process_message                     # channel_id fallback is idiomatic
+      - Earl::SessionManager#build_permission_config     # channel_id fallback is idiomatic
+      - Earl::Mcp::ApprovalHandler#format_input          # tool_name dispatches formatting
+      - Earl::Mcp::ApprovalHandler#poll_for_reaction     # post_id filters reactions
+      - Earl::Mcp::Server#tools_call_response            # params dispatches tool call
+      - Earl::Mcp::MemoryHandler#call                    # name dispatches to save/search handlers
+
+  DuplicateMethodCall:
+    exclude:
+      - Earl::Mcp::ApprovalHandler#poll_for_reaction     # msg.data checks in WebSocket callback
+      - Earl::Mcp::ApprovalHandler#allowed_reactor?      # config.allowed_users check + use
+      - Earl::Mcp::Server#tools_call_response            # error.message in rescue
+      - Earl::QuestionHandler#handle_reaction             # state field access in multi-step flow
+      - Earl::QuestionHandler#build_answer_json           # question field access in iteration
+      - Earl::StreamingResponse#finalize                  # reply_post_id checked for different branch paths
+
+  NestedIterators:
+    exclude:
+      - Earl::Memory::Store#collect_entries              # Iterates date files then lines within each
+      - Earl::Memory::Store#grep_files                   # Iterates files then lines within each
+
+  RepeatedConditional:
+    exclude:
+      - Earl::StreamingResponse                          # reply_post_id guards at multiple lifecycle points
+      - Earl::Memory::Store                              # File.exist? guards at multiple file access points
+
+  LongParameterList:
+    exclude:
+      - Earl::SessionManager # create_session and build_persisted pass through session config
+      - Earl::Mcp::ApprovalHandler#poll_for_reaction # WebSocket + post_id + tool context for polling
+      - Earl::Runner#handle_incoming_message             # Message routing with thread_id, text, channel_id, sender_name
+      - Earl::Runner#enqueue_message                     # Message queue with thread_id, text, channel_id, sender_name
+      - Earl::Runner#process_message                     # Session creation with thread_id, text, channel_id, sender_name

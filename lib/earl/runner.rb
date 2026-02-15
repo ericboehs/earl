@@ -2,29 +2,59 @@
 
 module Earl
   # Main event loop that connects Mattermost messages to Claude sessions,
-  # managing per-thread message queuing and streaming response delivery.
+  # managing per-thread message queuing, command parsing, question handling,
+  # and streaming response delivery.
   class Runner
     include Logging
+    include Formatting
 
     # Tracks runtime state: shutdown flag and per-thread message queue.
     AppState = Struct.new(:shutting_down, :message_queue, keyword_init: true)
 
+    IDLE_CHECK_INTERVAL = 300 # 5 minutes
+    IDLE_TIMEOUT = 1800 # 30 minutes
+
     def initialize
       @config = Config.new
-      @session_manager = SessionManager.new
+      @session_store = SessionStore.new
+      @session_manager = SessionManager.new(config: @config, session_store: @session_store)
       @mattermost = Mattermost.new(@config)
+      @heartbeat_scheduler = HeartbeatScheduler.new(
+        config: @config, session_manager: @session_manager, mattermost: @mattermost
+      )
+      @command_executor = CommandExecutor.new(
+        session_manager: @session_manager, mattermost: @mattermost, config: @config,
+        heartbeat_scheduler: @heartbeat_scheduler
+      )
+      @question_handler = QuestionHandler.new(mattermost: @mattermost)
       @app_state = AppState.new(shutting_down: false, message_queue: MessageQueue.new)
+      @question_threads = {} # tool_use_id -> thread_id
+      @active_responses = {} # thread_id -> StreamingResponse
+      @idle_checker_thread = nil
+      @shutdown_mutex = Mutex.new
+
+      configure_channels
     end
 
+    # :reek:TooManyStatements
     def start
       setup_signal_handlers
       setup_message_handler
+      setup_reaction_handler
+      @session_manager.resume_all
+      start_idle_checker
+      @heartbeat_scheduler.start
       @mattermost.connect
       log_startup
       sleep 0.5 until @app_state.shutting_down
     end
 
     private
+
+    def configure_channels
+      channels = @config.channels
+      @mattermost.configure_channels(Set.new(channels.keys)) if channels.size > 1
+    end
 
     def log_startup
       log(:info, "EARL is running. Listening for messages in channel #{@config.channel_id[0..7]}...")
@@ -36,22 +66,67 @@ module Earl
     end
 
     def handle_shutdown_signal
-      return if @app_state.shutting_down
+      proceed = @shutdown_mutex.synchronize do
+        next false if @app_state.shutting_down
 
-      @app_state.shutting_down = true
+        @app_state.shutting_down = true
+        true
+      end
+      return unless proceed
+
       Thread.new { shutdown }
     end
 
     def shutdown
       log(:info, "Shutting down...")
-      @session_manager.stop_all
+      @idle_checker_thread&.kill
+      @heartbeat_scheduler.stop
+      @session_manager.pause_all
       log(:info, "Goodbye!")
-      exit 0
+      # No exit here — let the start method's sleep loop exit via shutting_down flag
     end
 
     def setup_message_handler
-      @mattermost.on_message do |sender_name:, thread_id:, text:, post_id:|
-        enqueue_message(thread_id: thread_id, text: text) if allowed_user?(sender_name)
+      @mattermost.on_message do |sender_name:, thread_id:, text:, post_id:, channel_id:|
+        if allowed_user?(sender_name)
+          handle_incoming_message(thread_id: thread_id, text: text, channel_id: channel_id,
+                                 sender_name: sender_name)
+        end
+      end
+    end
+
+    def setup_reaction_handler
+      @mattermost.on_reaction do |user_id:, post_id:, emoji_name:|
+        handle_reaction(user_id: user_id, post_id: post_id, emoji_name: emoji_name)
+      end
+    end
+
+    def handle_reaction(user_id:, post_id:, emoji_name:)
+      return unless allowed_reactor?(user_id)
+
+      result = @question_handler.handle_reaction(post_id: post_id, emoji_name: emoji_name)
+      return unless result
+
+      thread_id = find_thread_for_question(result[:tool_use_id])
+      return unless thread_id
+
+      session = @session_manager.get(thread_id)
+      session&.send_message(result[:answer_text])
+    end
+
+    def handle_incoming_message(thread_id:, text:, channel_id:, sender_name: nil)
+      if CommandParser.command?(text)
+        command = CommandParser.parse(text)
+        if command
+          result = @command_executor.execute(command, thread_id: thread_id, channel_id: channel_id)
+          if result&.dig(:passthrough)
+            enqueue_message(thread_id: thread_id, text: result[:passthrough], channel_id: channel_id,
+                            sender_name: sender_name)
+          end
+          stop_active_response(thread_id) if %i[stop kill].include?(command.name)
+        end
+      else
+        enqueue_message(thread_id: thread_id, text: text, channel_id: channel_id, sender_name: sender_name)
       end
     end
 
@@ -67,41 +142,156 @@ module Earl
       true
     end
 
-    def enqueue_message(thread_id:, text:)
+    # :reek:FeatureEnvy
+    def allowed_reactor?(user_id)
+      allowed = @config.allowed_users
+      return true if allowed.empty?
+
+      user_data = @mattermost.get_user(user_id: user_id)
+      username = user_data["username"]
+      return false unless username
+
+      allowed.include?(username)
+    end
+
+    def enqueue_message(thread_id:, text:, channel_id: nil, sender_name: nil)
       queue = @app_state.message_queue
       if queue.try_claim(thread_id)
-        process_message(thread_id: thread_id, text: text)
+        process_message(thread_id: thread_id, text: text, channel_id: channel_id, sender_name: sender_name)
       else
         queue.enqueue(thread_id, text)
       end
     end
 
-    def process_message(thread_id:, text:)
-      session = @session_manager.get_or_create(thread_id)
-      response = StreamingResponse.new(
-        thread_id: thread_id, mattermost: @mattermost, channel_id: @config.channel_id
+    # :reek:TooManyStatements
+    def process_message(thread_id:, text:, channel_id: nil, sender_name: nil)
+      effective_channel = channel_id || @config.channel_id
+      working_dir = resolve_working_dir(thread_id, effective_channel)
+
+      session = @session_manager.get_or_create(
+        thread_id, channel_id: effective_channel, working_dir: working_dir, username: sender_name
       )
+      response = StreamingResponse.new(
+        thread_id: thread_id, mattermost: @mattermost, channel_id: effective_channel
+      )
+      @active_responses[thread_id] = response
       response.start_typing
 
       setup_callbacks(session, response, thread_id)
-      session.send_message(text)
+      sent = session.send_message(text)
+      @session_manager.touch(thread_id) if sent
+    rescue StandardError => error
+      log(:error, "Error processing message for thread #{thread_id[0..7]}: #{error.message}")
+      log(:error, error.backtrace&.first(5)&.join("\n"))
+    ensure
+      cleanup_failed_send(response, thread_id) unless sent
+    end
+
+    def resolve_working_dir(thread_id, channel_id)
+      @command_executor.working_dir_for(thread_id) || @config.channels[channel_id] || Dir.pwd
+    end
+
+    # :reek:FeatureEnvy :reek:TooManyStatements
+    def setup_callbacks(session, response, thread_id)
+      session.on_text { |text| response.on_text(text) }
+      session.on_system { |event| response.on_text(event[:message]) }
+      session.on_complete { |_| handle_response_complete(session, response, thread_id) }
+      session.on_tool_use do |tool_use|
+        response.on_tool_use(tool_use)
+        handle_tool_use(thread_id, tool_use, response.channel_id)
+      end
     end
 
     # :reek:FeatureEnvy
-    def setup_callbacks(session, response, thread_id)
-      session.on_text { |accumulated_text| response.on_text(accumulated_text) }
-      session.on_complete { |_| handle_response_complete(session, response, thread_id) }
+    def handle_tool_use(thread_id, tool_use, channel_id)
+      result = @question_handler.handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: channel_id)
+      tool_use_id = result[:tool_use_id] if result.is_a?(Hash)
+      @question_threads[tool_use_id] = thread_id if tool_use_id
     end
 
     def handle_response_complete(session, response, thread_id)
-      response.on_complete
-      log(:info, "Response complete for thread #{thread_id[0..7]} (cost=$#{session.total_cost})")
+      stats_line = build_stats_line(session)
+      response.on_complete(stats_line: stats_line)
+      @active_responses.delete(thread_id)
+      log_session_stats(session, thread_id)
+      @session_manager.save_stats(thread_id)
       process_next_queued(thread_id)
+    end
+
+    # :reek:FeatureEnvy
+    def build_stats_line(session)
+      stats = session.stats
+      total = stats.total_input_tokens + stats.total_output_tokens
+      return nil unless total.positive?
+
+      line = "#{format_number(total)} tokens"
+      pct = stats.context_percent
+      line += format(" · %.0f%% context", pct) if pct
+      line
+    end
+
+    # :reek:FeatureEnvy
+    def log_session_stats(session, thread_id)
+      log(:info, session.stats.format_summary("Thread #{thread_id[0..7]} complete"))
     end
 
     def process_next_queued(thread_id)
       next_text = @app_state.message_queue.dequeue(thread_id)
       process_message(thread_id: thread_id, text: next_text) if next_text
     end
+
+    def find_thread_for_question(tool_use_id)
+      @question_threads[tool_use_id]
+    end
+
+    def stop_active_response(thread_id)
+      response = @active_responses.delete(thread_id)
+      response&.stop_typing
+      @app_state.message_queue.dequeue(thread_id)
+    end
+
+    def cleanup_failed_send(response, thread_id)
+      response&.stop_typing
+      @active_responses.delete(thread_id)
+      @app_state.message_queue.release(thread_id)
+    end
+
+    # Idle session management extracted to reduce class method count.
+    module IdleManagement
+      private
+
+      def start_idle_checker
+        @idle_checker_thread = Thread.new do
+          loop do
+            sleep IDLE_CHECK_INTERVAL
+            check_idle_sessions
+          rescue StandardError => error
+            log(:error, "Idle checker error: #{error.message}")
+          end
+        end
+      end
+
+      def check_idle_sessions
+        @session_store.load.each do |thread_id, persisted|
+          stop_if_idle(thread_id, persisted)
+        end
+      end
+
+      # :reek:FeatureEnvy
+      def stop_if_idle(thread_id, persisted)
+        return if persisted.is_paused
+
+        last_activity = persisted.last_activity_at
+        return unless last_activity
+
+        idle_seconds = Time.now - Time.parse(last_activity)
+        return unless idle_seconds > IDLE_TIMEOUT
+
+        log(:info, "Stopping idle session for thread #{thread_id[0..7]} (idle #{(idle_seconds / 60).round}min)")
+        @session_manager.stop_session(thread_id)
+      end
+    end
+
+    include IdleManagement
   end
 end
