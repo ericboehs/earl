@@ -414,7 +414,8 @@ module Earl
       return :active if output.include?("esc to interrupt")
 
       :idle
-    rescue Tmux::Error
+    rescue Tmux::Error => error
+      log(:debug, "detect_pane_status failed for #{target}: #{error.message}")
       :idle
     end
 

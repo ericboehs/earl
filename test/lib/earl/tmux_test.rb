@@ -297,6 +297,11 @@ class Earl::TmuxTest < ActiveSupport::TestCase
     assert_not Earl::Tmux.claude_on_tty?("/dev/ttys999")
   end
 
+  test "list_all_panes re-raises non-server errors" do
+    stub_open3("some other error", false)
+    assert_raises(Earl::Tmux::Error) { Earl::Tmux.list_all_panes }
+  end
+
   private
 
   def mock_status(success)

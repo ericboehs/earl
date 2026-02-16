@@ -107,7 +107,8 @@ module Earl
       tty_name = tty.sub(%r{\A/dev/}, "")
       output, _ = Open3.capture2e("ps", "-t", tty_name, "-o", "command=")
       output.each_line.any? { |line| line.match?(%r{/claude\b|^claude\b}i) }
-    rescue StandardError
+    rescue StandardError => error
+      Earl.logger.debug("Tmux.claude_on_tty? failed for #{tty}: #{error.message}")
       false
     end
 
@@ -163,7 +164,7 @@ module Earl
     # Returns an array of command basenames for child processes of the given PID.
     # Used to detect what's actually running inside a pane when pane_current_command
     # reports an unhelpful value (e.g. Claude reports its version string "2.1.42").
-    # :reek:DuplicateMethodCall
+    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def pane_child_commands(pid)
       pid_str = pid.to_s
       output, _status = Open3.capture2e("ps", "-o", "comm=", "-p", pid_str)
@@ -174,7 +175,8 @@ module Earl
       end
 
       ([ output.strip ] + child_comms).reject(&:empty?)
-    rescue StandardError
+    rescue StandardError => error
+      Earl.logger.debug("Tmux.pane_child_commands failed for PID #{pid}: #{error.message}")
       []
     end
 

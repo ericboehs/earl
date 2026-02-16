@@ -84,7 +84,7 @@ module Earl
         begin
           poll_sessions
         rescue StandardError => error
-          log(:error, "TmuxMonitor poll error: #{error.message}")
+          log(:error, "TmuxMonitor poll error: #{error.message}\n#{error.backtrace&.first(5)&.join("\n")}")
         end
       end
     end
@@ -103,7 +103,7 @@ module Earl
         state = detect_state(output, name)
         handle_state_change(name, state, output, info) if state_changed?(name, state)
       rescue StandardError => error
-        log(:error, "TmuxMonitor: error polling session '#{name}': #{error.message}")
+        log(:error, "TmuxMonitor: error polling session '#{name}': #{error.message}\n#{error.backtrace&.first(5)&.join("\n")}")
       end
     end
 
@@ -116,6 +116,7 @@ module Earl
         @tmux_store.delete(name)
         @last_states.delete(name)
         @output_hashes.delete(name)
+        cleanup_pending_interactions_for(name)
       end
     end
 
@@ -164,10 +165,23 @@ module Earl
     def state_changed?(name, state)
       previous = @last_states[name]
       return true if previous != state
-      # Re-trigger for interactive states even if same, so user sees repeated prompts
-      return true if %i[asking_question requesting_permission].include?(state)
+      # Re-trigger for interactive states only if no pending interaction exists
+      # for this session (prevents spam every poll cycle).
+      if %i[asking_question requesting_permission].include?(state)
+        return !pending_interaction_for?(name, state)
+      end
 
       false
+    end
+
+    # Checks whether we already have an unhandled pending interaction for this
+    # session and interaction type, avoiding duplicate Mattermost posts.
+    # :reek:ControlParameter
+    def pending_interaction_for?(name, state)
+      type = state == :asking_question ? :question : :permission
+      @mutex.synchronize do
+        @pending_interactions.any? { |_, interaction| interaction[:session_name] == name && interaction[:type] == type }
+      end
     end
 
     # :reek:TooManyStatements :reek:LongParameterList
@@ -208,6 +222,8 @@ module Earl
       return unless post
 
       post_id = post["id"]
+      return unless post_id
+
       add_emoji_reactions(post_id, parsed[:options].size)
       @mutex.synchronize do
         @pending_interactions[post_id] = {
@@ -255,6 +271,8 @@ module Earl
       return unless post
 
       post_id = post["id"]
+      return unless post_id
+
       @mattermost.add_reaction(post_id: post_id, emoji_name: "white_check_mark")
       @mattermost.add_reaction(post_id: post_id, emoji_name: "x")
 
@@ -305,7 +323,7 @@ module Earl
       [ count, EMOJI_NUMBERS.size ].min.times do |idx|
         @mattermost.add_reaction(post_id: post_id, emoji_name: EMOJI_NUMBERS[idx])
       rescue StandardError => error
-        log(:warn, "TmuxMonitor: failed to add reaction :#{EMOJI_NUMBERS[idx]}: #{error.message}")
+        log(:warn, "TmuxMonitor: failed to add reaction :#{EMOJI_NUMBERS[idx]}: (#{error.class}): #{error.message}")
       end
     end
 
@@ -316,12 +334,19 @@ module Earl
         root_id: info.thread_id
       )
     rescue StandardError => error
-      log(:error, "TmuxMonitor: failed to post alert: #{error.message}")
+      log(:error, "TmuxMonitor: failed to post alert (#{error.class}): #{error.message}")
       nil
     end
 
     def last_lines_of(output, count)
       output.lines.last(count)&.join || ""
+    end
+
+    # Removes pending interactions for a session that no longer exists.
+    def cleanup_pending_interactions_for(name)
+      @mutex.synchronize do
+        @pending_interactions.delete_if { |_, interaction| interaction[:session_name] == name }
+      end
     end
   end
 end

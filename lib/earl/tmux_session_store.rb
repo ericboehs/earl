@@ -17,6 +17,7 @@ module Earl
       @path = path
       @mutex = Mutex.new
       @cache = nil
+      @dirty = false
     end
 
     def save(info)
@@ -42,11 +43,17 @@ module Earl
     end
 
     # Removes entries for tmux sessions that no longer exist.
+    # Shell calls happen outside the mutex to avoid blocking other operations
+    # if tmux is slow or hung.
+    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def cleanup!
+      names = @mutex.synchronize { ensure_cache.keys }
+      dead = names.reject { |name| Tmux.session_exists?(name) }
+      return dead if dead.empty?
+
       @mutex.synchronize do
-        dead = ensure_cache.keys.reject { |name| Tmux.session_exists?(name) }
-        dead.each { |name| @cache.delete(name) }
-        write_store(@cache) if dead.any?
+        dead.each { |name| @cache&.delete(name) }
+        write_store(@cache) if @cache
         dead
       end
     end
@@ -55,9 +62,11 @@ module Earl
 
     def ensure_cache
       @cache ||= read_store
+      write_store(@cache) if @dirty && @cache
+      @cache
     end
 
-    # :reek:TooManyStatements
+    # :reek:TooManyStatements :reek:DuplicateMethodCall
     def read_store
       return {} unless File.exist?(@path)
 
@@ -67,9 +76,22 @@ module Earl
         filtered = value.slice(*valid_keys).transform_keys(&:to_sym)
         TmuxSessionInfo.new(**filtered)
       end
-    rescue JSON::ParserError, ArgumentError, Errno::ENOENT => error
+    rescue JSON::ParserError, ArgumentError => error
+      backup_corrupted_store
+      log(:warn, "Failed to read tmux session store: #{error.message} (backed up corrupted file)")
+      {}
+    rescue Errno::ENOENT => error
       log(:warn, "Failed to read tmux session store: #{error.message}")
       {}
+    end
+
+    def backup_corrupted_store
+      return unless File.exist?(@path)
+
+      backup_path = "#{@path}.corrupt.#{Time.now.strftime('%Y%m%d%H%M%S')}"
+      FileUtils.cp(@path, backup_path)
+    rescue StandardError => error
+      log(:warn, "Failed to back up corrupted store: #{error.message}")
     end
 
     # :reek:TooManyStatements
@@ -81,8 +103,10 @@ module Earl
       tmp_path = "#{@path}.tmp.#{Process.pid}"
       File.write(tmp_path, JSON.pretty_generate(serialized))
       File.rename(tmp_path, @path)
+      @dirty = false
     rescue StandardError => error
-      log(:error, "Failed to write tmux session store: #{error.message} (in-memory cache may diverge from disk)")
+      @dirty = true
+      log(:error, "Failed to write tmux session store: #{error.message} (will retry on next write)")
       FileUtils.rm_f(tmp_path) if tmp_path
     end
   end

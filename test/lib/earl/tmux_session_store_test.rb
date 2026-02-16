@@ -109,6 +109,15 @@ class Earl::TmuxSessionStoreTest < ActiveSupport::TestCase
     assert_equal({}, @store.all)
   end
 
+  test "backs up corrupted JSON before overwriting" do
+    File.write(@store_path, "not valid json{{{")
+    @store.all # triggers read_store which backs up
+
+    backups = Dir.glob("#{@store_path}.corrupt.*")
+    assert_equal 1, backups.size
+    assert_equal "not valid json{{{", File.read(backups.first)
+  end
+
   test "handles unknown keys in JSON gracefully" do
     json_with_extra_keys = {
       "my-session" => {
@@ -169,6 +178,35 @@ class Earl::TmuxSessionStoreTest < ActiveSupport::TestCase
 
     # This should rescue and not raise
     assert_nothing_raised { store.save(build_info(name: "session-2")) }
+  ensure
+    File.chmod(0o755, readonly_dir) if Dir.exist?(readonly_dir)
+  end
+
+  test "dirty flag retries write on next operation" do
+    store_path = File.join(@tmp_dir, "readonly", "tmux_sessions.json")
+    readonly_dir = File.join(@tmp_dir, "readonly")
+    FileUtils.mkdir_p(readonly_dir)
+
+    store = Earl::TmuxSessionStore.new(path: store_path)
+    store.save(build_info(name: "session-1"))
+
+    # Make write fail
+    File.chmod(0o444, readonly_dir)
+    store.save(build_info(name: "session-2"))
+
+    # Verify dirty flag is set
+    assert store.instance_variable_get(:@dirty)
+
+    # Restore permissions — next operation should retry
+    File.chmod(0o755, readonly_dir)
+    store.save(build_info(name: "session-3"))
+
+    # Dirty flag should be cleared after successful write
+    assert_not store.instance_variable_get(:@dirty)
+
+    # All sessions should be persisted
+    new_store = Earl::TmuxSessionStore.new(path: store_path)
+    assert_equal 3, new_store.all.size
   ensure
     File.chmod(0o755, readonly_dir) if Dir.exist?(readonly_dir)
   end

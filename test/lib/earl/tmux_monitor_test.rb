@@ -91,6 +91,10 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     assert_equal :running, call_detect_state(output)
   end
 
+  test "detect_state returns :running for empty output" do
+    assert_equal :running, call_detect_state("")
+  end
+
   test "detect_state ignores error patterns beyond last 15 lines" do
     old_lines = (1..20).map { |i| "Line #{i}: doing stuff\n" }.join
     error_in_old_output = "Error: old problem that was already resolved\n" + old_lines
@@ -143,14 +147,26 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     assert_not call_state_changed?("session", :running)
   end
 
-  test "state_changed? re-triggers for repeated asking_question state" do
+  test "state_changed? re-triggers for repeated asking_question state when no pending interaction" do
     set_last_state("session", :asking_question)
     assert call_state_changed?("session", :asking_question)
   end
 
-  test "state_changed? re-triggers for repeated requesting_permission state" do
+  test "state_changed? re-triggers for repeated requesting_permission state when no pending interaction" do
     set_last_state("session", :requesting_permission)
     assert call_state_changed?("session", :requesting_permission)
+  end
+
+  test "state_changed? does not re-trigger asking_question when pending interaction exists" do
+    set_last_state("session", :asking_question)
+    add_pending_interaction("post-123", session_name: "session", type: :question, options: [ "A" ])
+    assert_not call_state_changed?("session", :asking_question)
+  end
+
+  test "state_changed? does not re-trigger requesting_permission when pending interaction exists" do
+    set_last_state("session", :requesting_permission)
+    add_pending_interaction("post-456", session_name: "session", type: :permission)
+    assert_not call_state_changed?("session", :requesting_permission)
   end
 
   # -- parse_question tests ----------------------------------------------------
@@ -202,6 +218,11 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
   test "parse_question returns nil when no numbered options" do
     output = "Is this a question?\nJust some text after\n"
     assert_nil call_parse_question(output)
+  end
+
+  test "parse_question returns nil for all-empty input" do
+    assert_nil call_parse_question("")
+    assert_nil call_parse_question("\n\n\n")
   end
 
   # -- handle_reaction tests ---------------------------------------------------
@@ -295,6 +316,21 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
 
     # Should have cleaned up store
     assert_nil @tmux_store.get("dead-session")
+  end
+
+  test "poll_sessions cleans up pending interactions for dead sessions" do
+    @tmux_store.save(build_info(name: "dead-session"))
+    add_pending_interaction("post-old", session_name: "dead-session", type: :question, options: [ "A" ])
+    add_pending_interaction("post-other", session_name: "other-session", type: :permission)
+    @tmux_adapter.session_exists_result = false
+
+    call_poll_sessions
+
+    # Pending interactions for dead session should be cleaned up
+    pending = @monitor.instance_variable_get(:@pending_interactions)
+    assert_nil pending["post-old"]
+    # Unrelated session's pending interaction should remain
+    assert_not_nil pending["post-other"]
   end
 
   test "poll_sessions detects state changes and posts alerts" do
@@ -498,6 +534,12 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
 
   def seed_pending_interaction(post_id, type:, options: nil)
     interaction = { session_name: "test-session", type: type }
+    interaction[:options] = options if options
+    @monitor.instance_variable_get(:@pending_interactions)[post_id] = interaction
+  end
+
+  def add_pending_interaction(post_id, session_name:, type:, options: nil)
+    interaction = { session_name: session_name, type: type }
     interaction[:options] = options if options
     @monitor.instance_variable_get(:@pending_interactions)[post_id] = interaction
   end
