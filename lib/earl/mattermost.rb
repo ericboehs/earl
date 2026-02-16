@@ -64,6 +64,32 @@ module Earl
       parse_post_response(@api.get("/users/#{user_id}"))
     end
 
+    # Fetches all posts in a thread, ordered oldest-first.
+    # Returns an array of hashes with :sender, :message, :is_bot.
+    # :reek:TooManyStatements
+    def get_thread_posts(thread_id)
+      response = @api.get("/posts/#{thread_id}/thread")
+      return [] unless response.is_a?(Net::HTTPSuccess)
+
+      data = JSON.parse(response.body)
+      posts = data["posts"] || {}
+      order = data["order"] || []
+
+      order.reverse.filter_map do |post_id|
+        post = posts[post_id]
+        next unless post
+
+        {
+          sender: post.dig("props", "from_bot") == "true" ? "EARL" : "user",
+          message: post["message"] || "",
+          is_bot: post["user_id"] == config.bot_id
+        }
+      end
+    rescue JSON::ParserError => error
+      log(:warn, "Failed to parse thread posts: #{error.message}")
+      []
+    end
+
     private
 
     # WebSocket lifecycle methods extracted to reduce class method count.

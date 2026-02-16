@@ -178,6 +178,7 @@ module Earl
       effective_channel = channel_id || @config.channel_id
       working_dir = resolve_working_dir(thread_id, effective_channel)
 
+      existing_session = @session_manager.get(thread_id)
       session = @session_manager.get_or_create(
         thread_id, channel_id: effective_channel, working_dir: working_dir, username: sender_name
       )
@@ -188,7 +189,8 @@ module Earl
       response.start_typing
 
       setup_callbacks(session, response, thread_id)
-      sent = session.send_message(text)
+      message_text = existing_session ? text : build_contextual_message(thread_id, text)
+      sent = session.send_message(message_text)
       @session_manager.touch(thread_id) if sent
     rescue StandardError => error
       log(:error, "Error processing message for thread #{thread_id[0..7]}: #{error.message}")
@@ -199,6 +201,24 @@ module Earl
 
     def resolve_working_dir(thread_id, channel_id)
       @command_executor.working_dir_for(thread_id) || @config.channels[channel_id] || Dir.pwd
+    end
+
+    # When a Claude session is first created for a thread that already has messages
+    # (e.g., from !commands and EARL replies), prepend the thread transcript so
+    # Claude has context. Returns the original text if no prior messages exist.
+    # :reek:FeatureEnvy :reek:TooManyStatements :reek:DuplicateMethodCall
+    def build_contextual_message(thread_id, text)
+      posts = @mattermost.get_thread_posts(thread_id)
+      # Exclude the current message (last post) since it's what we're sending
+      prior_posts = posts.reject { |post| post[:message] == text }.last(20)
+      return text if prior_posts.empty?
+
+      transcript = prior_posts.map do |post|
+        role = post[:is_bot] ? "EARL" : "User"
+        "#{role}: #{post[:message]}"
+      end.join("\n\n")
+
+      "Here is the conversation so far in this Mattermost thread:\n\n#{transcript}\n\n---\n\nUser's latest message: #{text}"
     end
 
     # :reek:FeatureEnvy :reek:TooManyStatements

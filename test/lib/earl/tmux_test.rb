@@ -24,7 +24,7 @@ class Earl::TmuxTest < ActiveSupport::TestCase
   end
 
   test "list_sessions parses format string" do
-    output = "dev\t1\tThu Feb 13 10:00:00 2026\nwork\t0\tThu Feb 13 09:00:00 2026\n"
+    output = "dev|||1|||1739440800\nwork|||0|||1739437200\n"
     stub_open3(output, true)
 
     sessions = Earl::Tmux.list_sessions
@@ -32,7 +32,7 @@ class Earl::TmuxTest < ActiveSupport::TestCase
 
     assert_equal "dev", sessions[0][:name]
     assert sessions[0][:attached]
-    assert_equal "Thu Feb 13 10:00:00 2026", sessions[0][:created_at]
+    assert_match(/2025/, sessions[0][:created_at])
 
     assert_equal "work", sessions[1][:name]
     assert_not sessions[1][:attached]
@@ -49,7 +49,7 @@ class Earl::TmuxTest < ActiveSupport::TestCase
   end
 
   test "list_panes parses format string" do
-    output = "0\tclaude\t/home/user/project\t12345\n1\tbash\t/home/user\t12346\n"
+    output = "0|||claude|||/home/user/project|||12345\n1|||bash|||/home/user|||12346\n"
     stub_open3(output, true)
 
     panes = Earl::Tmux.list_panes("dev")
@@ -185,7 +185,7 @@ class Earl::TmuxTest < ActiveSupport::TestCase
   end
 
   test "list_sessions skips malformed lines" do
-    output = "dev\t1\tThu Feb 13 10:00:00 2026\nbadline\n"
+    output = "dev|||1|||1739440800\nbadline\n"
     stub_open3(output, true)
 
     sessions = Earl::Tmux.list_sessions
@@ -199,7 +199,7 @@ class Earl::TmuxTest < ActiveSupport::TestCase
   end
 
   test "list_panes skips malformed lines" do
-    output = "0\tclaude\t/home\t12345\nbadline\n"
+    output = "0|||claude|||/home|||12345\nbadline\n"
     stub_open3(output, true)
 
     panes = Earl::Tmux.list_panes("dev")
@@ -219,6 +219,82 @@ class Earl::TmuxTest < ActiveSupport::TestCase
   test "kill_session re-raises non-find errors" do
     stub_open3("some other error", false)
     assert_raises(Earl::Tmux::Error) { Earl::Tmux.kill_session("dev") }
+  end
+
+  test "pane_child_commands returns process names for PID and its children" do
+    ps_output = "/Users/me/.local/bin/claude\n"
+    children_output = " 100  1 launchd\n 200 99 -zsh\n 300 99 /Users/me/.local/bin/claude\n 400 50 unrelated\n"
+
+    call_count = 0
+    status = mock_status(true)
+    Open3.define_singleton_method(:capture2e) do |*_args|
+      call_count += 1
+      if call_count == 1
+        [ ps_output, status ]
+      else
+        [ children_output, status ]
+      end
+    end
+
+    result = Earl::Tmux.pane_child_commands(99)
+    assert_includes result, "/Users/me/.local/bin/claude"
+    assert_includes result, "-zsh"
+    assert_not_includes result, "unrelated"
+  end
+
+  test "pane_child_commands returns empty array on error" do
+    Open3.define_singleton_method(:capture2e) { |*_args| raise Errno::ENOENT, "ps not found" }
+    assert_equal [], Earl::Tmux.pane_child_commands(99999)
+  end
+
+  test "list_all_panes returns panes across all sessions" do
+    output = "code|||1|||0|||2.1.42|||/home/user/project|||12345|||/dev/ttys001\n" \
+             "chat|||1|||0|||weechat|||/home/user|||12346|||/dev/ttys002\n"
+    stub_open3(output, true)
+
+    panes = Earl::Tmux.list_all_panes
+    assert_equal 2, panes.size
+
+    assert_equal "code:1.0", panes[0][:target]
+    assert_equal "code", panes[0][:session]
+    assert_equal 1, panes[0][:window]
+    assert_equal "2.1.42", panes[0][:command]
+    assert_equal "/home/user/project", panes[0][:path]
+    assert_equal 12_345, panes[0][:pid]
+    assert_equal "/dev/ttys001", panes[0][:tty]
+
+    assert_equal "chat:1.0", panes[1][:target]
+    assert_equal "weechat", panes[1][:command]
+  end
+
+  test "list_all_panes returns empty array when no server running" do
+    stub_open3("no server running", false)
+    assert_equal [], Earl::Tmux.list_all_panes
+  end
+
+  test "list_all_panes skips malformed lines" do
+    output = "code|||1|||0|||claude|||/tmp|||123|||/dev/ttys001\nbadline\n"
+    stub_open3(output, true)
+
+    panes = Earl::Tmux.list_all_panes
+    assert_equal 1, panes.size
+  end
+
+  test "claude_on_tty? returns true when claude process on tty" do
+    output = "-zsh\n/Users/me/.local/bin/claude\n"
+    stub_open3(output, true)
+    assert Earl::Tmux.claude_on_tty?("/dev/ttys001")
+  end
+
+  test "claude_on_tty? returns false when no claude on tty" do
+    output = "-zsh\nweechat\n"
+    stub_open3(output, true)
+    assert_not Earl::Tmux.claude_on_tty?("/dev/ttys001")
+  end
+
+  test "claude_on_tty? returns false on error" do
+    Open3.define_singleton_method(:capture2e) { |*_args| raise Errno::ENOENT, "ps not found" }
+    assert_not Earl::Tmux.claude_on_tty?("/dev/ttys999")
   end
 
   private

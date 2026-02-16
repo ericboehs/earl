@@ -183,6 +183,18 @@ class Earl::CommandParserTest < ActiveSupport::TestCase
     assert_equal :session_nudge, cmd.name
   end
 
+  test "parse recognizes !session <name> approve" do
+    cmd = Earl::CommandParser.parse("!session code:4.0 approve")
+    assert_equal :session_approve, cmd.name
+    assert_equal [ "code:4.0" ], cmd.args
+  end
+
+  test "parse recognizes !session <name> deny" do
+    cmd = Earl::CommandParser.parse("!session code:4.0 deny")
+    assert_equal :session_deny, cmd.name
+    assert_equal [ "code:4.0" ], cmd.args
+  end
+
   test "session commands are case insensitive" do
     cmd = Earl::CommandParser.parse("!Sessions")
     assert_equal :sessions, cmd.name

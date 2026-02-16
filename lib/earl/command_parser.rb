@@ -25,6 +25,8 @@ module Earl
       /\A!session\s+(\S+)\s+status\z/i => :session_status,
       /\A!session\s+(\S+)\s+kill\z/i => :session_kill,
       /\A!session\s+(\S+)\s+nudge\z/i => :session_nudge,
+      /\A!session\s+(\S+)\s+approve\z/i => :session_approve,
+      /\A!session\s+(\S+)\s+deny\z/i => :session_deny,
       /\A!session\s+(\S+)\s+"([^"]+)"\z/i => :session_input,
       /\A!session\s+(\S+)\s+'([^']+)'\z/i => :session_input,
       /\A!session\s+(\S+)\z/i => :session_show,

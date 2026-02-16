@@ -16,6 +16,11 @@ module Earl
     # Delay between sending literal text and pressing Enter in send_keys.
     SEND_KEYS_DELAY = 0.1
 
+    # Delimiter for tmux -F format strings. Tmux 3.6+ treats \t as literal
+    # backslash-t rather than a tab character, so we use a multi-char delimiter
+    # that won't appear in session names, commands, or paths.
+    FIELD_SEP = "|||"
+
     module_function
 
     def available?
@@ -23,18 +28,18 @@ module Earl
       status.success?
     end
 
-    # :reek:DuplicateMethodCall
+    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def list_sessions
-      output = execute("tmux", "list-sessions", "-F",
-                        '#{session_name}\t#{session_attached}\t#{session_created_string}')
+      fmt = %w[session_name session_attached session_created].map { |field| "\#{#{field}}" }.join(FIELD_SEP)
+      output = execute("tmux", "list-sessions", "-F", fmt)
       output.each_line.map do |line|
-        parts = line.strip.split("\t", 3)
+        parts = line.strip.split(FIELD_SEP, 3)
         next if parts.size < 3
 
         {
           name: parts[0],
-          attached: parts[1] == "1",
-          created_at: parts[2]
+          attached: parts[1] != "0",
+          created_at: Time.at(parts[2].to_i).strftime("%c")
         }
       end.compact
     rescue Error => error
@@ -43,11 +48,12 @@ module Earl
       raise
     end
 
+    # :reek:TooManyStatements
     def list_panes(session)
-      output = execute("tmux", "list-panes", "-t", session, "-F",
-                        '#{pane_index}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_pid}')
+      fmt = %w[pane_index pane_current_command pane_current_path pane_pid].map { |field| "\#{#{field}}" }.join(FIELD_SEP)
+      output = execute("tmux", "list-panes", "-t", session, "-F", fmt)
       output.each_line.map do |line|
-        parts = line.strip.split("\t", 4)
+        parts = line.strip.split(FIELD_SEP, 4)
         next if parts.size < 4
 
         {
@@ -61,6 +67,48 @@ module Earl
       raise NotFound, "Session '#{session}' not found" if error.message.include?("can't find")
 
       raise
+    end
+
+    # Lists all panes across all sessions and windows with session/window context.
+    # Returns an array of hashes with :target (e.g. "code:1.0"), :session, :window,
+    # :pane_index, :command, :path, :pid, and :tty.
+    # :reek:TooManyStatements :reek:DuplicateMethodCall
+    def list_all_panes
+      fields = %w[session_name window_index pane_index pane_current_command
+                   pane_current_path pane_pid pane_tty]
+      fmt = fields.map { |field| "\#{#{field}}" }.join(FIELD_SEP)
+      output = execute("tmux", "list-panes", "-a", "-F", fmt)
+      output.each_line.map do |line|
+        parts = line.strip.split(FIELD_SEP, fields.size)
+        next if parts.size < fields.size
+
+        session, window, pane_idx = parts[0], parts[1], parts[2]
+        {
+          target: "#{session}:#{window}.#{pane_idx}",
+          session: session,
+          window: window.to_i,
+          pane_index: pane_idx.to_i,
+          command: parts[3],
+          path: parts[4],
+          pid: parts[5].to_i,
+          tty: parts[6]
+        }
+      end.compact
+    rescue Error => error
+      return [] if error.message.include?("no server running") || error.message.include?("no sessions")
+
+      raise
+    end
+
+    # Checks whether a Claude process is running on the given tty.
+    # Uses `ps -t <tty>` which is more reliable than walking the process tree,
+    # since Claude Code reports its version string as the process name.
+    def claude_on_tty?(tty)
+      tty_name = tty.sub(%r{\A/dev/}, "")
+      output, _ = Open3.capture2e("ps", "-t", tty_name, "-o", "command=")
+      output.each_line.any? { |line| line.match?(%r{/claude\b|^claude\b}i) }
+    rescue StandardError
+      false
     end
 
     def capture_pane(target, lines: 100)
@@ -110,6 +158,24 @@ module Earl
       true
     rescue Error
       false
+    end
+
+    # Returns an array of command basenames for child processes of the given PID.
+    # Used to detect what's actually running inside a pane when pane_current_command
+    # reports an unhelpful value (e.g. Claude reports its version string "2.1.42").
+    # :reek:DuplicateMethodCall
+    def pane_child_commands(pid)
+      pid_str = pid.to_s
+      output, _status = Open3.capture2e("ps", "-o", "comm=", "-p", pid_str)
+      children, _ = Open3.capture2e("ps", "-eo", "pid=,ppid=,comm=")
+      child_comms = children.each_line.filter_map do |line|
+        parts = line.strip.split(/\s+/, 3)
+        parts[2] if parts[1] == pid_str
+      end
+
+      ([ output.strip ] + child_comms).reject(&:empty?)
+    rescue StandardError
+      []
     end
 
     # Polls capture_pane output until pattern matches or timeout. Inspired by

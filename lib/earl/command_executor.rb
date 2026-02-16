@@ -29,6 +29,8 @@ module Earl
       | `!session <name> status` | AI-summarize session state |
       | `!session <name> kill` | Kill tmux session |
       | `!session <name> nudge` | Send nudge message to session |
+      | `!session <name> approve` | Approve pending permission |
+      | `!session <name> deny` | Deny pending permission |
       | `!session <name> "text"` | Send input to tmux session |
       | `!spawn "prompt" [--name N] [--dir D]` | Spawn Claude in a new tmux session |
     HELP
@@ -89,6 +91,8 @@ module Earl
       when :session_status then handle_session_status(thread_id, channel_id, arg)
       when :session_kill then handle_session_kill(thread_id, channel_id, arg)
       when :session_nudge then handle_session_nudge(thread_id, channel_id, arg)
+      when :session_approve then handle_session_approve(thread_id, channel_id, arg)
+      when :session_deny then handle_session_deny(thread_id, channel_id, arg)
       when :session_input then handle_session_input(thread_id, channel_id, arg, args[1])
       when :spawn then handle_spawn(thread_id, channel_id, arg, args[1])
       end
@@ -364,35 +368,54 @@ module Earl
         return
       end
 
-      sessions = @tmux.list_sessions
-      if sessions.empty?
+      panes = @tmux.list_all_panes
+      if panes.empty?
         post_reply(channel_id, thread_id, "No tmux sessions running.")
         return
       end
 
+      claude_panes = panes.select { |pane| @tmux.claude_on_tty?(pane[:tty]) }
+      if claude_panes.empty?
+        post_reply(channel_id, thread_id, "No Claude sessions found across #{panes.size} tmux panes.")
+        return
+      end
+
       lines = [
-        "#### :computer: Tmux Sessions",
-        "| Name | Attached | Claude? | Created |",
-        "|------|----------|---------|---------|"
+        "#### :computer: Claude Sessions (#{claude_panes.size})",
+        "| Pane | Project | Status |",
+        "|------|---------|--------|"
       ]
-      sessions.each { |session| lines << format_tmux_session_row(session) }
+      claude_panes.each { |pane| lines << format_claude_pane_row(pane) }
       post_reply(channel_id, thread_id, lines.join("\n"))
     end
 
-    # :reek:FeatureEnvy
-    def format_tmux_session_row(session)
-      name = session[:name]
-      claude = detect_claude_in_session(name)
-      attached = session[:attached] ? "✅" : "—"
-      claude_icon = claude ? "🤖" : "—"
-      "| #{name} | #{attached} | #{claude_icon} | #{session[:created_at]} |"
+    # :reek:FeatureEnvy :reek:DuplicateMethodCall
+    def format_claude_pane_row(pane)
+      target = pane[:target]
+      project = File.basename(pane[:path])
+      status = detect_pane_status(target)
+      "| `#{target}` | #{project} | #{PANE_STATUS_LABELS.fetch(status, "🟡 Idle")} |"
     end
 
-    def detect_claude_in_session(session_name)
-      panes = @tmux.list_panes(session_name)
-      panes.any? { |pane| pane[:command]&.match?(/claude/i) }
+    PANE_STATUS_LABELS = {
+      active: "🟢 Active",
+      permission: "🟠 Waiting for permission",
+      idle: "🟡 Idle"
+    }.freeze
+
+    # Detects Claude pane state by checking the last few lines of output:
+    # - :permission  — Claude is showing a "Do you want to proceed?" dialog
+    # - :active      — Claude is processing ("esc to interrupt" visible)
+    # - :idle        — waiting for user input
+    # :reek:FeatureEnvy
+    def detect_pane_status(target)
+      output = @tmux.capture_pane(target, lines: 20)
+      return :permission if output.include?("Do you want to proceed?")
+      return :active if output.include?("esc to interrupt")
+
+      :idle
     rescue Tmux::Error
-      false
+      :idle
     end
 
     # :reek:TooManyStatements
@@ -425,6 +448,20 @@ module Earl
       with_tmux_session(thread_id, channel_id, name) do
         @tmux.send_keys(name, "Are you stuck? What's your current status?")
         post_reply(channel_id, thread_id, ":wave: Nudged `#{name}`.")
+      end
+    end
+
+    def handle_session_approve(thread_id, channel_id, name)
+      with_tmux_session(thread_id, channel_id, name) do
+        @tmux.send_keys_raw(name, "Enter")
+        post_reply(channel_id, thread_id, ":white_check_mark: Approved permission on `#{name}`.")
+      end
+    end
+
+    def handle_session_deny(thread_id, channel_id, name)
+      with_tmux_session(thread_id, channel_id, name) do
+        @tmux.send_keys_raw(name, "Escape")
+        post_reply(channel_id, thread_id, ":no_entry_sign: Denied permission on `#{name}`.")
       end
     end
 

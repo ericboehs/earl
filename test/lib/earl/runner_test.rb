@@ -985,6 +985,102 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_nothing_raised { runner.send(:shutdown) }
   end
 
+  test "process_message builds contextual message for new sessions with thread history" do
+    runner = Earl::Runner.new
+
+    sent_text = nil
+    mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
+
+    # Mock manager where get returns nil (new session) but get_or_create returns session
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get) { |_id| nil }
+    mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| mock_session }
+    mock_manager.define_singleton_method(:touch) { |_id| }
+    mock_manager.define_singleton_method(:save_stats) { |_id| }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:get_thread_posts) do |_thread_id|
+      [
+        { sender: "user", message: "!sessions", is_bot: false },
+        { sender: "EARL", message: "| Session | Project | Status |", is_bot: true },
+        { sender: "user", message: "Can u approve 4", is_bot: false }
+      ]
+    end
+
+    runner.send(:process_message, thread_id: "thread-12345678", text: "Can u approve 4")
+    sleep 0.05
+
+    assert_includes sent_text, "Here is the conversation so far"
+    assert_includes sent_text, "User: !sessions"
+    assert_includes sent_text, "EARL: | Session | Project | Status |"
+    assert_includes sent_text, "User's latest message: Can u approve 4"
+  end
+
+  test "process_message sends plain text for new sessions with no thread history" do
+    runner = Earl::Runner.new
+
+    sent_text = nil
+    mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
+
+    mock_manager = Object.new
+    mock_manager.define_singleton_method(:get) { |_id| nil }
+    mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| mock_session }
+    mock_manager.define_singleton_method(:touch) { |_id| }
+    mock_manager.define_singleton_method(:save_stats) { |_id| }
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:get_thread_posts) { |_thread_id| [] }
+
+    runner.send(:process_message, thread_id: "thread-12345678", text: "Hello Earl")
+    sleep 0.05
+
+    assert_equal "Hello Earl", sent_text
+  end
+
+  test "process_message sends plain text for existing sessions without fetching thread" do
+    runner = Earl::Runner.new
+
+    sent_text = nil
+    mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
+    mock_manager = build_mock_manager(mock_session)
+    runner.instance_variable_set(:@session_manager, mock_manager)
+
+    thread_posts_called = false
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:send_typing) { |**_args| }
+    mock_mm.define_singleton_method(:get_thread_posts) { |_id| thread_posts_called = true; [] }
+
+    runner.send(:process_message, thread_id: "thread-12345678", text: "follow up")
+    sleep 0.05
+
+    assert_equal "follow up", sent_text
+    assert_not thread_posts_called, "Should not fetch thread posts for existing sessions"
+  end
+
+  test "build_contextual_message excludes current message from transcript" do
+    runner = Earl::Runner.new
+
+    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm.define_singleton_method(:get_thread_posts) do |_thread_id|
+      [
+        { sender: "user", message: "!help", is_bot: false },
+        { sender: "EARL", message: "Available commands: ...", is_bot: true },
+        { sender: "user", message: "thanks", is_bot: false }
+      ]
+    end
+
+    result = runner.send(:build_contextual_message, "thread-12345678", "thanks")
+
+    assert_includes result, "User: !help"
+    assert_includes result, "EARL: Available commands: ..."
+    assert_not_includes result, "User: thanks\n"  # Current message excluded from transcript
+    assert_includes result, "User's latest message: thanks"
+  end
+
   test "check_idle_sessions iterates persisted sessions" do
     runner = Earl::Runner.new
     store = Earl::SessionStore.new(path: File.join(Dir.tmpdir, "earl-test-idle-#{SecureRandom.hex(4)}.json"))

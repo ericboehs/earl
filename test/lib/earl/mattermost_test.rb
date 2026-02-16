@@ -495,6 +495,73 @@ class Earl::MattermostTest < ActiveSupport::TestCase
     assert_equal "/posts/post-1", req[:path]
   end
 
+  # --- get_thread_posts tests ---
+
+  test "get_thread_posts returns posts ordered oldest-first" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+
+    thread_data = {
+      "posts" => {
+        "post-1" => { "id" => "post-1", "user_id" => "user-999", "message" => "!sessions", "props" => {} },
+        "post-2" => { "id" => "post-2", "user_id" => "bot-123", "message" => "Session list...", "props" => { "from_bot" => "true" } },
+        "post-3" => { "id" => "post-3", "user_id" => "user-999", "message" => "Can u approve 4", "props" => {} }
+      },
+      "order" => %w[post-3 post-2 post-1]
+    }
+
+    api.define_singleton_method(:get) do |path|
+      response = Object.new
+      response.define_singleton_method(:body) { JSON.generate(thread_data) }
+      response.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
+
+    posts = mm.get_thread_posts("post-1")
+    assert_equal 3, posts.size
+    assert_equal "!sessions", posts[0][:message]
+    assert_equal "user", posts[0][:sender]
+    assert_equal "Session list...", posts[1][:message]
+    assert_equal "EARL", posts[1][:sender]
+    assert posts[1][:is_bot]
+    assert_equal "Can u approve 4", posts[2][:message]
+  end
+
+  test "get_thread_posts returns empty array on API failure" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+
+    api.define_singleton_method(:get) do |_path|
+      response = Object.new
+      response.define_singleton_method(:body) { '{"error":"not found"}' }
+      response.define_singleton_method(:code) { "404" }
+      response.define_singleton_method(:is_a?) do |klass|
+        Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
+
+    assert_equal [], mm.get_thread_posts("nonexistent")
+  end
+
+  test "get_thread_posts returns empty array on JSON parse error" do
+    mm = Earl::Mattermost.new(@config)
+    api = mm.instance_variable_get(:@api)
+
+    api.define_singleton_method(:get) do |_path|
+      response = Object.new
+      response.define_singleton_method(:body) { "not json{{{" }
+      response.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
+
+    assert_equal [], mm.get_thread_posts("post-1")
+  end
+
   # --- get_user tests ---
 
   test "get_user sends GET and returns parsed user" do

@@ -630,15 +630,20 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes message, "!spawn"
   end
 
-  test "!sessions lists tmux sessions" do
+  test "!sessions lists Claude panes with project and status" do
     posted = []
     tmux = build_mock_tmux_adapter
     tmux.available_result = true
-    tmux.list_sessions_result = [
-      { name: "dev", attached: true, created_at: "Thu Feb 13 10:00:00 2026" },
-      { name: "work", attached: false, created_at: "Thu Feb 13 09:00:00 2026" }
+    tmux.list_all_panes_result = [
+      { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+        command: "2.1.42", path: "/home/user/earl", pid: 100, tty: "/dev/ttys001" },
+      { target: "code:2.0", session: "code", window: 2, pane_index: 0,
+        command: "2.1.42", path: "/home/user/mpi-poc", pid: 200, tty: "/dev/ttys002" },
+      { target: "chat:1.0", session: "chat", window: 1, pane_index: 0,
+        command: "weechat", path: "/home/user", pid: 300, tty: "/dev/ttys003" }
     ]
-    tmux.list_panes_result = [ { index: 0, command: "claude", path: "/tmp", pid: 123 } ]
+    tmux.claude_on_tty_results = { "/dev/ttys001" => true, "/dev/ttys002" => true, "/dev/ttys003" => false }
+    tmux.capture_pane_result = "working on stuff\n"
 
     executor = build_executor(posted: posted, tmux_adapter: tmux)
 
@@ -646,8 +651,73 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
     assert_equal 1, posted.size
-    assert_includes posted.first[:message], "dev"
-    assert_includes posted.first[:message], "work"
+    msg = posted.first[:message]
+    assert_includes msg, "Claude Sessions (2)"
+    assert_includes msg, "code:1.0"
+    assert_includes msg, "earl"
+    assert_includes msg, "code:2.0"
+    assert_includes msg, "mpi-poc"
+    assert_not_includes msg, "chat:1.0"
+    assert_not_includes msg, "weechat"
+  end
+
+  test "!sessions shows active status when esc to interrupt present" do
+    posted = []
+    tmux = build_mock_tmux_adapter
+    tmux.available_result = true
+    tmux.list_all_panes_result = [
+      { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+        command: "2.1.42", path: "/home/user/earl", pid: 100, tty: "/dev/ttys001" }
+    ]
+    tmux.claude_on_tty_results = { "/dev/ttys001" => true }
+    tmux.capture_pane_result = "working on stuff\nesc to interrupt\n"
+
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Active"
+  end
+
+  test "!sessions shows permission status when Do you want to proceed present" do
+    posted = []
+    tmux = build_mock_tmux_adapter
+    tmux.available_result = true
+    tmux.list_all_panes_result = [
+      { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+        command: "2.1.42", path: "/home/user/earl", pid: 100, tty: "/dev/ttys001" }
+    ]
+    tmux.claude_on_tty_results = { "/dev/ttys001" => true }
+    tmux.capture_pane_result = "Do you want to proceed?\n> 1. Yes\n  2. No\nEsc to cancel\n"
+
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "Waiting for permission"
+  end
+
+  test "!sessions shows permission status even when esc to interrupt is also present" do
+    posted = []
+    tmux = build_mock_tmux_adapter
+    tmux.available_result = true
+    tmux.list_all_panes_result = [
+      { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+        command: "2.1.42", path: "/home/user/earl", pid: 100, tty: "/dev/ttys001" }
+    ]
+    tmux.claude_on_tty_results = { "/dev/ttys001" => true }
+    tmux.capture_pane_result = "esc to interrupt\nDo you want to proceed?\n> 1. Yes\n  2. No\n"
+
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    # Permission takes priority over active
+    assert_includes posted.first[:message], "Waiting for permission"
+    assert_not_includes posted.first[:message], "Active"
   end
 
   test "!sessions reports when tmux not available" do
@@ -663,11 +733,11 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "not installed"
   end
 
-  test "!sessions reports when no sessions" do
+  test "!sessions reports when no panes exist" do
     posted = []
     tmux = build_mock_tmux_adapter
     tmux.available_result = true
-    tmux.list_sessions_result = []
+    tmux.list_all_panes_result = []
 
     executor = build_executor(posted: posted, tmux_adapter: tmux)
 
@@ -675,6 +745,24 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
 
     assert_includes posted.first[:message], "No tmux sessions"
+  end
+
+  test "!sessions reports when no Claude sessions found" do
+    posted = []
+    tmux = build_mock_tmux_adapter
+    tmux.available_result = true
+    tmux.list_all_panes_result = [
+      { target: "chat:1.0", session: "chat", window: 1, pane_index: 0,
+        command: "weechat", path: "/home/user", pid: 300, tty: "/dev/ttys003" }
+    ]
+    tmux.claude_on_tty_results = { "/dev/ttys003" => false }
+
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "No Claude sessions found"
   end
 
   test "!session <name> shows pane output" do
@@ -744,6 +832,34 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_equal "dev", tmux.send_keys_calls.first[:target]
     assert_includes tmux.send_keys_calls.first[:text], "stuck"
     assert_includes posted.first[:message], "Nudged"
+  end
+
+  test "!session <name> approve sends Enter to approve permission" do
+    posted = []
+    tmux = build_mock_tmux_adapter
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :session_approve, args: [ "code:4.0" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, tmux.send_keys_raw_calls.size
+    assert_equal "code:4.0", tmux.send_keys_raw_calls.first[:target]
+    assert_equal "Enter", tmux.send_keys_raw_calls.first[:key]
+    assert_includes posted.first[:message], "Approved"
+  end
+
+  test "!session <name> deny sends Escape to deny permission" do
+    posted = []
+    tmux = build_mock_tmux_adapter
+    executor = build_executor(posted: posted, tmux_adapter: tmux)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :session_deny, args: [ "code:4.0" ])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, tmux.send_keys_raw_calls.size
+    assert_equal "code:4.0", tmux.send_keys_raw_calls.first[:target]
+    assert_equal "Escape", tmux.send_keys_raw_calls.first[:key]
+    assert_includes posted.first[:message], "Denied"
   end
 
   test "!session <name> 'text' sends input" do
@@ -881,8 +997,9 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
   class MockTmuxAdapter
     attr_accessor :available_result, :session_exists_result, :capture_pane_result,
                   :capture_pane_error, :list_sessions_result, :list_panes_result,
-                  :send_keys_error
-    attr_reader :send_keys_calls, :created_sessions, :killed_sessions
+                  :send_keys_error, :pane_child_commands_result,
+                  :list_all_panes_result, :claude_on_tty_results
+    attr_reader :send_keys_calls, :send_keys_raw_calls, :created_sessions, :killed_sessions
 
     def initialize
       @available_result = true
@@ -893,8 +1010,12 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
       @list_panes_result = []
       @send_keys_error = nil
       @send_keys_calls = []
+      @send_keys_raw_calls = []
       @created_sessions = []
       @killed_sessions = []
+      @pane_child_commands_result = []
+      @list_all_panes_result = []
+      @claude_on_tty_results = {}
     end
 
     def available?
@@ -925,12 +1046,28 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
       @send_keys_calls << { target: target, text: text }
     end
 
+    def send_keys_raw(target, key)
+      @send_keys_raw_calls << { target: target, key: key }
+    end
+
     def create_session(name:, command: nil, working_dir: nil)
       @created_sessions << { name: name, command: command, working_dir: working_dir }
     end
 
     def kill_session(name)
       @killed_sessions << name
+    end
+
+    def pane_child_commands(_pid)
+      @pane_child_commands_result
+    end
+
+    def list_all_panes
+      @list_all_panes_result
+    end
+
+    def claude_on_tty?(tty)
+      @claude_on_tty_results.fetch(tty, false)
     end
   end
 
