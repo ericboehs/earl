@@ -30,6 +30,7 @@ Optional config files:
 - `~/.config/earl/memory/` — Persistent memory files (SOUL.md, USER.md, daily notes)
 - `~/.config/earl/sessions.json` — Session persistence store
 - `~/.config/earl/allowed_tools/` — Per-thread tool approval lists
+- `~/.config/earl/tmux_sessions.json` — Tmux session metadata persistence
 
 ## Architecture
 
@@ -54,12 +55,15 @@ lib/
     streaming_response.rb         # Mattermost post lifecycle (create/update/debounce)
     message_queue.rb              # Per-thread message queuing for busy sessions
     command_parser.rb             # Parses !commands from message text
-    command_executor.rb           # Executes !help, !stats, !stop, !kill, !escape, !compact, !cd, !permissions, !heartbeats, !usage, !context
+    command_executor.rb           # Executes !help, !stats, !stop, !kill, !escape, !compact, !cd, !permissions, !heartbeats, !usage, !context, !sessions, !session, !spawn
     question_handler.rb           # AskUserQuestion tool -> emoji reaction flow
     runner.rb                     # Main event loop, wires everything together
     cron_parser.rb                # Minimal 5-field cron expression parser
     heartbeat_config.rb           # Loads heartbeat definitions from YAML
     heartbeat_scheduler.rb        # Runs heartbeat tasks on cron/interval/one-shot schedules; auto-reloads config
+    tmux.rb                       # Tmux shell wrapper (list sessions/panes, capture, send-keys, wait-for-text)
+    tmux_session_store.rb         # JSON persistence for tmux session metadata
+    tmux_monitor.rb               # Background poller: detects questions/permissions in tmux panes, forwards via Mattermost reactions
     mcp/
       config.rb                   # MCP server ENV-based config
       server.rb                   # JSON-RPC 2.0 MCP server over stdio
@@ -78,12 +82,13 @@ User posts in channel
   -> Mattermost WebSocket 'posted' event
   -> Runner checks allowlist
   -> CommandParser checks for !commands
-     -> If command: CommandExecutor handles it (!help, !stats, !kill, !cd, etc.)
+     -> If command: CommandExecutor handles it (!help, !stats, !kill, !cd, !sessions, !session, !spawn, etc.)
      -> If message: MessageQueue serializes per-thread
   -> SessionManager gets/creates ClaudeSession for thread
      -> Resumes from session store if available
      -> Builds MCP config for permission approval
      -> Injects memory context via --append-system-prompt
+  -> For new sessions in existing threads: fetches Mattermost thread transcript for context
   -> session.send_message(text) writes JSON to Claude stdin
   -> Claude stdout emits events (assistant, result, system)
      -> on_text: StreamingResponse creates POST or debounced PUT
@@ -104,6 +109,8 @@ User posts in channel
 - **Shutdown**: SIGINT sends INT to Claude process, waits ~2s, then TERM. Runner calls `pause_all` to persist sessions before exit.
 - **Memory**: Persistent facts stored as markdown in `~/.config/earl/memory/`. Injected into Claude sessions via `--append-system-prompt`. Claude can save/search via MCP tools.
 - **Heartbeats**: Scheduled tasks (cron/interval/one-shot via `run_at`) that spawn Claude sessions, posting results to configured channels. One-off tasks (`once: true`) auto-disable after execution. Config auto-reloads on file change. Claude can manage schedules via the `manage_heartbeat` MCP tool.
+- **Tmux Session Supervisor**: Mattermost becomes a control plane for all running Claude sessions (both EARL-managed and standalone tmux-based). `!sessions` lists all tmux panes running Claude with per-pane status (🟢 Active / 🟠 Waiting for permission / 🟡 Idle). Detection uses `list_all_panes` + `claude_on_tty?` (ps-based TTY check). `!session <name> approve/deny` remotely handles Claude CLI permission dialogs. `!session <name> status` shows AI-summarized state. `!spawn "prompt"` creates new Claude sessions in tmux. TmuxMonitor runs a background poller that detects questions and permission prompts in tmux panes and forwards them to Mattermost for reaction-based handling. Uses `|||` field separator for tmux 3.6+ compatibility.
+- **Thread context**: When a Claude session is first created for a thread that already has messages (e.g., from `!` commands and EARL replies), the Mattermost thread transcript (up to 20 posts) is prepended so Claude has context for follow-up messages.
 
 ## Testing with Mattermost MCP
 
