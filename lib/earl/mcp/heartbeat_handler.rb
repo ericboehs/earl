@@ -31,7 +31,7 @@ module Earl
       NAME_REQUIRED_ACTIONS = %w[create update delete].freeze
 
       def call(name, arguments)
-        return unless name == "manage_heartbeat"
+        return unless handles?(name)
 
         action = arguments["action"]
         return text_content("Error: action is required (list, create, update, delete)") unless action

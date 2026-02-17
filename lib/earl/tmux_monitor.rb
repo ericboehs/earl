@@ -204,6 +204,20 @@ module Earl
     # Encapsulates mutable poll tracking state: last-seen states, output hashes
     # for stall detection, and pending user interactions.
     class PollState
+      # Tracks per-session poll state: last detected state, output hash for stall detection.
+      TrackingEntry = Struct.new(:last_state, :output_hash, :stall_count, keyword_init: true) do
+        def update_stall(current_hash, threshold)
+          if output_hash == current_hash
+            self.stall_count += 1
+            stall_count >= threshold
+          else
+            self.output_hash = current_hash
+            self.stall_count = 1
+            false
+          end
+        end
+      end
+
       attr_reader :pending_interactions, :mutex, :stall_threshold
 
       def initialize(stall_threshold: DEFAULT_STALL_THRESHOLD)
@@ -219,19 +233,17 @@ module Earl
 
       # Returns true if state changed (and records the new state), false otherwise.
       def transition(name, state)
-        previous = @tracking.dig(name, :last_state)
+        entry = ensure_tracking(name)
         interaction_type = INTERACTIVE_STATES[state]
-        changed = previous != state || no_pending_for?(name, interaction_type)
+        changed = entry.last_state != state || no_pending_for?(name, interaction_type)
         return false unless changed
 
-        ensure_tracking(name)
-        @tracking[name][:last_state] = state
+        entry.last_state = state
         true
       end
 
       def stalled?(name, output)
-        ensure_tracking(name)
-        update_stall_count(@tracking[name], output.hash)
+        ensure_tracking(name).update_stall(output.hash, @stall_threshold)
       end
 
       def cleanup_session(name)
@@ -244,20 +256,7 @@ module Earl
       private
 
       def ensure_tracking(name)
-        @tracking[name] ||= { last_state: nil, output_hash: nil, stall_count: 0 }
-      end
-
-      def update_stall_count(entry, current_hash)
-        return reset_stall(entry, current_hash) unless entry[:output_hash] == current_hash
-
-        new_count = entry[:stall_count] + 1
-        entry[:stall_count] = new_count
-        new_count >= @stall_threshold
-      end
-
-      def reset_stall(entry, current_hash)
-        entry.merge!(output_hash: current_hash, stall_count: 1)
-        false
+        @tracking[name] ||= TrackingEntry.new(last_state: nil, output_hash: nil, stall_count: 0)
       end
 
       def no_pending_for?(name, interaction_type)

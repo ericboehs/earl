@@ -15,7 +15,22 @@ module Earl
       :definition, :next_run_at, :running, :run_thread, :last_run_at,
       :last_completed_at, :last_error, :run_count, :session_id,
       keyword_init: true
-    )
+    ) do
+      def to_status
+        {
+          name: definition.name, description: definition.description,
+          next_run_at: next_run_at, last_run_at: last_run_at,
+          last_completed_at: last_completed_at, last_error: last_error,
+          run_count: run_count, running: running
+        }
+      end
+
+      def update_definition_if_idle(new_definition)
+        return if running
+
+        self.definition = new_definition
+      end
+    end
 
     # Groups injected service dependencies to keep ivar count low.
     Deps = Struct.new(:config, :mattermost, :heartbeat_config, keyword_init: true)
@@ -327,11 +342,7 @@ module Earl
 
       def update_existing_definitions(new_defs)
         new_defs.each do |definition|
-          state = @states[definition.name]
-          next unless state
-          next if state.running
-
-          state.definition = definition
+          @states[definition.name]&.update_definition_if_idle(definition)
         end
       end
 
@@ -347,17 +358,7 @@ module Earl
       private
 
       def build_status(state)
-        definition = state.definition
-        {
-          name: definition.name,
-          description: definition.description,
-          next_run_at: state.next_run_at,
-          last_run_at: state.last_run_at,
-          last_completed_at: state.last_completed_at,
-          last_error: state.last_error,
-          run_count: state.run_count,
-          running: state.running
-        }
+        state.to_status
       end
     end
 

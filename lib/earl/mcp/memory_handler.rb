@@ -18,13 +18,13 @@ module Earl
         [ save_memory_definition, search_memory_definition ]
       end
 
+      DISPATCH = { "save_memory" => :handle_save, "search_memory" => :handle_search }.freeze
+
       def call(name, arguments)
-        case name
-        when "save_memory"
-          handle_save(arguments)
-        when "search_memory"
-          handle_search(arguments)
-        end
+        method = DISPATCH[name]
+        return unless method
+
+        send(method, arguments)
       end
 
       private

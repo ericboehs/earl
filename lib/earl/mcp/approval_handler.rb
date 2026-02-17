@@ -107,15 +107,15 @@ module Earl
         JSON.parse(response.body)["id"]
       end
 
+      INPUT_FORMATTERS = {
+        "Bash" => ->(input) { input["command"].to_s[0..500] },
+        "Edit" => ->(input) { "#{input['file_path']}\n#{input.fetch('new_string', input.fetch('content', ''))[0..300]}" },
+        "Write" => ->(input) { "#{input['file_path']}\n#{input.fetch('new_string', input.fetch('content', ''))[0..300]}" }
+      }.freeze
+
       def format_input(tool_name, input)
-        case tool_name
-        when "Bash"
-          input["command"].to_s[0..500]
-        when "Edit", "Write"
-          "#{input['file_path']}\n#{input.fetch('new_string', input.fetch('content', ''))[0..300]}"
-        else
-          JSON.generate(input)[0..500]
-        end
+        formatter = INPUT_FORMATTERS[tool_name]
+        formatter ? formatter.call(input) : JSON.generate(input)[0..500]
       end
 
       def add_reaction_options(post_id)

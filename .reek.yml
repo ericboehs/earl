@@ -59,8 +59,6 @@ detectors:
       - Earl::HeartbeatScheduler::Execution#run_session             # Reads session/definition fields
       - Earl::HeartbeatScheduler::Execution#wait_for_completion     # Reads session state
       - Earl::HeartbeatScheduler::Execution#finalize_heartbeat      # Reads heartbeat definition fields
-      - Earl::HeartbeatScheduler::ConfigReloading#update_existing_definitions # Updates state objects from new definitions
-      - Earl::HeartbeatScheduler::StatusFormatting#build_status    # Builds status from definition fields
       - Earl::Mattermost#parse_post_response                           # Reads response hash fields
       - Earl::Mattermost::ApiClient#build_request                      # Builds HTTP request from params
       - Earl::Mattermost::WebSocketHandling#websocket_handler_map      # Reads event data fields
@@ -81,20 +79,15 @@ detectors:
       - Earl::Runner::MessageHandling#process_message               # Reads UserMessage fields for session processing
       - Earl::Runner::ResponseLifecycle#setup_callbacks             # Wires session callbacks to response handlers
       - Earl::StreamingResponse#format_tool_use                     # Reads tool_use hash fields
-      - Earl::TmuxMonitor::PollState#update_stall_count             # Reads entry hash fields
 
   ControlParameter:
     exclude:
-      - Earl::Mcp::HeartbeatHandler#call                   # name dispatches to CRUD handler
       - Earl::SessionManager#build_permission_config       # channel_id fallback is idiomatic
-      - Earl::Mcp::ApprovalHandler#format_input            # tool_name dispatches formatting
       - Earl::Mcp::ApprovalHandler::ReactionPolling#poll_for_reaction       # post_id filters reactions
       - Earl::Mcp::Server#tools_call_response              # params dispatches tool call
-      - Earl::Mcp::MemoryHandler#call                      # name dispatches to save/search handlers
       - Earl::ToolInputFormatter#extract_tool_detail_from   # input nil-guard is defensive
       - Earl::TmuxMonitor#alert_for_state                   # state dispatches alert type
       - Earl::TmuxMonitor::PollState#no_pending_for?        # name filters pending interactions
-      - Earl::Mcp::TmuxHandler#call                        # name dispatches to action handler
       - Earl::Mcp::TmuxHandler::SpawnConfirmation#poll_confirmation             # post_id filters reactions
 
   RepeatedConditional:

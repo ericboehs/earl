@@ -46,7 +46,7 @@ module Earl
       TARGET_REQUIRED_ACTIONS = %w[capture status approve deny send_input kill].freeze
 
       def call(name, arguments)
-        return unless name == TOOL_NAME
+        return unless handles?(name)
 
         action = arguments["action"]
         valid_list = VALID_ACTIONS.join(", ")
