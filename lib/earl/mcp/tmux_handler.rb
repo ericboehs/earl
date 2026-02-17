@@ -144,7 +144,25 @@ module Earl
         text_content("Error: #{error.message}")
       end
       def handle_spawn(_arguments) = text_content("Not yet implemented")
-      def handle_kill(_arguments) = text_content("Not yet implemented")
+      # --- kill ---
+
+      def handle_kill(arguments)
+        target = arguments["target"]
+        return text_content("Error: target is required for kill") unless target
+
+        kill_tmux_session(target)
+      rescue Tmux::Error => error
+        text_content("Error: #{error.message}")
+      end
+
+      def kill_tmux_session(target)
+        @tmux.kill_session(target)
+        @tmux_store.delete(target)
+        text_content("Killed tmux session `#{target}`.")
+      rescue Tmux::NotFound
+        @tmux_store.delete(target)
+        text_content("Error: session '#{target}' not found (cleaned up store)")
+      end
 
       # --- helpers ---
 

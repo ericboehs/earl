@@ -254,6 +254,30 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_includes text, "text is required"
   end
 
+  # --- kill ---
+
+  test "kill kills session and removes from store" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "kill", "target" => "dev" })
+    text = result[:content].first[:text]
+    assert_includes text, "Killed"
+    assert_equal ["dev"], @tmux.killed_sessions
+    assert_equal ["dev"], @tmux_store.deleted
+  end
+
+  test "kill returns error when target missing" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "kill" })
+    text = result[:content].first[:text]
+    assert_includes text, "target is required"
+  end
+
+  test "kill returns error for missing session and cleans up store" do
+    @tmux.define_singleton_method(:kill_session) { |_n| raise Earl::Tmux::NotFound, "not found" }
+    result = @handler.call("manage_tmux_sessions", { "action" => "kill", "target" => "missing" })
+    text = result[:content].first[:text]
+    assert_includes text, "not found"
+    assert_equal ["missing"], @tmux_store.deleted
+  end
+
   # --- Mock helpers ---
 
   private

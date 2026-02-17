@@ -187,6 +187,7 @@ detectors:
       - Earl::TmuxSessionStore#cleanup!                       # @mutex.synchronize in multiple branches
       - Earl::TmuxSessionStore#read_store                     # error.message in rescue
       - Earl::Mcp::TmuxHandler#call                          # VALID_ACTIONS.join in two error messages
+      - Earl::Mcp::TmuxHandler#kill_tmux_session              # @tmux_store.delete in happy path + NotFound rescue
 
   NestedIterators:
     exclude:
