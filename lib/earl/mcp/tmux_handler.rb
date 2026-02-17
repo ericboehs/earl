@@ -105,9 +105,44 @@ module Earl
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
-      def handle_approve(_arguments) = text_content("Not yet implemented")
-      def handle_deny(_arguments) = text_content("Not yet implemented")
-      def handle_send_input(_arguments) = text_content("Not yet implemented")
+      # --- approve ---
+
+      def handle_approve(arguments)
+        target = arguments["target"]
+        return text_content("Error: target is required for approve") unless target
+
+        @tmux.send_keys_raw(target, "Enter")
+        text_content("Approved permission on `#{target}`.")
+      rescue Tmux::Error => error
+        text_content("Error: #{error.message}")
+      end
+
+      # --- deny ---
+
+      def handle_deny(arguments)
+        target = arguments["target"]
+        return text_content("Error: target is required for deny") unless target
+
+        @tmux.send_keys_raw(target, "Escape")
+        text_content("Denied permission on `#{target}`.")
+      rescue Tmux::Error => error
+        text_content("Error: #{error.message}")
+      end
+
+      # --- send_input ---
+
+      def handle_send_input(arguments)
+        target = arguments["target"]
+        return text_content("Error: target is required for send_input") unless target
+
+        text = arguments["text"]
+        return text_content("Error: text is required for send_input") unless text
+
+        @tmux.send_keys(target, text)
+        text_content("Sent to `#{target}`: `#{text}`")
+      rescue Tmux::Error => error
+        text_content("Error: #{error.message}")
+      end
       def handle_spawn(_arguments) = text_content("Not yet implemented")
       def handle_kill(_arguments) = text_content("Not yet implemented")
 

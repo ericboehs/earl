@@ -199,6 +199,61 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_includes text, "status"
   end
 
+  # --- approve ---
+
+  test "approve sends Enter to target" do
+    @handler.call("manage_tmux_sessions", { "action" => "approve", "target" => "code:4.0" })
+    assert_equal 1, @tmux.send_keys_raw_calls.size
+    assert_equal({ target: "code:4.0", key: "Enter" }, @tmux.send_keys_raw_calls.first)
+  end
+
+  test "approve returns error when target missing" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "approve" })
+    text = result[:content].first[:text]
+    assert_includes text, "target is required"
+  end
+
+  test "approve returns error for missing session" do
+    @tmux.define_singleton_method(:send_keys_raw) { |_t, _k| raise Earl::Tmux::NotFound, "not found" }
+    result = @handler.call("manage_tmux_sessions", { "action" => "approve", "target" => "missing:1.0" })
+    text = result[:content].first[:text]
+    assert_includes text, "not found"
+  end
+
+  # --- deny ---
+
+  test "deny sends Escape to target" do
+    @handler.call("manage_tmux_sessions", { "action" => "deny", "target" => "code:4.0" })
+    assert_equal 1, @tmux.send_keys_raw_calls.size
+    assert_equal({ target: "code:4.0", key: "Escape" }, @tmux.send_keys_raw_calls.first)
+  end
+
+  test "deny returns error when target missing" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "deny" })
+    text = result[:content].first[:text]
+    assert_includes text, "target is required"
+  end
+
+  # --- send_input ---
+
+  test "send_input sends text to target" do
+    @handler.call("manage_tmux_sessions", { "action" => "send_input", "target" => "dev:1.0", "text" => "hello world" })
+    assert_equal 1, @tmux.send_keys_calls.size
+    assert_equal({ target: "dev:1.0", text: "hello world" }, @tmux.send_keys_calls.first)
+  end
+
+  test "send_input returns error when target missing" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "send_input", "text" => "hello" })
+    text = result[:content].first[:text]
+    assert_includes text, "target is required"
+  end
+
+  test "send_input returns error when text missing" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "send_input", "target" => "dev:1.0" })
+    text = result[:content].first[:text]
+    assert_includes text, "text is required"
+  end
+
   # --- Mock helpers ---
 
   private

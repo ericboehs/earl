@@ -92,6 +92,7 @@ detectors:
       - Earl::Mcp::TmuxHandler#handle_list                   # Guard checks + list + filter + format
       - Earl::Mcp::TmuxHandler#handle_capture                # Guard + capture + format + error handling
       - Earl::Mcp::TmuxHandler#handle_status                 # Guard + capture + status detect + format + error handling
+      - Earl::Mcp::TmuxHandler#handle_send_input              # Guard checks for target + text + send + format + error handling
       - Earl::Tmux#list_sessions                           # Format + execute + parse tmux output
       - Earl::Tmux#list_panes                              # Format + execute + parse tmux output
       - Earl::Tmux#list_all_panes                          # Aggregate panes across sessions
@@ -197,6 +198,7 @@ detectors:
       - Earl::StreamingResponse                          # reply_post_id guards at multiple lifecycle points
       - Earl::Memory::Store                              # File.exist? guards at multiple file access points
       - Earl::Mcp::HeartbeatHandler                      # arguments["name"] checked across CRUD methods
+      - Earl::Mcp::TmuxHandler                           # target checked across action methods
 
   LongParameterList:
     exclude:
