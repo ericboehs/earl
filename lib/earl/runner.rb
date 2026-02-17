@@ -154,18 +154,23 @@ module Earl
         end
       end
 
-      def process_message(msg) # rubocop:disable Metrics/MethodLength
+      def process_message(msg)
         sent = false
-        thread_id, text = msg.thread_id, msg.text
-        effective_channel = msg.channel_id || @services.config.channel_id
-        existing_session, session = prepare_session(thread_id, effective_channel, msg.sender_name)
-        prepare_response(session, thread_id, effective_channel)
-        message = existing_session ? text : build_contextual_message(thread_id, text)
-        sent = send_and_touch(session, thread_id, message)
+        thread_id = msg.thread_id
+        sent = process_message_send(msg, thread_id)
       rescue StandardError => error
         log_processing_error(thread_id, error)
       ensure
         cleanup_failed_send(thread_id) unless sent
+      end
+
+      def process_message_send(msg, thread_id)
+        text = msg.text
+        effective_channel = msg.channel_id || @services.config.channel_id
+        existing_session, session = prepare_session(thread_id, effective_channel, msg.sender_name)
+        prepare_response(session, thread_id, effective_channel)
+        message = existing_session ? text : build_contextual_message(thread_id, text)
+        send_and_touch(session, thread_id, message)
       end
 
       def send_and_touch(session, thread_id, message)
