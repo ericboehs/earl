@@ -321,6 +321,19 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_includes text, "not found"
   end
 
+  test "spawn creates session when confirmation is approved" do
+    @tmux.session_exists_result = false
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| true }
+
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "Spawned"
+    assert_equal 1, @tmux.created_sessions.size
+    assert_equal 1, @tmux_store.saved.size
+  end
+
   # --- Mock helpers ---
 
   private

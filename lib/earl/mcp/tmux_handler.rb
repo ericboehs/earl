@@ -15,7 +15,7 @@ module Earl
 
       APPROVE_EMOJIS = %w[+1 white_check_mark].freeze
       DENY_EMOJIS = %w[-1].freeze
-      REACTION_EMOJIS = %w[+1 -1].freeze
+      REACTION_EMOJIS = %w[+1 white_check_mark -1].freeze
 
       PANE_STATUS_LABELS = {
         active: "Active",
@@ -119,6 +119,8 @@ module Earl
 
         @tmux.send_keys_raw(target, "Enter")
         text_content("Approved permission on `#{target}`.")
+      rescue Tmux::NotFound
+        text_content("Error: session/pane '#{target}' not found")
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
@@ -131,6 +133,8 @@ module Earl
 
         @tmux.send_keys_raw(target, "Escape")
         text_content("Denied permission on `#{target}`.")
+      rescue Tmux::NotFound
+        text_content("Error: session/pane '#{target}' not found")
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
