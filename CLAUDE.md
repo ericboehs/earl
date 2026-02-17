@@ -144,6 +144,22 @@ mcp__mattermost__get_channel_messages(channel_id: "bt36n3e7qj837qoi1mmho54xhh", 
 - `rubocop -A` — Auto-fix style violations
 - `bin/rails test` — Run test suite
 
+## Code Quality
+
+This project uses **vanilla RuboCop and Reek** with minimal global configuration. Do not:
+
+- Add `# rubocop:disable` inline comments — fix the code instead
+- Add `# :reek:` inline annotations — refactor to eliminate the smell
+- Add per-class or per-method exclusions to `.rubocop.yml` or `.reek.yml`
+- Raise thresholds or disable detectors to work around warnings
+
+If a linter flags something, refactor the code to satisfy it. Common Reek fixes:
+- **FeatureEnvy**: Extract accessed fields into locals, use `values_at`, or move logic onto the data object
+- **TooManyStatements**: Extract helper methods to stay under 10 statements
+- **DuplicateMethodCall**: Extract repeated calls into a local variable
+- **ControlParameter**: Replace with predicates, hash dispatch, or polymorphism
+- **DataClump**: Bundle traveling parameters into Structs or Data.define objects
+
 ## Commit Messages
 
 This project follows [Conventional Commits](https://www.conventionalcommits.org/) specification.
