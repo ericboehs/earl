@@ -278,6 +278,49 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_equal ["missing"], @tmux_store.deleted
   end
 
+  # --- spawn ---
+
+  test "spawn returns error when prompt missing" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "spawn" })
+    text = result[:content].first[:text]
+    assert_includes text, "prompt is required"
+  end
+
+  test "spawn returns error when name contains dot" do
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "bad.name"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "cannot contain"
+  end
+
+  test "spawn returns error when name contains colon" do
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "bad:name"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "cannot contain"
+  end
+
+  test "spawn returns error when session already exists" do
+    @tmux.session_exists_result = true
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "existing"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "already exists"
+  end
+
+  test "spawn returns error when working_dir does not exist" do
+    @tmux.session_exists_result = false
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "test-session",
+      "working_dir" => "/nonexistent/path/that/does/not/exist"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "not found"
+  end
+
   # --- Mock helpers ---
 
   private
@@ -374,6 +417,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     config.define_singleton_method(:platform_bot_id) { "bot-123" }
     config.define_singleton_method(:permission_timeout_ms) { 120_000 }
     config.define_singleton_method(:websocket_url) { "wss://mm.example.com/api/v4/websocket" }
+    config.define_singleton_method(:platform_token) { "mock-token" }
     config.define_singleton_method(:allowed_users) { [] }
     config
   end

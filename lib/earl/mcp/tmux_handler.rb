@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "shellwords"
+
 module Earl
   module Mcp
     # MCP handler exposing a manage_tmux_sessions tool to list, capture, control,
@@ -10,6 +12,10 @@ module Earl
 
       TOOL_NAME = "manage_tmux_sessions"
       VALID_ACTIONS = %w[list capture status approve deny send_input spawn kill].freeze
+
+      APPROVE_EMOJIS = %w[+1 white_check_mark].freeze
+      DENY_EMOJIS = %w[-1].freeze
+      REACTION_EMOJIS = %w[+1 -1].freeze
 
       PANE_STATUS_LABELS = {
         active: "Active",
@@ -143,7 +149,27 @@ module Earl
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
-      def handle_spawn(_arguments) = text_content("Not yet implemented")
+      # --- spawn ---
+
+      def handle_spawn(arguments)
+        prompt = arguments["prompt"]
+        return text_content("Error: prompt is required for spawn") unless prompt && !prompt.strip.empty?
+
+        name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}"
+        return text_content("Error: name '#{name}' cannot contain '.' or ':' (tmux reserved)") if name.match?(/[.:]/)
+
+        working_dir = arguments["working_dir"]
+        return text_content("Error: directory '#{working_dir}' not found") if working_dir && !Dir.exist?(working_dir)
+        return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
+
+        approved = request_spawn_confirmation(name: name, prompt: prompt, working_dir: working_dir)
+        return text_content("Spawn denied by user.") unless approved
+
+        create_spawned_session(name: name, prompt: prompt, working_dir: working_dir)
+      rescue Tmux::Error => error
+        text_content("Error: #{error.message}")
+      end
+
       # --- kill ---
 
       def handle_kill(arguments)
@@ -162,6 +188,133 @@ module Earl
       rescue Tmux::NotFound
         @tmux_store.delete(target)
         text_content("Error: session '#{target}' not found (cleaned up store)")
+      end
+
+      # --- spawn helpers ---
+
+      def create_spawned_session(name:, prompt:, working_dir:)
+        command = "claude #{Shellwords.shellescape(prompt)}"
+        @tmux.create_session(name: name, command: command, working_dir: working_dir)
+
+        info = TmuxSessionStore::TmuxSessionInfo.new(
+          name: name, channel_id: @config.platform_channel_id,
+          thread_id: @config.platform_thread_id,
+          working_dir: working_dir, prompt: prompt, created_at: Time.now.iso8601
+        )
+        @tmux_store.save(info)
+
+        text_content("Spawned tmux session `#{name}`.\n- Prompt: #{prompt}\n- Dir: #{working_dir || Dir.pwd}")
+      end
+
+      def request_spawn_confirmation(name:, prompt:, working_dir:)
+        post_id = post_confirmation_request(name, prompt, working_dir)
+        return false unless post_id
+
+        add_reaction_options(post_id)
+        result = wait_for_confirmation(post_id)
+        delete_confirmation_post(post_id)
+        result
+      end
+
+      def post_confirmation_request(name, prompt, working_dir)
+        dir_line = working_dir ? "\n- **Dir:** #{working_dir}" : ""
+        message = ":rocket: **Spawn Request**\n" \
+                  "Claude wants to spawn session `#{name}`\n" \
+                  "- **Prompt:** #{prompt}#{dir_line}\n" \
+                  "React: :+1: approve | :-1: deny"
+
+        response = @api.post("/posts", {
+          channel_id: @config.platform_channel_id,
+          message: message,
+          root_id: @config.platform_thread_id
+        })
+
+        return unless response.is_a?(Net::HTTPSuccess)
+
+        JSON.parse(response.body)["id"]
+      rescue StandardError => error
+        log(:error, "Failed to post spawn confirmation: #{error.message}")
+        nil
+      end
+
+      def add_reaction_options(post_id)
+        REACTION_EMOJIS.each do |emoji|
+          @api.post("/reactions", {
+            user_id: @config.platform_bot_id,
+            post_id: post_id,
+            emoji_name: emoji
+          })
+        end
+      end
+
+      def wait_for_confirmation(post_id)
+        timeout_sec = @config.permission_timeout_ms / 1000.0
+        deadline = Time.now + timeout_sec
+
+        ws = connect_websocket
+        return false unless ws
+
+        result = poll_confirmation(ws, post_id, deadline)
+        result == true
+      ensure
+        begin
+          ws&.close
+        rescue StandardError
+          nil
+        end
+      end
+
+      def connect_websocket
+        ws = WebSocket::Client::Simple.connect(@config.websocket_url)
+        token = @config.platform_token
+        ws_ref = ws
+        ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
+        ws
+      rescue StandardError => error
+        log(:error, "Spawn confirmation WebSocket failed: #{error.message}")
+        nil
+      end
+
+      def poll_confirmation(ws, post_id, deadline)
+        reaction_queue = Queue.new
+
+        ws.on(:message) do |msg|
+          next unless msg.data && !msg.data.empty?
+
+          begin
+            event = JSON.parse(msg.data)
+            if event["event"] == "reaction_added"
+              reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
+              reaction_queue.push(reaction_data) if reaction_data["post_id"] == post_id
+            end
+          rescue JSON::ParserError
+            nil
+          end
+        end
+
+        loop do
+          remaining = deadline - Time.now
+          return false if remaining <= 0
+
+          reaction = begin
+            reaction_queue.pop(true)
+          rescue ThreadError
+            sleep 0.5
+            nil
+          end
+
+          next unless reaction
+          next if reaction["user_id"] == @config.platform_bot_id
+
+          return true if APPROVE_EMOJIS.include?(reaction["emoji_name"])
+          return false if DENY_EMOJIS.include?(reaction["emoji_name"])
+        end
+      end
+
+      def delete_confirmation_post(post_id)
+        @api.delete("/posts/#{post_id}")
+      rescue StandardError => error
+        log(:warn, "Failed to delete spawn confirmation: #{error.message}")
       end
 
       # --- helpers ---

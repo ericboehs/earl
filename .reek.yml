@@ -54,6 +54,7 @@ detectors:
       - Earl::SessionManager    # channel_id, working_dir, username travel together for session creation
       - Earl::CommandExecutor   # thread_id, channel_id travel together through command routing
       - Earl::Mcp::ApprovalHandler # tool_name, input travel together through approval flow
+      - Earl::Mcp::TmuxHandler     # name, prompt, working_dir travel together through spawn flow
 
   TooManyStatements:
     max_statements: 8
@@ -93,6 +94,10 @@ detectors:
       - Earl::Mcp::TmuxHandler#handle_capture                # Guard + capture + format + error handling
       - Earl::Mcp::TmuxHandler#handle_status                 # Guard + capture + status detect + format + error handling
       - Earl::Mcp::TmuxHandler#handle_send_input              # Guard checks for target + text + send + format + error handling
+      - Earl::Mcp::TmuxHandler#handle_spawn                    # Validation guards + confirmation + create
+      - Earl::Mcp::TmuxHandler#post_confirmation_request       # Build message + post + parse response
+      - Earl::Mcp::TmuxHandler#connect_websocket               # WebSocket connect + authenticate
+      - Earl::Mcp::TmuxHandler#poll_confirmation               # WebSocket polling loop with reaction matching
       - Earl::Tmux#list_sessions                           # Format + execute + parse tmux output
       - Earl::Tmux#list_panes                              # Format + execute + parse tmux output
       - Earl::Tmux#list_all_panes                          # Aggregate panes across sessions
@@ -153,6 +158,7 @@ detectors:
       - Earl::TmuxMonitor#alert_for_state                   # state dispatches alert type
       - Earl::TmuxMonitor::PollState#no_pending_for?        # name filters pending interactions
       - Earl::Mcp::TmuxHandler#call                        # name dispatches to action handler
+      - Earl::Mcp::TmuxHandler#poll_confirmation             # post_id filters reactions
 
   DuplicateMethodCall:
     exclude:
@@ -188,6 +194,7 @@ detectors:
       - Earl::TmuxSessionStore#read_store                     # error.message in rescue
       - Earl::Mcp::TmuxHandler#call                          # VALID_ACTIONS.join in two error messages
       - Earl::Mcp::TmuxHandler#kill_tmux_session              # @tmux_store.delete in happy path + NotFound rescue
+      - Earl::Mcp::TmuxHandler#poll_confirmation              # msg.data checks + reaction field access in WebSocket callback
 
   NestedIterators:
     exclude:
@@ -218,6 +225,10 @@ detectors:
       - Earl::Runner#process_message                       # Session creation with thread_id, text, channel_id, sender_name
       - Earl::Tmux#wait_for_text                            # Polling config: session, text, timeout, interval, lines
       - Earl::TmuxMonitor#alert_for_state                   # State transition context params
+
+  TooManyConstants:
+    exclude:
+      - Earl::Mcp::TmuxHandler    # Action list + reaction emoji sets for spawn confirmation
 
   MissingSafeMethod:
     exclude:
