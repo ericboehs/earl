@@ -10,6 +10,9 @@ module Earl
     include Logging
     include Formatting
 
+    # Bundles dispatch context so thread_id + channel_id don't travel as separate args.
+    CommandContext = Data.define(:thread_id, :channel_id, :arg, :args)
+
     HELP_TABLE = <<~HELP
       | Command | Description |
       |---------|-------------|
@@ -55,12 +58,14 @@ module Earl
     # runner can route them through the normal message pipeline.
     # Returns nil for all other commands (handled inline).
     def execute(command, thread_id:, channel_id:)
-      name = command.name
-      slash = PASSTHROUGH_COMMANDS[name]
+      slash = PASSTHROUGH_COMMANDS[command.name]
       return { passthrough: slash } if slash
 
-      args = command.args
-      dispatch_command(name, thread_id, channel_id, args)
+      ctx = CommandContext.new(
+        thread_id: thread_id, channel_id: channel_id,
+        arg: command.args.first, args: command.args
+      )
+      dispatch_command(command.name, ctx)
       nil
     end
 
@@ -70,47 +75,46 @@ module Earl
 
     private
 
-    def dispatch_command(name, thread_id, channel_id, args)
-      arg = args.first
+    def dispatch_command(name, ctx)
       case name
-      when :help then handle_help(thread_id, channel_id)
-      when :stats then handle_stats(thread_id, channel_id)
-      when :stop then handle_stop(thread_id, channel_id)
-      when :escape then handle_escape(thread_id, channel_id)
-      when :kill then handle_kill(thread_id, channel_id)
-      when :cd then handle_cd(thread_id, channel_id, arg)
-      when :permissions then post_reply(channel_id, thread_id, "Permission mode is controlled via `EARL_SKIP_PERMISSIONS` env var.")
-      when :heartbeats then handle_heartbeats(thread_id, channel_id)
-      when :usage then handle_usage(thread_id, channel_id)
-      when :context then handle_context(thread_id, channel_id)
-      when :sessions then handle_sessions(thread_id, channel_id)
-      when :session_show then handle_session_show(thread_id, channel_id, arg)
-      when :session_status then handle_session_status(thread_id, channel_id, arg)
-      when :session_kill then handle_session_kill(thread_id, channel_id, arg)
-      when :session_nudge then handle_session_nudge(thread_id, channel_id, arg)
-      when :session_approve then handle_session_approve(thread_id, channel_id, arg)
-      when :session_deny then handle_session_deny(thread_id, channel_id, arg)
-      when :session_input then handle_session_input(thread_id, channel_id, arg, args[1])
-      when :spawn then handle_spawn(thread_id, channel_id, arg, args[1])
+      when :help then handle_help(ctx)
+      when :stats then handle_stats(ctx)
+      when :stop then handle_stop(ctx)
+      when :escape then handle_escape(ctx)
+      when :kill then handle_kill(ctx)
+      when :cd then handle_cd(ctx)
+      when :permissions then post_reply(ctx, "Permission mode is controlled via `EARL_SKIP_PERMISSIONS` env var.")
+      when :heartbeats then handle_heartbeats(ctx)
+      when :usage then handle_usage(ctx)
+      when :context then handle_context(ctx)
+      when :sessions then handle_sessions(ctx)
+      when :session_show then handle_session_show(ctx)
+      when :session_status then handle_session_status(ctx)
+      when :session_kill then handle_session_kill(ctx)
+      when :session_nudge then handle_session_nudge(ctx)
+      when :session_approve then handle_session_approve(ctx)
+      when :session_deny then handle_session_deny(ctx)
+      when :session_input then handle_session_input(ctx)
+      when :spawn then handle_spawn(ctx)
       end
     end
 
-    def handle_help(thread_id, channel_id)
-      post_reply(channel_id, thread_id, HELP_TABLE)
+    def handle_help(ctx)
+      post_reply(ctx, HELP_TABLE)
     end
 
-    def handle_stats(thread_id, channel_id)
-      session = @session_manager.get(thread_id)
+    def handle_stats(ctx)
+      session = @session_manager.get(ctx.thread_id)
       if session
-        post_reply(channel_id, thread_id, format_stats(session.stats))
+        post_reply(ctx, format_stats(session.stats))
         return
       end
 
-      persisted = @session_manager.persisted_session_for(thread_id)
+      persisted = @session_manager.persisted_session_for(ctx.thread_id)
       if persisted&.total_cost
-        post_reply(channel_id, thread_id, format_persisted_stats(persisted))
+        post_reply(ctx, format_persisted_stats(persisted))
       else
-        post_reply(channel_id, thread_id, "No active session for this thread.")
+        post_reply(ctx, "No active session for this thread.")
       end
     end
 
@@ -144,77 +148,77 @@ module Earl
       lines.join("\n")
     end
 
-    def handle_stop(thread_id, channel_id)
-      @session_manager.stop_session(thread_id)
-      post_reply(channel_id, thread_id, ":stop_sign: Session stopped.")
+    def handle_stop(ctx)
+      @session_manager.stop_session(ctx.thread_id)
+      post_reply(ctx, ":stop_sign: Session stopped.")
     end
 
-    def handle_escape(thread_id, channel_id)
-      session = @session_manager.get(thread_id)
+    def handle_escape(ctx)
+      session = @session_manager.get(ctx.thread_id)
       if session&.process_pid
         Process.kill("INT", session.process_pid)
-        post_reply(channel_id, thread_id, ":warning: Sent SIGINT to Claude.")
+        post_reply(ctx, ":warning: Sent SIGINT to Claude.")
       else
-        post_reply(channel_id, thread_id, "No active session to interrupt.")
+        post_reply(ctx, "No active session to interrupt.")
       end
     rescue Errno::ESRCH
-      post_reply(channel_id, thread_id, "Process already exited.")
+      post_reply(ctx, "Process already exited.")
     end
 
-    def handle_kill(thread_id, channel_id)
-      session = @session_manager.get(thread_id)
+    def handle_kill(ctx)
+      session = @session_manager.get(ctx.thread_id)
       if session&.process_pid
         Process.kill("KILL", session.process_pid)
-        cleanup_and_reply(thread_id, channel_id, ":skull: Session force killed.")
+        cleanup_and_reply(ctx, ":skull: Session force killed.")
       else
-        post_reply(channel_id, thread_id, "No active session to kill.")
+        post_reply(ctx, "No active session to kill.")
       end
     rescue Errno::ESRCH
-      cleanup_and_reply(thread_id, channel_id, "Process already exited, session cleaned up.")
+      cleanup_and_reply(ctx, "Process already exited, session cleaned up.")
     end
 
-    def handle_cd(thread_id, channel_id, path)
-      cleaned = path.to_s.strip
+    def handle_cd(ctx)
+      cleaned = ctx.arg.to_s.strip
       if cleaned.empty?
-        post_reply(channel_id, thread_id, ":x: Usage: `!cd <path>`")
+        post_reply(ctx, ":x: Usage: `!cd <path>`")
         return
       end
 
       expanded = File.expand_path(cleaned)
       if Dir.exist?(expanded)
-        @working_dirs[thread_id] = expanded
-        post_reply(channel_id, thread_id, ":file_folder: Working directory set to `#{expanded}` (applies to next new session)")
+        @working_dirs[ctx.thread_id] = expanded
+        post_reply(ctx, ":file_folder: Working directory set to `#{expanded}` (applies to next new session)")
       else
-        post_reply(channel_id, thread_id, ":x: Directory not found: `#{expanded}`")
+        post_reply(ctx, ":x: Directory not found: `#{expanded}`")
       end
     end
 
-    def handle_heartbeats(thread_id, channel_id)
+    def handle_heartbeats(ctx)
       unless @heartbeat_scheduler
-        post_reply(channel_id, thread_id, "Heartbeat scheduler not configured.")
+        post_reply(ctx, "Heartbeat scheduler not configured.")
         return
       end
 
       statuses = @heartbeat_scheduler.status
       if statuses.empty?
-        post_reply(channel_id, thread_id, "No heartbeats configured.")
+        post_reply(ctx, "No heartbeats configured.")
         return
       end
 
-      post_reply(channel_id, thread_id, format_heartbeats(statuses))
+      post_reply(ctx, format_heartbeats(statuses))
     end
 
-    def handle_usage(thread_id, channel_id)
-      post_reply(channel_id, thread_id, ":hourglass: Fetching usage data (takes ~15s)...")
+    def handle_usage(ctx)
+      post_reply(ctx, ":hourglass: Fetching usage data (takes ~15s)...")
 
       Thread.new do
         data = fetch_usage_data
         message = data ? format_usage(data) : ":x: Failed to fetch usage data."
-        post_reply(channel_id, thread_id, message)
+        post_reply(ctx, message)
       rescue StandardError => error
         msg = error.message
         log(:error, "Usage command error: #{msg}")
-        post_reply(channel_id, thread_id, ":x: Error fetching usage: #{msg}")
+        post_reply(ctx, ":x: Error fetching usage: #{msg}")
       end
     end
 
@@ -242,23 +246,23 @@ module Earl
       lines.join("\n")
     end
 
-    def handle_context(thread_id, channel_id)
-      sid = @session_manager.claude_session_id_for(thread_id)
+    def handle_context(ctx)
+      sid = @session_manager.claude_session_id_for(ctx.thread_id)
       unless sid
-        post_reply(channel_id, thread_id, "No session found for this thread.")
+        post_reply(ctx, "No session found for this thread.")
         return
       end
 
-      post_reply(channel_id, thread_id, ":hourglass: Fetching context data (takes ~20s)...")
+      post_reply(ctx, ":hourglass: Fetching context data (takes ~20s)...")
 
       Thread.new do
         data = fetch_context_data(sid)
         message = data ? format_context(data) : ":x: Failed to fetch context data."
-        post_reply(channel_id, thread_id, message)
+        post_reply(ctx, message)
       rescue StandardError => error
         msg = error.message
         log(:error, "Context command error: #{msg}")
-        post_reply(channel_id, thread_id, ":x: Error fetching context: #{msg}")
+        post_reply(ctx, ":x: Error fetching context: #{msg}")
       end
     end
 
@@ -335,32 +339,32 @@ module Earl
       time.strftime("%Y-%m-%d %H:%M")
     end
 
-    def post_reply(channel_id, thread_id, message)
-      @mattermost.create_post(channel_id: channel_id, message: message, root_id: thread_id)
+    def post_reply(ctx, message)
+      @mattermost.create_post(channel_id: ctx.channel_id, message: message, root_id: ctx.thread_id)
     end
 
-    def cleanup_and_reply(thread_id, channel_id, message)
-      @session_manager.stop_session(thread_id)
-      post_reply(channel_id, thread_id, message)
+    def cleanup_and_reply(ctx, message)
+      @session_manager.stop_session(ctx.thread_id)
+      post_reply(ctx, message)
     end
 
     # -- Tmux session handlers ------------------------------------------------
 
-    def handle_sessions(thread_id, channel_id)
+    def handle_sessions(ctx)
       unless @tmux.available?
-        post_reply(channel_id, thread_id, ":x: tmux is not installed.")
+        post_reply(ctx, ":x: tmux is not installed.")
         return
       end
 
       panes = @tmux.list_all_panes
       if panes.empty?
-        post_reply(channel_id, thread_id, "No tmux sessions running.")
+        post_reply(ctx, "No tmux sessions running.")
         return
       end
 
       claude_panes = panes.select { |pane| @tmux.claude_on_tty?(pane[:tty]) }
       if claude_panes.empty?
-        post_reply(channel_id, thread_id, "No Claude sessions found across #{panes.size} tmux panes.")
+        post_reply(ctx, "No Claude sessions found across #{panes.size} tmux panes.")
         return
       end
 
@@ -370,7 +374,7 @@ module Earl
         "|------|---------|--------|"
       ]
       claude_panes.each { |pane| lines << format_claude_pane_row(pane) }
-      post_reply(channel_id, thread_id, lines.join("\n"))
+      post_reply(ctx, lines.join("\n"))
     end
 
     def format_claude_pane_row(pane)
@@ -401,127 +405,121 @@ module Earl
       :idle
     end
 
-    def handle_session_show(thread_id, channel_id, name)
-      with_tmux_session(thread_id, channel_id, name) do
-        output = @tmux.capture_pane(name)
+    def handle_session_show(ctx)
+      with_tmux_session(ctx) do
+        output = @tmux.capture_pane(ctx.arg)
         truncated = truncate_output(output)
-        post_reply(channel_id, thread_id, "#### :computer: `#{name}` pane output\n```\n#{truncated}\n```")
+        post_reply(ctx, "#### :computer: `#{ctx.arg}` pane output\n```\n#{truncated}\n```")
       end
     end
 
-    def handle_session_status(thread_id, channel_id, name)
-      with_tmux_session(thread_id, channel_id, name) do
-        output = @tmux.capture_pane(name, lines: 200)
+    def handle_session_status(ctx)
+      with_tmux_session(ctx) do
+        output = @tmux.capture_pane(ctx.arg, lines: 200)
         truncated = truncate_output(output, 3000)
-        post_reply(channel_id, thread_id,
-                   "#### :mag: `#{name}` status\n```\n#{truncated}\n```\n_AI summary not yet implemented._")
+        post_reply(ctx, "#### :mag: `#{ctx.arg}` status\n```\n#{truncated}\n```\n_AI summary not yet implemented._")
       end
     end
 
-    def handle_session_input(thread_id, channel_id, name, text)
-      with_tmux_session(thread_id, channel_id, name) do
-        @tmux.send_keys(name, text)
-        post_reply(channel_id, thread_id, ":keyboard: Sent to `#{name}`: `#{text}`")
+    def handle_session_input(ctx)
+      with_tmux_session(ctx) do
+        @tmux.send_keys(ctx.arg, ctx.args[1])
+        post_reply(ctx, ":keyboard: Sent to `#{ctx.arg}`: `#{ctx.args[1]}`")
       end
     end
 
-    def handle_session_nudge(thread_id, channel_id, name)
-      with_tmux_session(thread_id, channel_id, name) do
-        @tmux.send_keys(name, "Are you stuck? What's your current status?")
-        post_reply(channel_id, thread_id, ":wave: Nudged `#{name}`.")
+    def handle_session_nudge(ctx)
+      with_tmux_session(ctx) do
+        @tmux.send_keys(ctx.arg, "Are you stuck? What's your current status?")
+        post_reply(ctx, ":wave: Nudged `#{ctx.arg}`.")
       end
     end
 
-    def handle_session_approve(thread_id, channel_id, name)
-      with_tmux_session(thread_id, channel_id, name) do
-        @tmux.send_keys_raw(name, "Enter")
-        post_reply(channel_id, thread_id, ":white_check_mark: Approved permission on `#{name}`.")
+    def handle_session_approve(ctx)
+      with_tmux_session(ctx) do
+        @tmux.send_keys_raw(ctx.arg, "Enter")
+        post_reply(ctx, ":white_check_mark: Approved permission on `#{ctx.arg}`.")
       end
     end
 
-    def handle_session_deny(thread_id, channel_id, name)
-      with_tmux_session(thread_id, channel_id, name) do
-        @tmux.send_keys_raw(name, "Escape")
-        post_reply(channel_id, thread_id, ":no_entry_sign: Denied permission on `#{name}`.")
+    def handle_session_deny(ctx)
+      with_tmux_session(ctx) do
+        @tmux.send_keys_raw(ctx.arg, "Escape")
+        post_reply(ctx, ":no_entry_sign: Denied permission on `#{ctx.arg}`.")
       end
     end
 
-    def handle_session_kill(thread_id, channel_id, name)
-      @tmux.kill_session(name)
-      @tmux_store&.delete(name)
-      post_reply(channel_id, thread_id, ":skull: Tmux session `#{name}` killed.")
+    def handle_session_kill(ctx)
+      @tmux.kill_session(ctx.arg)
+      @tmux_store&.delete(ctx.arg)
+      post_reply(ctx, ":skull: Tmux session `#{ctx.arg}` killed.")
     rescue Tmux::NotFound
-      @tmux_store&.delete(name)
-      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found (cleaned up store).")
+      @tmux_store&.delete(ctx.arg)
+      post_reply(ctx, ":x: Session `#{ctx.arg}` not found (cleaned up store).")
     rescue Tmux::Error => error
-      post_reply(channel_id, thread_id, ":x: Error killing session: #{error.message}")
+      post_reply(ctx, ":x: Error killing session: #{error.message}")
     end
 
-    def handle_spawn(thread_id, channel_id, prompt, flags_str)
+    def handle_spawn(ctx)
+      prompt = ctx.arg
       if prompt.to_s.strip.empty?
-        post_reply(channel_id, thread_id, ":x: Usage: `!spawn \"prompt\" [--name N] [--dir D]`")
+        post_reply(ctx, ":x: Usage: `!spawn \"prompt\" [--name N] [--dir D]`")
         return
       end
 
-      flags = parse_spawn_flags(flags_str.to_s)
+      flags = parse_spawn_flags(ctx.args[1].to_s)
       name = flags[:name] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}"
       working_dir = flags[:dir]
 
       if name.match?(/[.:]/)
-        post_reply(channel_id, thread_id, ":x: Invalid session name `#{name}`: cannot contain `.` or `:` (tmux reserved).")
+        post_reply(ctx, ":x: Invalid session name `#{name}`: cannot contain `.` or `:` (tmux reserved).")
         return
       end
 
       if working_dir && !Dir.exist?(working_dir)
-        post_reply(channel_id, thread_id, ":x: Directory not found: `#{working_dir}`")
+        post_reply(ctx, ":x: Directory not found: `#{working_dir}`")
         return
       end
 
       if @tmux.session_exists?(name)
-        post_reply(channel_id, thread_id, ":x: Session `#{name}` already exists.")
+        post_reply(ctx, ":x: Session `#{name}` already exists.")
         return
       end
 
-      spawn_tmux_session(name: name, prompt: prompt, working_dir: working_dir,
-                         channel_id: channel_id, thread_id: thread_id)
+      spawn_tmux_session(ctx, name: name, prompt: prompt, working_dir: working_dir)
     rescue Tmux::Error => error
-      post_reply(channel_id, thread_id, ":x: Failed to spawn session: #{error.message}")
+      post_reply(ctx, ":x: Failed to spawn session: #{error.message}")
     end
 
-    def spawn_tmux_session(name:, prompt:, working_dir:, channel_id:, thread_id:)
+    def spawn_tmux_session(ctx, name:, prompt:, working_dir:)
       command = "claude #{Shellwords.shellescape(prompt)}"
       @tmux.create_session(name: name, command: command, working_dir: working_dir)
 
-      save_tmux_session_info(name: name, channel_id: channel_id, thread_id: thread_id,
-                             working_dir: working_dir, prompt: prompt)
+      if @tmux_store
+        info = TmuxSessionStore::TmuxSessionInfo.new(
+          name: name, channel_id: ctx.channel_id, thread_id: ctx.thread_id,
+          working_dir: working_dir, prompt: prompt, created_at: Time.now.iso8601
+        )
+        @tmux_store.save(info)
+      end
 
-      post_reply(channel_id, thread_id,
+      post_reply(ctx,
                  ":rocket: Spawned tmux session `#{name}`\n" \
                  "- **Prompt:** #{prompt}\n" \
                  "- **Dir:** #{working_dir || Dir.pwd}\n" \
                  "Use `!session #{name}` to check output.")
     end
 
-    def save_tmux_session_info(name:, channel_id:, thread_id:, working_dir:, prompt:)
-      return unless @tmux_store
-
-      info = TmuxSessionStore::TmuxSessionInfo.new(
-        name: name, channel_id: channel_id, thread_id: thread_id,
-        working_dir: working_dir, prompt: prompt, created_at: Time.now.iso8601
-      )
-      @tmux_store.save(info)
-    end
-
     def truncate_output(output, max_length = 3500)
       output.length > max_length ? "…#{output[-max_length..]}" : output
     end
 
-    def with_tmux_session(thread_id, channel_id, name)
+    def with_tmux_session(ctx)
       yield
     rescue Tmux::NotFound
-      post_reply(channel_id, thread_id, ":x: Session `#{name}` not found.")
+      post_reply(ctx, ":x: Session `#{ctx.arg}` not found.")
     rescue Tmux::Error => error
-      post_reply(channel_id, thread_id, ":x: Error: #{error.message}")
+      post_reply(ctx, ":x: Error: #{error.message}")
     end
 
     def parse_spawn_flags(str)

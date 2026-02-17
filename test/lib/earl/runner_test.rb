@@ -57,7 +57,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm = runner.instance_variable_get(:@mattermost)
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "Hello Earl")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "Hello Earl", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     assert_equal "Hello Earl", sent_text
@@ -94,7 +94,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       updated_posts << { post_id: post_id, message: message }
     end
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     # First chunk creates a post
@@ -153,7 +153,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       updated_posts << { post_id: post_id, message: message }
     end
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     # First chunk creates post
@@ -220,7 +220,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       { "id" => "notif-1" }
     end
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     # Fire on_complete without any text received — no reply_post_id exists
@@ -252,7 +252,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       update_count += 1
     end
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     # First chunk creates post
@@ -329,11 +329,11 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "notif-1" } }
 
     # First message starts processing
-    runner.send(:enqueue_message, thread_id: "thread-12345678", text: "first")
+    runner.send(:enqueue_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "first", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     # Second message should be queued (thread is busy)
-    runner.send(:enqueue_message, thread_id: "thread-12345678", text: "second")
+    runner.send(:enqueue_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "second", channel_id: nil, sender_name: nil))
 
     assert_equal [ "first" ], sent_messages
 
@@ -355,7 +355,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm = runner.instance_variable_get(:@mattermost)
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
-    runner.send(:enqueue_message, thread_id: "thread-12345678", text: "hello")
+    runner.send(:enqueue_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "hello", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     assert_equal "hello", sent_text
@@ -382,7 +382,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "notif-1" } }
 
-    runner.send(:enqueue_message, thread_id: "thread-12345678", text: "hello")
+    runner.send(:enqueue_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "hello", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     # Complete — no queued messages, should remove from processing_threads
@@ -423,7 +423,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       executed_command = command
     end
 
-    runner.send(:handle_incoming_message, thread_id: "thread-12345678", text: "!help", channel_id: "channel-456")
+    runner.send(:handle_incoming_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "!help", channel_id: "channel-456", sender_name: nil))
 
     assert_not_nil executed_command
     assert_equal :help, executed_command.name
@@ -440,7 +440,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm = runner.instance_variable_get(:@mattermost)
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
-    runner.send(:handle_incoming_message, thread_id: "thread-12345678", text: "hello", channel_id: "channel-456")
+    runner.send(:handle_incoming_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "hello", channel_id: "channel-456", sender_name: nil))
     sleep 0.05
 
     assert_equal "hello", sent_text
@@ -471,7 +471,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm = runner.instance_variable_get(:@mattermost)
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     # Fire on_tool_use with a non-AskUserQuestion tool — should not error
@@ -504,7 +504,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     handler = runner.instance_variable_get(:@question_handler)
     handler.define_singleton_method(:handle_tool_use) { |**_args| question_handler_called = true; nil }
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     on_tool_use_callback.call({ id: "tu-1", name: "Bash", input: { "command" => "echo hi" } })
@@ -583,7 +583,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       { "id" => "post-1" }
     end
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     on_text_callback.call("Here is the answer.")
@@ -624,7 +624,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       { "id" => "post-1" }
     end
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     on_text_callback.call("Simple reply")
@@ -684,8 +684,8 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     executor.define_singleton_method(:execute) { |*_args, **_kwargs| executed = true }
 
     # "!unknown_thing" is command-like but CommandParser.parse returns nil
-    runner.send(:handle_incoming_message, thread_id: "thread-12345678", text: "!unknown_thing",
-                                          channel_id: "channel-456")
+    runner.send(:handle_incoming_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "!unknown_thing",
+                                                                       channel_id: "channel-456", sender_name: nil))
 
     assert_not executed
   end
@@ -738,7 +738,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     end
     mock_mm.define_singleton_method(:add_reaction) { |**_args| }
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     on_tool_use_callback.call({
@@ -779,7 +779,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     # process_message should catch the error and release the claim
     assert_nothing_raised do
-      runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+      runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
     end
 
     # Queue claim should be released so a new message can be processed
@@ -813,7 +813,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     queue = runner.instance_variable_get(:@app_state).message_queue
     queue.try_claim("thread-12345678")
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "test")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
 
     # Queue should be released
     assert queue.try_claim("thread-12345678"), "Queue claim should have been released after dead session"
@@ -1009,7 +1009,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
       ]
     end
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "Can u approve 4")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "Can u approve 4", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     assert_includes sent_text, "Here is the conversation so far"
@@ -1035,7 +1035,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:get_thread_posts) { |_thread_id| [] }
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "Hello Earl")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "Hello Earl", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     assert_equal "Hello Earl", sent_text
@@ -1054,7 +1054,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:get_thread_posts) { |_id| thread_posts_called = true; [] }
 
-    runner.send(:process_message, thread_id: "thread-12345678", text: "follow up")
+    runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "follow up", channel_id: nil, sender_name: nil))
     sleep 0.05
 
     assert_equal "follow up", sent_text

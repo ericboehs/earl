@@ -16,6 +16,9 @@ module Earl
       TOOL_NAMES = [ TOOL_NAME ].freeze
       VALID_ACTIONS = %w[list capture status approve deny send_input spawn kill].freeze
 
+      # Bundles spawn parameters that travel together through the confirmation and creation flow.
+      SpawnRequest = Data.define(:name, :prompt, :working_dir, :session)
+
       # Reaction emojis and pane status labels for spawn confirmation flow.
       module Reactions
         APPROVE_EMOJIS = %w[+1 white_check_mark].freeze
@@ -180,10 +183,11 @@ module Earl
           return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
         end
 
-        confirmation = request_spawn_confirmation(name: name, prompt: prompt, working_dir: working_dir, session: session)
+        request = SpawnRequest.new(name: name, prompt: prompt, working_dir: working_dir, session: session)
+        confirmation = request_spawn_confirmation(request)
         case confirmation
         when :approved
-          create_spawned_session(name: name, prompt: prompt, working_dir: working_dir, session: session)
+          create_spawned_session(request)
         when :error
           text_content("Error: spawn confirmation failed (could not post or connect to Mattermost)")
         else
@@ -215,28 +219,28 @@ module Earl
 
       # --- spawn helpers ---
 
-      def create_spawned_session(name:, prompt:, working_dir:, session: nil)
-        command = "claude #{Shellwords.shellescape(prompt)}"
+      def create_spawned_session(request)
+        command = "claude #{Shellwords.shellescape(request.prompt)}"
 
-        if session
-          @tmux.create_window(session: session, name: name, command: command, working_dir: working_dir)
+        if request.session
+          @tmux.create_window(session: request.session, name: request.name, command: command, working_dir: request.working_dir)
         else
-          @tmux.create_session(name: name, command: command, working_dir: working_dir)
+          @tmux.create_session(name: request.name, command: command, working_dir: request.working_dir)
         end
 
         info = TmuxSessionStore::TmuxSessionInfo.new(
-          name: name, channel_id: @config.platform_channel_id,
+          name: request.name, channel_id: @config.platform_channel_id,
           thread_id: @config.platform_thread_id,
-          working_dir: working_dir, prompt: prompt, created_at: Time.now.iso8601
+          working_dir: request.working_dir, prompt: request.prompt, created_at: Time.now.iso8601
         )
         @tmux_store.save(info)
 
-        mode = session ? "window in `#{session}`" : "session"
-        text_content("Spawned tmux #{mode} `#{name}`.\n- Prompt: #{prompt}\n- Dir: #{working_dir || Dir.pwd}")
+        mode = request.session ? "window in `#{request.session}`" : "session"
+        text_content("Spawned tmux #{mode} `#{request.name}`.\n- Prompt: #{request.prompt}\n- Dir: #{request.working_dir || Dir.pwd}")
       end
 
-      def request_spawn_confirmation(name:, prompt:, working_dir:, session: nil)
-        post_id = post_confirmation_request(name, prompt, working_dir, session)
+      def request_spawn_confirmation(request)
+        post_id = post_confirmation_request(request)
         return :error unless post_id
 
         add_reaction_options(post_id)
@@ -245,12 +249,12 @@ module Earl
         delete_confirmation_post(post_id) if post_id
       end
 
-      def post_confirmation_request(name, prompt, working_dir, session)
-        dir_line = working_dir ? "\n- **Dir:** #{working_dir}" : ""
-        session_line = session ? "\n- **Session:** #{session} (new window)" : ""
+      def post_confirmation_request(request)
+        dir_line = request.working_dir ? "\n- **Dir:** #{request.working_dir}" : ""
+        session_line = request.session ? "\n- **Session:** #{request.session} (new window)" : ""
         message = ":rocket: **Spawn Request**\n" \
-                  "Claude wants to spawn #{session ? 'window' : 'session'} `#{name}`\n" \
-                  "- **Prompt:** #{prompt}#{dir_line}#{session_line}\n" \
+                  "Claude wants to spawn #{request.session ? 'window' : 'session'} `#{request.name}`\n" \
+                  "- **Prompt:** #{request.prompt}#{dir_line}#{session_line}\n" \
                   "React: :+1: approve | :-1: deny"
 
         response = @api.post("/posts", {

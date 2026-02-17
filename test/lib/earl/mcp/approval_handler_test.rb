@@ -20,7 +20,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     handler = build_handler
     handler.instance_variable_get(:@allowed_tools).add("Bash")
 
-    result = handler.handle(tool_name: "Bash", input: { "command" => "ls" })
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+    result = handler.handle(request)
 
     assert_equal "allow", result[:behavior]
   end
@@ -38,7 +39,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
 
     # This will post a permission request (and then fail on wait_for_reaction)
     # but we just need to verify it doesn't auto-approve
-    result = handler_with_tracking.handle(tool_name: "Edit", input: { "file_path" => "/tmp/foo", "new_string" => "x" })
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Edit", input: { "file_path" => "/tmp/foo", "new_string" => "x" })
+    result = handler_with_tracking.handle(request)
 
     # It should have posted a permission request for Edit
     permission_posts = posts.select { |p| p[:path] == "/posts" }
@@ -48,7 +50,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   test "denies when post creation fails" do
     handler = build_handler(post_success: false)
 
-    result = handler.handle(tool_name: "Bash", input: { "command" => "ls" })
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+    result = handler.handle(request)
 
     assert_equal "deny", result[:behavior]
   end
@@ -92,27 +95,28 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
 
   test "process_reaction allows for +1 emoji without adding to allowed_tools" do
     handler = build_handler
-    input = { "command" => "ls" }
-    result = handler.send(:process_reaction, "+1", "Bash", input)
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+    result = handler.send(:process_reaction, "+1", request)
 
     assert_equal "allow", result[:behavior]
-    assert_equal input, result[:updatedInput]
+    assert_equal request.input, result[:updatedInput]
     assert_not handler.instance_variable_get(:@allowed_tools).include?("Bash")
   end
 
   test "process_reaction allows and adds tool to allowed_tools for white_check_mark" do
     handler = build_handler
-    input = { "command" => "ls" }
-    result = handler.send(:process_reaction, "white_check_mark", "Bash", input)
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+    result = handler.send(:process_reaction, "white_check_mark", request)
 
     assert_equal "allow", result[:behavior]
-    assert_equal input, result[:updatedInput]
+    assert_equal request.input, result[:updatedInput]
     assert handler.instance_variable_get(:@allowed_tools).include?("Bash")
   end
 
   test "process_reaction persists allowed_tools to disk on white_check_mark" do
     handler = build_handler
-    handler.send(:process_reaction, "white_check_mark", "Bash", { "command" => "ls" })
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+    handler.send(:process_reaction, "white_check_mark", request)
 
     # Verify the file was written
     path = handler.send(:allowed_tools_path)
@@ -124,14 +128,16 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
 
   test "process_reaction denies for -1 emoji" do
     handler = build_handler
-    result = handler.send(:process_reaction, "-1", "Bash", { "command" => "ls" })
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+    result = handler.send(:process_reaction, "-1", request)
 
     assert_equal "deny", result[:behavior]
   end
 
   test "process_reaction returns nil for unknown emoji" do
     handler = build_handler
-    result = handler.send(:process_reaction, "smile", "Bash", { "command" => "ls" })
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+    result = handler.send(:process_reaction, "smile", request)
 
     assert_nil result
   end
@@ -140,10 +146,10 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     handler = build_handler
     handler.instance_variable_get(:@allowed_tools).add("Read")
 
-    input = { "path" => "/tmp" }
-    result = handler.handle(tool_name: "Read", input: input)
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Read", input: { "path" => "/tmp" })
+    result = handler.handle(request)
     assert_equal "allow", result[:behavior]
-    assert_equal input, result[:updatedInput]
+    assert_equal request.input, result[:updatedInput]
   end
 
   test "load_allowed_tools reads from persisted file" do
@@ -193,7 +199,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     posts = []
     handler = build_handler_with_tracking(posts: posts)
 
-    post_id = handler.send(:post_permission_request, "Bash", { "command" => "echo hello" })
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "echo hello" })
+    post_id = handler.send(:post_permission_request, request)
 
     assert_equal "perm-post-1", post_id
     assert_equal 1, posts.size
@@ -282,7 +289,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     handler = build_handler
     handler.define_singleton_method(:connect_websocket) { nil }
 
-    result = handler.send(:wait_for_reaction, "post-123", "Bash", { "command" => "ls" })
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+    result = handler.send(:wait_for_reaction, "post-123", request)
     assert_equal "deny", result[:behavior]
     assert_includes result[:message], "WebSocket"
   end
@@ -303,8 +311,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
 
   test "multiple tools can be independently allowed" do
     handler = build_handler
-    handler.send(:process_reaction, "white_check_mark", "Bash", { "command" => "ls" })
-    handler.send(:process_reaction, "white_check_mark", "Read", { "path" => "/tmp" })
+    handler.send(:process_reaction, "white_check_mark", Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" }))
+    handler.send(:process_reaction, "white_check_mark", Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Read", input: { "path" => "/tmp" }))
 
     allowed = handler.instance_variable_get(:@allowed_tools)
     assert allowed.include?("Bash")
@@ -317,6 +325,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   test "poll_for_reaction returns allow on thumbsup reaction" do
     handler = build_handler
     mock_ws = build_mock_websocket
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
 
     # Fire reaction in a thread after a short delay
     Thread.new do
@@ -325,7 +334,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
 
     assert_equal "allow", result[:behavior]
   end
@@ -333,6 +342,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   test "poll_for_reaction returns allow and persists tool on white_check_mark" do
     handler = build_handler
     mock_ws = build_mock_websocket
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
 
     Thread.new do
       sleep 0.05
@@ -340,7 +350,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
 
     assert_equal "allow", result[:behavior]
     assert handler.instance_variable_get(:@allowed_tools).include?("Bash")
@@ -349,6 +359,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   test "poll_for_reaction returns deny on thumbsdown" do
     handler = build_handler
     mock_ws = build_mock_websocket
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
 
     Thread.new do
       sleep 0.05
@@ -356,7 +367,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
 
     assert_equal "deny", result[:behavior]
   end
@@ -364,10 +375,11 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   test "poll_for_reaction returns nil on timeout" do
     handler = build_handler
     mock_ws = build_mock_websocket
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
 
     # No reaction emitted — should time out
     deadline = Time.now + 0.2
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
 
     assert_nil result
   end
@@ -375,6 +387,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   test "poll_for_reaction ignores bot's own reactions" do
     handler = build_handler
     mock_ws = build_mock_websocket
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
 
     Thread.new do
       sleep 0.05
@@ -386,7 +399,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
 
     # Should skip bot reaction and process user's deny
     assert_equal "deny", result[:behavior]
@@ -395,6 +408,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   test "poll_for_reaction ignores reactions on other posts" do
     handler = build_handler
     mock_ws = build_mock_websocket
+    request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
 
     Thread.new do
       sleep 0.05
@@ -406,7 +420,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", "Bash", { "command" => "ls" }, deadline)
+    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
 
     assert_equal "allow", result[:behavior]
   end

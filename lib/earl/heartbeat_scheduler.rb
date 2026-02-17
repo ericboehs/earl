@@ -125,7 +125,7 @@ module Earl
       end
 
       session = create_heartbeat_session(definition, state)
-      run_session(session, definition, thread_id, state)
+      run_session(session, thread_id, state)
     rescue StandardError => error
       log(:error, "Heartbeat '#{definition.name}' error: #{error.message}")
       log(:error, error.backtrace&.first(5)&.join("\n"))
@@ -172,7 +172,8 @@ module Earl
       }
     end
 
-    def run_session(session, definition, thread_id, state)
+    def run_session(session, thread_id, state)
+      definition = state.definition
       completed = false
       response = StreamingResponse.new(
         thread_id: thread_id, mattermost: @mattermost, channel_id: definition.channel_id

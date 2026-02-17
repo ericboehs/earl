@@ -11,6 +11,9 @@ module Earl
     # Tracks runtime state: shutdown flag and per-thread message queue.
     AppState = Struct.new(:shutting_down, :message_queue, keyword_init: true)
 
+    # Bundles user message parameters that travel together through message routing.
+    UserMessage = Data.define(:thread_id, :text, :channel_id, :sender_name)
+
     IDLE_CHECK_INTERVAL = 300 # 5 minutes
     IDLE_TIMEOUT = 1800 # 30 minutes
 
@@ -95,8 +98,9 @@ module Earl
     def setup_message_handler
       @mattermost.on_message do |sender_name:, thread_id:, text:, post_id:, channel_id:|
         if allowed_user?(sender_name)
-          handle_incoming_message(thread_id: thread_id, text: text, channel_id: channel_id,
-                                 sender_name: sender_name)
+          msg = UserMessage.new(thread_id: thread_id, text: text, channel_id: channel_id,
+                                sender_name: sender_name)
+          handle_incoming_message(msg)
         end
       end
     end
@@ -125,19 +129,22 @@ module Earl
       @tmux_monitor.handle_reaction(post_id: post_id, emoji_name: emoji_name)
     end
 
-    def handle_incoming_message(thread_id:, text:, channel_id:, sender_name: nil)
-      if CommandParser.command?(text)
-        command = CommandParser.parse(text)
+    def handle_incoming_message(msg)
+      if CommandParser.command?(msg.text)
+        command = CommandParser.parse(msg.text)
         if command
-          result = @command_executor.execute(command, thread_id: thread_id, channel_id: channel_id)
+          result = @command_executor.execute(command, thread_id: msg.thread_id, channel_id: msg.channel_id)
           if result&.dig(:passthrough)
-            enqueue_message(thread_id: thread_id, text: result[:passthrough], channel_id: channel_id,
-                            sender_name: sender_name)
+            passthrough_msg = UserMessage.new(
+              thread_id: msg.thread_id, text: result[:passthrough],
+              channel_id: msg.channel_id, sender_name: msg.sender_name
+            )
+            enqueue_message(passthrough_msg)
           end
-          stop_active_response(thread_id) if %i[stop kill].include?(command.name)
+          stop_active_response(msg.thread_id) if %i[stop kill].include?(command.name)
         end
       else
-        enqueue_message(thread_id: thread_id, text: text, channel_id: channel_id, sender_name: sender_name)
+        enqueue_message(msg)
       end
     end
 
@@ -167,33 +174,34 @@ module Earl
       @mattermost.get_user(user_id: user_id)["username"]
     end
 
-    def enqueue_message(thread_id:, text:, channel_id: nil, sender_name: nil)
+    def enqueue_message(msg)
       queue = @app_state.message_queue
-      if queue.try_claim(thread_id)
-        process_message(thread_id: thread_id, text: text, channel_id: channel_id, sender_name: sender_name)
+      if queue.try_claim(msg.thread_id)
+        process_message(msg)
       else
-        queue.enqueue(thread_id, text)
+        queue.enqueue(msg.thread_id, msg.text)
       end
     end
 
-    def process_message(thread_id:, text:, channel_id: nil, sender_name: nil)
-      effective_channel = channel_id || @config.channel_id
-      existing_session, session = prepare_session(thread_id, effective_channel, sender_name)
-      response = prepare_response(session, thread_id, effective_channel)
-      sent = session.send_message(existing_session ? text : build_contextual_message(thread_id, text))
-      @session_manager.touch(thread_id) if sent
+    def process_message(msg)
+      effective_channel = msg.channel_id || @config.channel_id
+      existing_session, session = prepare_session(msg.thread_id, effective_channel, msg.sender_name)
+      response = prepare_response(session, msg.thread_id, effective_channel)
+      sent = session.send_message(existing_session ? msg.text : build_contextual_message(msg.thread_id, msg.text))
+      @session_manager.touch(msg.thread_id) if sent
     rescue StandardError => error
-      log_processing_error(thread_id, error)
+      log_processing_error(msg.thread_id, error)
     ensure
-      cleanup_failed_send(response, thread_id) unless sent
+      cleanup_failed_send(response, msg.thread_id) unless sent
     end
 
     def prepare_session(thread_id, channel_id, sender_name)
       working_dir = resolve_working_dir(thread_id, channel_id)
       existing = @session_manager.get(thread_id)
-      session = @session_manager.get_or_create(
-        thread_id, channel_id: channel_id, working_dir: working_dir, username: sender_name
+      session_config = SessionManager::SessionConfig.new(
+        channel_id: channel_id, working_dir: working_dir, username: sender_name
       )
+      session = @session_manager.get_or_create(thread_id, session_config)
       [ existing, session ]
     end
 
@@ -280,7 +288,10 @@ module Earl
 
     def process_next_queued(thread_id)
       next_text = @app_state.message_queue.dequeue(thread_id)
-      process_message(thread_id: thread_id, text: next_text) if next_text
+      return unless next_text
+
+      msg = UserMessage.new(thread_id: thread_id, text: next_text, channel_id: nil, sender_name: nil)
+      process_message(msg)
     end
 
     def find_thread_for_question(tool_use_id)
