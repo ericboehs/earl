@@ -177,6 +177,7 @@ detectors:
       - Earl::HeartbeatScheduler::StatusFormatting#build_status # definition/state field access
       - Earl::Mcp::ApprovalHandler#poll_for_reaction        # msg.data checks in WebSocket callback
       - Earl::Mcp::ApprovalHandler#allowed_reactor?         # config.allowed_users check + use
+      - Earl::Mcp::TmuxHandler#allowed_reactor?              # config.allowed_users check + use
       - Earl::Mcp::HeartbeatHandler#build_entry             # arguments hash field access
       - Earl::Mcp::HeartbeatHandler#build_schedule          # arguments hash field access
       - Earl::Mcp::HeartbeatHandler#format_schedule         # entry schedule field access

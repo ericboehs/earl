@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "securerandom"
 require "shellwords"
 
 module Earl
@@ -15,7 +16,7 @@ module Earl
 
       APPROVE_EMOJIS = %w[+1 white_check_mark].freeze
       DENY_EMOJIS = %w[-1].freeze
-      REACTION_EMOJIS = %w[+1 white_check_mark -1].freeze
+      REACTION_EMOJIS = (APPROVE_EMOJIS + DENY_EMOJIS).freeze
 
       PANE_STATUS_LABELS = {
         active: "Active",
@@ -78,7 +79,8 @@ module Earl
         return :active if output.include?("esc to interrupt")
 
         :idle
-      rescue Tmux::Error
+      rescue Tmux::Error => error
+        log(:debug, "detect_pane_status failed for #{target}: #{error.message}")
         :idle
       end
 
@@ -112,6 +114,7 @@ module Earl
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
+
       # --- approve ---
 
       def handle_approve(arguments)
@@ -151,9 +154,12 @@ module Earl
 
         @tmux.send_keys(target, text)
         text_content("Sent to `#{target}`: `#{text}`")
+      rescue Tmux::NotFound
+        text_content("Error: session/pane '#{target}' not found")
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
+
       # --- spawn ---
 
       def handle_spawn(arguments)
@@ -161,7 +167,7 @@ module Earl
         return text_content("Error: prompt is required for spawn") unless prompt && !prompt.strip.empty?
 
         session = arguments["session"]
-        name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}"
+        name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(2)}"
         if session.nil? && name.match?(/[.:]/)
           return text_content("Error: session name '#{name}' cannot contain '.' or ':' (tmux target delimiters)")
         end
@@ -175,10 +181,15 @@ module Earl
           return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
         end
 
-        approved = request_spawn_confirmation(name: name, prompt: prompt, working_dir: working_dir, session: session)
-        return text_content("Spawn denied by user.") unless approved
-
-        create_spawned_session(name: name, prompt: prompt, working_dir: working_dir, session: session)
+        confirmation = request_spawn_confirmation(name: name, prompt: prompt, working_dir: working_dir, session: session)
+        case confirmation
+        when :approved
+          create_spawned_session(name: name, prompt: prompt, working_dir: working_dir, session: session)
+        when :error
+          text_content("Error: spawn confirmation failed (could not post or connect to Mattermost)")
+        else
+          text_content("Spawn denied by user.")
+        end
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
@@ -227,12 +238,12 @@ module Earl
 
       def request_spawn_confirmation(name:, prompt:, working_dir:, session: nil)
         post_id = post_confirmation_request(name, prompt, working_dir, session)
-        return false unless post_id
+        return :error unless post_id
 
         add_reaction_options(post_id)
-        result = wait_for_confirmation(post_id)
-        delete_confirmation_post(post_id)
-        result
+        wait_for_confirmation(post_id)
+      ensure
+        delete_confirmation_post(post_id) if post_id
       end
 
       def post_confirmation_request(name, prompt, working_dir, session)
@@ -252,19 +263,22 @@ module Earl
         return unless response.is_a?(Net::HTTPSuccess)
 
         JSON.parse(response.body)["id"]
-      rescue StandardError => error
+      rescue IOError, JSON::ParserError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
         log(:error, "Failed to post spawn confirmation: #{error.message}")
         nil
       end
 
       def add_reaction_options(post_id)
         REACTION_EMOJIS.each do |emoji|
-          @api.post("/reactions", {
+          response = @api.post("/reactions", {
             user_id: @config.platform_bot_id,
             post_id: post_id,
             emoji_name: emoji
           })
+          log(:warn, "Failed to add reaction #{emoji} to post #{post_id}") unless response.is_a?(Net::HTTPSuccess)
         end
+      rescue IOError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
+        log(:error, "Failed to add reaction options to post #{post_id}: #{error.message}")
       end
 
       def wait_for_confirmation(post_id)
@@ -272,15 +286,14 @@ module Earl
         deadline = Time.now + timeout_sec
 
         ws = connect_websocket
-        return false unless ws
+        return :error unless ws
 
-        result = poll_confirmation(ws, post_id, deadline)
-        result == true
+        poll_confirmation(ws, post_id, deadline)
       ensure
         begin
           ws&.close
-        rescue StandardError
-          nil
+        rescue IOError, Errno::ECONNRESET => error
+          log(:debug, "Failed to close spawn confirmation WebSocket: #{error.message}")
         end
       end
 
@@ -290,7 +303,7 @@ module Earl
         ws_ref = ws
         ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
         ws
-      rescue StandardError => error
+      rescue IOError, SocketError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH => error
         log(:error, "Spawn confirmation WebSocket failed: #{error.message}")
         nil
       end
@@ -308,13 +321,13 @@ module Earl
               reaction_queue.push(reaction_data) if reaction_data["post_id"] == post_id
             end
           rescue JSON::ParserError
-            nil
+            log(:debug, "Spawn confirmation: skipped unparsable WebSocket message")
           end
         end
 
         loop do
           remaining = deadline - Time.now
-          return false if remaining <= 0
+          return :denied if remaining <= 0
 
           reaction = begin
             reaction_queue.pop(true)
@@ -325,10 +338,21 @@ module Earl
 
           next unless reaction
           next if reaction["user_id"] == @config.platform_bot_id
+          next unless allowed_reactor?(reaction["user_id"])
 
-          return true if APPROVE_EMOJIS.include?(reaction["emoji_name"])
-          return false if DENY_EMOJIS.include?(reaction["emoji_name"])
+          return :approved if APPROVE_EMOJIS.include?(reaction["emoji_name"])
+          return :denied if DENY_EMOJIS.include?(reaction["emoji_name"])
         end
+      end
+
+      def allowed_reactor?(user_id)
+        return true if @config.allowed_users.empty?
+
+        response = @api.get("/users/#{user_id}")
+        return false unless response.is_a?(Net::HTTPSuccess)
+
+        user = JSON.parse(response.body)
+        @config.allowed_users.include?(user["username"])
       end
 
       def delete_confirmation_post(post_id)

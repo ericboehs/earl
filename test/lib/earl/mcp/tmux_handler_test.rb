@@ -304,7 +304,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn allows dot and colon in window name when session param provided" do
     @tmux.session_exists_result = true
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| true }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :approved }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "window.with:chars",
@@ -336,7 +336,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn creates session when confirmation is approved" do
     @tmux.session_exists_result = false
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| true }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :approved }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -349,7 +349,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn creates window in existing session when session param provided" do
     @tmux.session_exists_result = true
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| true }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :approved }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "test-window",
@@ -365,7 +365,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn returns denied message when confirmation is rejected" do
     @tmux.session_exists_result = false
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| false }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :denied }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -376,6 +376,24 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_equal 0, @tmux_store.saved.size
   end
 
+  test "spawn returns error when confirmation fails" do
+    @tmux.session_exists_result = false
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :error }
+
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "spawn confirmation failed"
+    assert_equal 0, @tmux.created_sessions.size
+  end
+
+  test "spawn returns error when prompt is blank whitespace" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "spawn", "prompt" => "   " })
+    text = result[:content].first[:text]
+    assert_includes text, "prompt is required"
+  end
+
   test "spawn returns error when session param points to nonexistent session" do
     @tmux.session_exists_result = false
     result = @handler.call("manage_tmux_sessions", {
@@ -383,6 +401,212 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     })
     text = result[:content].first[:text]
     assert_includes text, "not found"
+  end
+
+  # --- deny error handling ---
+
+  test "deny returns error for missing session" do
+    @tmux.define_singleton_method(:send_keys_raw) { |_t, _k| raise Earl::Tmux::NotFound, "not found" }
+    result = @handler.call("manage_tmux_sessions", { "action" => "deny", "target" => "missing:1.0" })
+    text = result[:content].first[:text]
+    assert_includes text, "not found"
+  end
+
+  # --- send_input error handling ---
+
+  test "send_input returns not found error for missing session" do
+    @tmux.define_singleton_method(:send_keys) { |_t, _txt| raise Earl::Tmux::NotFound, "not found" }
+    result = @handler.call("manage_tmux_sessions", { "action" => "send_input", "target" => "missing:1.0", "text" => "hi" })
+    text = result[:content].first[:text]
+    assert_includes text, "session/pane 'missing:1.0' not found"
+  end
+
+  test "send_input returns error for generic tmux error" do
+    @tmux.define_singleton_method(:send_keys) { |_t, _txt| raise Earl::Tmux::Error, "pane dead" }
+    result = @handler.call("manage_tmux_sessions", { "action" => "send_input", "target" => "x:1.0", "text" => "hi" })
+    text = result[:content].first[:text]
+    assert_includes text, "pane dead"
+  end
+
+  # --- capture edge cases ---
+
+  test "capture floors lines at 1 for negative values" do
+    @tmux.capture_pane_result = "output"
+    result = @handler.call("manage_tmux_sessions", { "action" => "capture", "target" => "x:1.0", "lines" => -5 })
+    text = result[:content].first[:text]
+    assert_includes text, "last 1 lines"
+  end
+
+  test "capture returns error for generic tmux error" do
+    @tmux.capture_pane_error = Earl::Tmux::Error.new("connection refused")
+    result = @handler.call("manage_tmux_sessions", { "action" => "capture", "target" => "x:1.0" })
+    text = result[:content].first[:text]
+    assert_includes text, "connection refused"
+  end
+
+  # --- status edge cases ---
+
+  test "status detects permission status" do
+    @tmux.capture_pane_result = "some text\nDo you want to proceed?\n"
+    result = @handler.call("manage_tmux_sessions", { "action" => "status", "target" => "code:1.0" })
+    text = result[:content].first[:text]
+    assert_includes text, "Waiting for permission"
+  end
+
+  # --- spawn confirmation flow (WebSocket) ---
+
+  test "post_confirmation_request posts to correct channel and thread" do
+    handler = build_handler_with_api(post_success: true)
+    post_id = handler.send(:post_confirmation_request, "test-session", "fix tests", "/tmp", nil)
+    assert_equal "spawn-post-1", post_id
+  end
+
+  test "post_confirmation_request returns nil when API fails" do
+    handler = build_handler_with_api(post_success: false)
+    post_id = handler.send(:post_confirmation_request, "test-session", "fix tests", "/tmp", nil)
+    assert_nil post_id
+  end
+
+  test "post_confirmation_request includes session info for window spawn" do
+    posts = []
+    handler = build_handler_with_api(post_success: true, posts: posts)
+    handler.send(:post_confirmation_request, "test-win", "fix tests", "/tmp", "code")
+    message = posts.first[:body][:message]
+    assert_includes message, "code"
+    assert_includes message, "new window"
+  end
+
+  test "add_reaction_options adds all three emojis" do
+    posts = []
+    handler = build_handler_with_api(post_success: true, posts: posts)
+    handler.send(:add_reaction_options, "post-1")
+    reaction_posts = posts.select { |p| p[:path] == "/reactions" }
+    assert_equal 3, reaction_posts.size
+    assert_equal %w[+1 white_check_mark -1], reaction_posts.map { |r| r[:body][:emoji_name] }
+  end
+
+  test "delete_confirmation_post calls delete on api" do
+    handler = build_handler_with_api(post_success: true)
+    api = handler.instance_variable_get(:@api)
+    deletes = []
+    api.define_singleton_method(:delete) { |path| deletes << path }
+    handler.send(:delete_confirmation_post, "post-1")
+    assert_equal [ "/posts/post-1" ], deletes
+  end
+
+  test "poll_confirmation returns approved on thumbsup reaction" do
+    handler = build_handler_with_api(post_success: true)
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+    assert_equal :approved, result
+  end
+
+  test "poll_confirmation returns approved on white_check_mark reaction" do
+    handler = build_handler_with_api(post_success: true)
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "white_check_mark", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+    assert_equal :approved, result
+  end
+
+  test "poll_confirmation returns denied on thumbsdown" do
+    handler = build_handler_with_api(post_success: true)
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "-1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+    assert_equal :denied, result
+  end
+
+  test "poll_confirmation returns denied on timeout" do
+    handler = build_handler_with_api(post_success: true)
+    mock_ws = build_mock_websocket
+
+    deadline = Time.now + 0.2
+    result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+    assert_equal :denied, result
+  end
+
+  test "poll_confirmation ignores bot's own reactions" do
+    handler = build_handler_with_api(post_success: true)
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "bot-123")
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "-1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+    assert_equal :denied, result
+  end
+
+  test "poll_confirmation ignores reactions on other posts" do
+    handler = build_handler_with_api(post_success: true)
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "other-post", emoji_name: "+1", user_id: "user-42")
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+    assert_equal :approved, result
+  end
+
+  test "poll_confirmation ignores reactions from unauthorized users" do
+    handler = build_handler_with_api(post_success: true, allowed_users: %w[alice])
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "stranger-99")
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "-1", user_id: "alice-uid")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+    assert_equal :denied, result
+  end
+
+  test "allowed_reactor? returns true when allowed_users is empty" do
+    assert @handler.send(:allowed_reactor?, "any-user-id")
+  end
+
+  test "wait_for_confirmation returns error when websocket connection fails" do
+    @handler.define_singleton_method(:connect_websocket) { nil }
+    result = @handler.send(:wait_for_confirmation, "post-123")
+    assert_equal :error, result
+  end
+
+  test "request_spawn_confirmation returns error when post fails" do
+    handler = build_handler_with_api(post_success: false)
+    result = handler.send(:request_spawn_confirmation, name: "test", prompt: "hi", working_dir: "/tmp")
+    assert_equal :error, result
   end
 
   # --- Mock helpers ---
@@ -479,15 +703,98 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     end
   end
 
-  def build_mock_config
+  def build_mock_config(allowed_users: [])
     config = Object.new
+    users = allowed_users
     config.define_singleton_method(:platform_channel_id) { "channel-123" }
     config.define_singleton_method(:platform_thread_id) { "thread-123" }
     config.define_singleton_method(:platform_bot_id) { "bot-123" }
     config.define_singleton_method(:permission_timeout_ms) { 120_000 }
     config.define_singleton_method(:websocket_url) { "wss://mm.example.com/api/v4/websocket" }
     config.define_singleton_method(:platform_token) { "mock-token" }
-    config.define_singleton_method(:allowed_users) { [] }
+    config.define_singleton_method(:allowed_users) { users }
     config
+  end
+
+  def build_handler_with_api(post_success:, posts: nil, allowed_users: [])
+    config = build_mock_config(allowed_users: allowed_users)
+    tracked_posts = posts || []
+
+    api = Object.new
+    psts = tracked_posts
+    au = allowed_users
+
+    if post_success
+      api.define_singleton_method(:post) do |path, body|
+        psts << { path: path, body: body }
+        response = Object.new
+        response.define_singleton_method(:body) { JSON.generate({ "id" => "spawn-post-1" }) }
+        response.define_singleton_method(:is_a?) do |klass|
+          klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+        end
+        response
+      end
+    else
+      api.define_singleton_method(:post) do |path, body|
+        psts << { path: path, body: body }
+        response = Object.new
+        response.define_singleton_method(:body) { '{"error":"fail"}' }
+        response.define_singleton_method(:is_a?) do |klass|
+          Object.instance_method(:is_a?).bind_call(self, klass)
+        end
+        response
+      end
+    end
+
+    api.define_singleton_method(:delete) { |_path| Object.new }
+
+    api.define_singleton_method(:get) do |path|
+      response = Object.new
+      # Return "alice" for alice-uid, "bob" for others
+      username = path.include?("alice-uid") ? "alice" : "bob"
+      uname = username
+      response.define_singleton_method(:body) { JSON.generate({ "id" => "user-1", "username" => uname }) }
+      response.define_singleton_method(:is_a?) do |klass|
+        klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+      end
+      response
+    end
+
+    Earl::Mcp::TmuxHandler.new(
+      config: config, api_client: api,
+      tmux_store: @tmux_store, tmux_adapter: @tmux
+    )
+  end
+
+  def build_mock_websocket
+    ws = Object.new
+    ws.instance_variable_set(:@handlers, {})
+    ws.define_singleton_method(:on) do |event, &block|
+      @handlers[event] = block
+    end
+    ws.define_singleton_method(:close) { }
+    ws.define_singleton_method(:fire_message) do |data|
+      handler = @handlers[:message]
+      return unless handler
+
+      msg = Object.new
+      msg.define_singleton_method(:data) { data }
+      msg.define_singleton_method(:empty?) { data.nil? || data.empty? }
+      handler.call(msg)
+    end
+    ws
+  end
+
+  def emit_reaction(mock_ws, post_id:, emoji_name:, user_id:)
+    reaction = JSON.generate({
+      "post_id" => post_id,
+      "user_id" => user_id,
+      "emoji_name" => emoji_name
+    })
+    event = JSON.generate({
+      "event" => "reaction_added",
+      "data" => { "reaction" => reaction }
+    })
+    mock_ws.fire_message(event)
   end
 end
