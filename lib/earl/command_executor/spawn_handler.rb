@@ -86,9 +86,10 @@ module Earl
       end
 
       def save_tmux_session_info(ctx, req)
-        return unless @deps.tmux_store
+        store = @deps.tmux_store
+        return unless store
 
-        @deps.tmux_store.save(req.to_session_info(ctx))
+        store.save(req.to_session_info(ctx))
       end
 
       def parse_spawn_flags(str)

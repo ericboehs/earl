@@ -14,14 +14,13 @@ module Earl
       private
 
       def handle_sessions(ctx)
-        unless @deps.tmux.available?
-          return reply(ctx, ":x: tmux is not installed.")
-        end
+        tmux = @deps.tmux
+        return reply(ctx, ":x: tmux is not installed.") unless tmux.available?
 
-        panes = @deps.tmux.list_all_panes
+        panes = tmux.list_all_panes
         return reply(ctx, "No tmux sessions running.") if panes.empty?
 
-        claude_panes = panes.select { |pane| @deps.tmux.claude_on_tty?(pane[:tty]) }
+        claude_panes = panes.select { |pane| tmux.claude_on_tty?(pane[:tty]) }
         if claude_panes.empty?
           return reply(ctx, "No Claude sessions found across #{panes.size} tmux panes.")
         end
@@ -115,11 +114,12 @@ module Earl
 
       def handle_session_kill(ctx)
         name = ctx.arg
+        store = @deps.tmux_store
         @deps.tmux.kill_session(name)
-        @deps.tmux_store&.delete(name)
+        store&.delete(name)
         reply(ctx, ":skull: Tmux session `#{name}` killed.")
       rescue Tmux::NotFound
-        @deps.tmux_store&.delete(name)
+        store&.delete(name)
         reply(ctx, ":x: Session `#{name}` not found (cleaned up store).")
       rescue Tmux::Error => error
         reply(ctx, ":x: Error killing session: #{error.message}")

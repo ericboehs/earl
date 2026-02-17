@@ -77,9 +77,13 @@ module Earl
       stop_typing
 
       return if @post_state.create_failed
-      return create_initial_post(@post_state.full_text) unless @post_state.reply_post_id
+      return create_initial_post(@post_state.full_text) unless posted?
 
       schedule_update
+    end
+
+    def posted?
+      !!@post_state.reply_post_id
     end
 
     # Post creation and update lifecycle.
@@ -133,13 +137,13 @@ module Earl
       def finalize(stats_line)
         @post_state.debounce_timer&.join(1)
         stop_typing
-        return if @post_state.full_text.empty? && !@post_state.reply_post_id
+        return if @post_state.full_text.empty? && !posted?
 
         final_text = build_final_text(stats_line)
 
         if only_text_segments?
           @post_state.full_text = final_text
-          update_post if @post_state.reply_post_id
+          update_post if posted?
         else
           remove_last_text_from_streamed_post
           create_notification_post(final_text)
@@ -157,7 +161,7 @@ module Earl
       end
 
       def remove_last_text_from_streamed_post
-        return unless @post_state.reply_post_id
+        return unless posted?
 
         last_text_index = @segments.rindex { |segment| !tool_segment?(segment) }
         return unless last_text_index
@@ -185,7 +189,7 @@ module Earl
       stop_typing
 
       return if @post_state.create_failed
-      return create_initial_post(@post_state.full_text) unless @post_state.reply_post_id
+      return create_initial_post(@post_state.full_text) unless posted?
 
       schedule_update
     end

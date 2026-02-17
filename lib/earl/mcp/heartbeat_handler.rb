@@ -28,12 +28,19 @@ module Earl
         [ manage_heartbeat_definition ]
       end
 
+      NAME_REQUIRED_ACTIONS = %w[create update delete].freeze
+
       def call(name, arguments)
         return unless name == "manage_heartbeat"
 
         action = arguments["action"]
         return text_content("Error: action is required (list, create, update, delete)") unless action
         return text_content("Error: unknown action '#{action}'. Valid: #{VALID_ACTIONS.join(', ')}") unless VALID_ACTIONS.include?(action)
+
+        if NAME_REQUIRED_ACTIONS.include?(action)
+          hb_name = arguments["name"]
+          return text_content("Error: name is required") unless hb_name && !hb_name.empty?
+        end
 
         send("handle_#{action}", arguments)
       end
@@ -53,39 +60,34 @@ module Earl
 
       def handle_create(arguments)
         name = arguments["name"]
-        return text_content("Error: name is required") unless name && !name.empty?
-
         data = load_yaml
-        data["heartbeats"] ||= {}
-        return text_content("Error: heartbeat '#{name}' already exists") if data["heartbeats"].key?(name)
+        heartbeats = (data["heartbeats"] ||= {})
+        return text_content("Error: heartbeat '#{name}' already exists") if heartbeats[name]
 
-        data["heartbeats"][name] = build_entry(arguments)
+        heartbeats[name] = build_entry(arguments)
         save_yaml(data)
         text_content("Created heartbeat '#{name}'. Scheduler will pick it up within 30 seconds.")
       end
 
       def handle_update(arguments)
         name = arguments["name"]
-        return text_content("Error: name is required") unless name && !name.empty?
-
         data = load_yaml
-        data["heartbeats"] ||= {}
-        return text_content("Error: heartbeat '#{name}' not found") unless data["heartbeats"].key?(name)
+        heartbeats = (data["heartbeats"] ||= {})
+        entry = heartbeats[name]
+        return text_content("Error: heartbeat '#{name}' not found") unless entry
 
-        merge_entry(data["heartbeats"][name], arguments)
+        merge_entry(entry, arguments)
         save_yaml(data)
         text_content("Updated heartbeat '#{name}'. Scheduler will pick up changes within 30 seconds.")
       end
 
       def handle_delete(arguments)
         name = arguments["name"]
-        return text_content("Error: name is required") unless name && !name.empty?
-
         data = load_yaml
-        data["heartbeats"] ||= {}
-        return text_content("Error: heartbeat '#{name}' not found") unless data["heartbeats"].key?(name)
+        heartbeats = (data["heartbeats"] ||= {})
+        return text_content("Error: heartbeat '#{name}' not found") unless heartbeats[name]
 
-        data["heartbeats"].delete(name)
+        heartbeats.delete(name)
         save_yaml(data)
         text_content("Deleted heartbeat '#{name}'. Scheduler will remove it within 30 seconds.")
       end
@@ -113,48 +115,53 @@ module Earl
         private
 
         def build_entry(arguments)
+          description = arguments["description"]
+          once = arguments["once"]
+          working_dir = arguments["working_dir"]
+          prompt = arguments["prompt"]
+          permission_mode = arguments["permission_mode"]
+          timeout = arguments["timeout"]
+
           entry = {}
-          entry["description"] = arguments["description"] if arguments["description"]
-          entry["once"] = arguments["once"] if arguments.key?("once")
-          entry["schedule"] = build_schedule(arguments)
+          entry["description"] = description if description
+          entry["once"] = once if arguments.key?("once")
+          schedule = build_schedule(arguments)
+          entry["schedule"] = schedule
 
           # Auto-set run_at for immediate one-offs (once: true with no schedule)
-          if arguments["once"] && entry["schedule"].empty?
-            entry["schedule"]["run_at"] = Time.now.to_i
-          end
+          schedule["run_at"] = Time.now.to_i if once && schedule.empty?
 
           entry["channel_id"] = arguments["channel_id"] || @default_channel_id
-          entry["working_dir"] = arguments["working_dir"] if arguments["working_dir"]
-          entry["prompt"] = arguments["prompt"] if arguments["prompt"]
-          entry["permission_mode"] = arguments["permission_mode"] if arguments["permission_mode"]
+          entry["working_dir"] = working_dir if working_dir
+          entry["prompt"] = prompt if prompt
+          entry["permission_mode"] = permission_mode if permission_mode
           entry["persistent"] = arguments["persistent"] if arguments.key?("persistent")
-          entry["timeout"] = arguments["timeout"] if arguments["timeout"]
+          entry["timeout"] = timeout if timeout
           entry["enabled"] = arguments.fetch("enabled", true)
           entry
         end
 
         def build_schedule(arguments)
+          cron = arguments["cron"]
+          interval = arguments["interval"]
+          run_at = arguments["run_at"]
+
           schedule = {}
-          schedule["cron"] = arguments["cron"] if arguments["cron"]
-          schedule["interval"] = arguments["interval"] if arguments["interval"]
-          schedule["run_at"] = arguments["run_at"] if arguments["run_at"]
+          schedule["cron"] = cron if cron
+          schedule["interval"] = interval if interval
+          schedule["run_at"] = run_at if run_at
           schedule
         end
 
         def merge_entry(entry, arguments)
+          schedule = nil
           MUTABLE_FIELDS.each do |field|
             next unless arguments.key?(field)
 
             case field
-            when "cron"
-              entry["schedule"] ||= {}
-              entry["schedule"]["cron"] = arguments["cron"]
-            when "interval"
-              entry["schedule"] ||= {}
-              entry["schedule"]["interval"] = arguments["interval"]
-            when "run_at"
-              entry["schedule"] ||= {}
-              entry["schedule"]["run_at"] = arguments["run_at"]
+            when "cron", "interval", "run_at"
+              schedule ||= (entry["schedule"] ||= {})
+              schedule[field] = arguments[field]
             else
               entry[field] = arguments[field]
             end
@@ -175,12 +182,16 @@ module Earl
       end
 
       def format_schedule(schedule)
-        if schedule["cron"]
-          "cron: `#{schedule['cron']}`"
-        elsif schedule["interval"]
-          "interval: #{schedule['interval']}s"
-        elsif schedule["run_at"]
-          "run_at: #{Time.at(schedule['run_at']).strftime('%Y-%m-%d %H:%M:%S')}"
+        cron = schedule["cron"]
+        interval = schedule["interval"]
+        run_at = schedule["run_at"]
+
+        if cron
+          "cron: `#{cron}`"
+        elsif interval
+          "interval: #{interval}s"
+        elsif run_at
+          "run_at: #{Time.at(run_at).strftime('%Y-%m-%d %H:%M:%S')}"
         else
           "no schedule"
         end

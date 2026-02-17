@@ -65,8 +65,9 @@ module Earl
       # --- Core permission flow (internal implementation) ---
 
       def handle(request)
-        if @mutex.synchronize { @allowed_tools.include?(request.tool_name) }
-          log(:info, "Auto-allowing #{request.tool_name} (previously approved)")
+        tool_name = request.tool_name
+        if @mutex.synchronize { @allowed_tools.include?(tool_name) }
+          log(:info, "Auto-allowing #{tool_name} (previously approved)")
           return allow_result(request.input)
         end
 
@@ -90,9 +91,10 @@ module Earl
       end
 
       def post_permission_request(request)
-        input_summary = format_input(request.tool_name, request.input)
-        message = ":lock: **Permission Request**\nClaude wants to run: `#{request.tool_name}`\n```\n#{input_summary}\n```\n" \
-                  "React: :+1: allow once | :white_check_mark: always allow `#{request.tool_name}` | :-1: deny"
+        tool_name = request.tool_name
+        input_summary = format_input(tool_name, request.input)
+        message = ":lock: **Permission Request**\nClaude wants to run: `#{tool_name}`\n```\n#{input_summary}\n```\n" \
+                  "React: :+1: allow once | :white_check_mark: always allow `#{tool_name}` | :-1: deny"
 
         response = @api.post("/posts", {
           channel_id: @config.platform_channel_id,
@@ -172,10 +174,11 @@ module Earl
           reaction_queue = Queue.new
 
           ws&.on(:message) do |msg|
-            next unless msg.data && !msg.data.empty?
+            data = msg.data
+            next unless data && !data.empty?
 
             begin
-              event = JSON.parse(msg.data)
+              event = JSON.parse(data)
               if event["event"] == "reaction_added"
                 reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
                 if reaction_data["post_id"] == post_id
@@ -199,21 +202,23 @@ module Earl
             end
 
             next unless reaction
-            next if reaction["user_id"] == @config.platform_bot_id
-            next unless allowed_reactor?(reaction["user_id"])
+            user_id = reaction["user_id"]
+            next if user_id == @config.platform_bot_id
+            next unless allowed_reactor?(user_id)
 
             return process_reaction(reaction["emoji_name"], request)
           end
         end
 
         def allowed_reactor?(user_id)
-          return true if @config.allowed_users.empty?
+          allowed = @config.allowed_users
+          return true if allowed.empty?
 
           response = @api.get("/users/#{user_id}")
           return false unless response.is_a?(Net::HTTPSuccess)
 
           user = JSON.parse(response.body)
-          @config.allowed_users.include?(user["username"])
+          allowed.include?(user["username"])
         end
 
         def process_reaction(emoji_name, request)

@@ -7,11 +7,10 @@ module Earl
       private
 
       def handle_heartbeats(ctx)
-        unless @deps.heartbeat_scheduler
-          return reply(ctx, "Heartbeat scheduler not configured.")
-        end
+        scheduler = @deps.heartbeat_scheduler
+        return reply(ctx, "Heartbeat scheduler not configured.") unless scheduler
 
-        statuses = @deps.heartbeat_scheduler.status
+        statuses = scheduler.status
         return reply(ctx, "No heartbeats configured.") if statuses.empty?
 
         reply(ctx, format_heartbeats(statuses))

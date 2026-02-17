@@ -71,8 +71,9 @@ module Earl
     end
 
     def log_startup
-      log(:info, "EARL is running. Listening for messages in channel #{@services.config.channel_id[0..7]}...")
-      log(:info, "Allowed users: #{@services.config.allowed_users.join(', ')}")
+      config = @services.config
+      log(:info, "EARL is running. Listening for messages in channel #{config.channel_id[0..7]}...")
+      log(:info, "Allowed users: #{config.allowed_users.join(', ')}")
     end
 
     def start_background_services
@@ -122,18 +123,21 @@ module Earl
       end
 
       def handle_incoming_message(msg)
-        if CommandParser.command?(msg.text)
-          command = CommandParser.parse(msg.text)
+        text = msg.text
+        thread_id = msg.thread_id
+        channel_id = msg.channel_id
+        if CommandParser.command?(text)
+          command = CommandParser.parse(text)
           if command
-            result = @services.command_executor.execute(command, thread_id: msg.thread_id, channel_id: msg.channel_id)
+            result = @services.command_executor.execute(command, thread_id: thread_id, channel_id: channel_id)
             if result&.dig(:passthrough)
               passthrough_msg = UserMessage.new(
-                thread_id: msg.thread_id, text: result[:passthrough],
-                channel_id: msg.channel_id, sender_name: msg.sender_name
+                thread_id: thread_id, text: result[:passthrough],
+                channel_id: channel_id, sender_name: msg.sender_name
               )
               enqueue_message(passthrough_msg)
             end
-            stop_active_response(msg.thread_id) if %i[stop kill].include?(command.name)
+            stop_active_response(thread_id) if %i[stop kill].include?(command.name)
           end
         else
           enqueue_message(msg)
@@ -141,33 +145,37 @@ module Earl
       end
 
       def enqueue_message(msg)
+        thread_id = msg.thread_id
         queue = @app_state.message_queue
-        if queue.try_claim(msg.thread_id)
+        if queue.try_claim(thread_id)
           process_message(msg)
         else
-          queue.enqueue(msg.thread_id, msg.text)
+          queue.enqueue(thread_id, msg.text)
         end
       end
 
       def process_message(msg)
+        thread_id = msg.thread_id
+        text = msg.text
         effective_channel = msg.channel_id || @services.config.channel_id
-        existing_session, session = prepare_session(msg.thread_id, effective_channel, msg.sender_name)
-        response = prepare_response(session, msg.thread_id, effective_channel)
-        sent = session.send_message(existing_session ? msg.text : build_contextual_message(msg.thread_id, msg.text))
-        @services.session_manager.touch(msg.thread_id) if sent
+        existing_session, session = prepare_session(thread_id, effective_channel, msg.sender_name)
+        response = prepare_response(session, thread_id, effective_channel)
+        sent = session.send_message(existing_session ? text : build_contextual_message(thread_id, text))
+        @services.session_manager.touch(thread_id) if sent
       rescue StandardError => error
-        log_processing_error(msg.thread_id, error)
+        log_processing_error(thread_id, error)
       ensure
-        cleanup_failed_send(response, msg.thread_id) unless sent
+        cleanup_failed_send(response, thread_id) unless sent
       end
 
       def prepare_session(thread_id, channel_id, sender_name)
         working_dir = resolve_working_dir(thread_id, channel_id)
-        existing = @services.session_manager.get(thread_id)
+        manager = @services.session_manager
+        existing = manager.get(thread_id)
         session_config = SessionManager::SessionConfig.new(
           channel_id: channel_id, working_dir: working_dir, username: sender_name
         )
-        session = @services.session_manager.get_or_create(thread_id, session_config)
+        session = manager.get_or_create(thread_id, session_config)
         [ existing, session ]
       end
 

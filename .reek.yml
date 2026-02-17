@@ -26,6 +26,7 @@ detectors:
       - Earl::Mcp::ApprovalHandler::ReactionPolling#poll_for_reaction       # WebSocket polling loop with reaction matching (17)
       - Earl::Mcp::HeartbeatHandler::EntryBuilder#build_entry               # Build struct from arguments hash (13)
       - Earl::Mcp::Server#tools_call_response                               # Extract params, call handler, format response (13)
+      - Earl::Mcp::TmuxHandler::SpawnConfirmation#create_spawned_session     # Extract params + create tmux target + persist + format (12)
       - Earl::Mcp::TmuxHandler::SpawnConfirmation#poll_confirmation         # WebSocket polling loop with reaction matching (18)
       - Earl::Mcp::TmuxHandler::SpawnConfirmation#post_confirmation_request # Build message + post + parse response (12)
       - Earl::QuestionHandler#handle_reaction                               # Multi-step reaction → answer flow (13)
@@ -58,6 +59,7 @@ detectors:
       - Earl::HeartbeatScheduler::Execution#run_session             # Reads session/definition fields
       - Earl::HeartbeatScheduler::Execution#wait_for_completion     # Reads session state
       - Earl::HeartbeatScheduler::Execution#finalize_heartbeat      # Reads heartbeat definition fields
+      - Earl::HeartbeatScheduler::ConfigReloading#update_existing_definitions # Updates state objects from new definitions
       - Earl::HeartbeatScheduler::StatusFormatting#build_status    # Builds status from definition fields
       - Earl::Mattermost#parse_post_response                           # Reads response hash fields
       - Earl::Mattermost::ApiClient#build_request                      # Builds HTTP request from params
@@ -95,78 +97,27 @@ detectors:
       - Earl::Mcp::TmuxHandler#call                        # name dispatches to action handler
       - Earl::Mcp::TmuxHandler::SpawnConfirmation#poll_confirmation             # post_id filters reactions
 
-  DuplicateMethodCall:
-    exclude:
-      - Earl::ClaudeSession::ProcessManagement#join_threads   # @runtime.process_state accessed for reader + stderr thread join
-      - Earl::CommandExecutor#execute                       # command.name and command.args accessed for dispatch
-      - Earl::CommandExecutor::HeartbeatDisplay#handle_heartbeats     # @deps.heartbeat_scheduler accessed for guard + use
-      - Earl::CommandExecutor::SessionHandler#handle_sessions        # @deps.tmux accessed for list + filter + format
-      - Earl::CommandExecutor::SpawnHandler#save_tmux_session_info   # @deps.tmux_store accessed for save + update
-      - Earl::CommandExecutor::SessionHandler#handle_session_approve  # ctx.arg accessed for validation + use
-      - Earl::CommandExecutor::SessionHandler#handle_session_deny    # ctx.arg accessed for validation + use
-      - Earl::CommandExecutor::SessionHandler#handle_session_input   # ctx.arg/ctx.args accessed for validation + forwarding
-      - Earl::CommandExecutor::SessionHandler#handle_session_kill    # ctx.arg accessed for validation + kill + cleanup
-      - Earl::CommandExecutor::SessionHandler#handle_session_nudge   # ctx.arg accessed for validation + use
-      - Earl::CommandExecutor::SessionHandler#handle_session_show    # ctx.arg accessed for validation + use
-      - Earl::CommandExecutor::SessionHandler#handle_session_status  # ctx.arg accessed for validation + use
-      - Earl::CommandExecutor#handle_stats                   # ctx.thread_id accessed for stats + format
-      - Earl::CronParser#parse_expression                   # parts.size checked then parts accessed
-      - Earl::CronParser#parse_part                         # Regexp.last_match across case branches
-      - Earl::HeartbeatConfig#load_definitions              # data["heartbeats"] checked then accessed
-      - Earl::HeartbeatScheduler#stop                                  # @control.scheduler_thread accessed for join + kill + nil
-      - Earl::HeartbeatScheduler#should_run?                          # definition field access in guard checks
-      - Earl::HeartbeatScheduler::Execution#execute_heartbeat        # definition field access across steps
-      - Earl::HeartbeatScheduler::Execution#create_heartbeat_session # definition field access for session config
-      - Earl::HeartbeatScheduler::Execution#wait_for_completion      # session state polling
-      - Earl::HeartbeatScheduler::Execution#finalize_heartbeat       # definition field access for cleanup
-      - Earl::HeartbeatScheduler::Execution#compute_next_run         # definition schedule field access
-      - Earl::HeartbeatScheduler::ConfigReloading#reload_definitions # definition name access in set operations
-      - Earl::HeartbeatScheduler::StatusFormatting#build_status # definition/state field access
-      - Earl::Mcp::ApprovalHandler#handle                   # request.tool_name accessed for check + log
-      - Earl::Mcp::ApprovalHandler#post_permission_request  # request.tool_name accessed for message formatting
-      - Earl::Mcp::ApprovalHandler::ReactionPolling#poll_for_reaction        # msg.data checks in WebSocket callback
-      - Earl::Mcp::ApprovalHandler::ReactionPolling#allowed_reactor?         # config.allowed_users check + use
-      - Earl::Mcp::TmuxHandler::SpawnConfirmation#allowed_reactor?              # config.allowed_users check + use
-      - Earl::Mcp::TmuxHandler::SpawnConfirmation#create_spawned_session        # request fields accessed for session creation
-      - Earl::Mcp::TmuxHandler::SpawnConfirmation#post_confirmation_request     # request fields accessed for message formatting
-      - Earl::Mcp::HeartbeatHandler::EntryBuilder#build_entry             # arguments hash field access
-      - Earl::Mcp::HeartbeatHandler::EntryBuilder#build_schedule          # arguments hash field access
-      - Earl::Mcp::HeartbeatHandler#format_schedule         # entry schedule field access
-      - Earl::Mcp::HeartbeatHandler#handle_create           # arguments["name"] access
-      - Earl::Mcp::HeartbeatHandler#handle_delete           # arguments["name"] access
-      - Earl::Mcp::HeartbeatHandler#handle_update           # arguments["name"] access
-      - Earl::Mcp::HeartbeatHandler::EntryBuilder#merge_entry             # arguments hash field access
-      - Earl::Mcp::Server#tools_call_response               # error.message in rescue
-      - Earl::QuestionHandler#handle_reaction                # state field access in multi-step flow
-      - Earl::QuestionHandler#build_answer_json              # question field access in iteration
-      - Earl::Runner#log_startup                               # @services.config accessed for channel_id + allowed_users
-      - Earl::Runner::MessageHandling#prepare_session           # @services.session_manager accessed for get + get_or_create
-      - Earl::Runner::MessageHandling#enqueue_message           # msg.thread_id accessed for claim + queue
-      - Earl::Runner::MessageHandling#handle_incoming_message # msg fields accessed for routing
-      - Earl::Runner::MessageHandling#process_message         # msg.thread_id/msg.text accessed across session flow
-      - Earl::SessionManager#create_session                  # session_config fields accessed for create + persist
-      - Earl::StreamingResponse::Finalization#finalize         # reply_post_id checked for different branch paths
-      - Earl::Tmux#list_sessions                              # error.message in rescue branches
-      - Earl::Tmux#list_all_panes                             # fields.size + error.message access
-      - Earl::Tmux#wait_for_text                              # Time.now called at start and deadline check
-      - Earl::TmuxSessionStore#cleanup!                       # @mutex.synchronize in multiple branches
-      - Earl::TmuxSessionStore#read_store                     # error.message in rescue
-      - Earl::Mcp::TmuxHandler#call                          # VALID_ACTIONS.join in two error messages
-      - Earl::Mcp::TmuxHandler#handle_kill                    # @tmux_store.delete in happy path + NotFound rescue via kill_tmux_session
-      - Earl::Mcp::TmuxHandler::PaneOperations#kill_tmux_session              # @tmux_store.delete in happy path + NotFound rescue
-      - Earl::Mcp::TmuxHandler::SpawnConfirmation#poll_confirmation              # msg.data checks + reaction field access in WebSocket callback
-
-  NestedIterators:
-    exclude:
-      - Earl::Memory::Store#collect_entries              # Iterates date files then lines within each
-      - Earl::Memory::Store#grep_files                   # Iterates files then lines within each
-
   RepeatedConditional:
     exclude:
-      - Earl::StreamingResponse                          # reply_post_id guards at multiple lifecycle points
-      - Earl::Memory::Store                              # File.exist? guards at multiple file access points
-      - Earl::Mcp::HeartbeatHandler                      # arguments["name"] checked across CRUD methods
-      - Earl::Mcp::TmuxHandler                           # target checked across action methods
+      - Earl::Mcp::HeartbeatHandler                      # heartbeats[name] existence check across CRUD methods
+
+  DuplicateMethodCall:
+    exclude:
+      - Earl::ClaudeSession::ProcessManagement#join_threads                  # @runtime.process_state in different thread join calls
+      - Earl::CronParser#parse_expression                                    # parts.size checked then parts accessed
+      - Earl::CronParser#parse_part                                          # Regexp.last_match across case branches
+      - Earl::HeartbeatConfig#load_definitions                               # data["heartbeats"] guard then access
+      - Earl::HeartbeatScheduler::Execution#wait_for_completion              # Time.now in polling loop (must be fresh each iteration)
+      - Earl::Mcp::HeartbeatHandler::EntryBuilder#merge_entry                # entry["schedule"] across case branches
+      - Earl::Mcp::TmuxHandler::PaneOperations#kill_tmux_session             # @tmux_store.delete in happy path + NotFound rescue
+      - Earl::QuestionHandler#handle_reaction                                # @mutex.synchronize in different scopes
+      - Earl::StreamingResponse::Finalization#finalize                       # @post_state.reply_post_id in different branch paths
+      - Earl::Tmux#list_all_panes                                            # fields.size + error.message in rescue
+      - Earl::Tmux#list_sessions                                             # error.message in rescue branches
+      - Earl::Tmux#wait_for_text                                             # Time.now in polling loop (must be fresh each iteration)
+      - Earl::TmuxSessionStore#cleanup!                                      # @mutex.synchronize in different branches
+      - Earl::TmuxSessionStore#read_store                                    # error.message in rescue
+
 
   DataClump:
     exclude:

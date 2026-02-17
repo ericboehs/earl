@@ -95,9 +95,10 @@ module Earl
           result: result
         }
       rescue StandardError => error
-        log(:error, "MCP tool call error: #{error.class}: #{error.message}")
+        msg = error.message
+        log(:error, "MCP tool call error: #{error.class}: #{msg}")
         log(:error, error.backtrace&.first(3)&.join("\n"))
-        error_response(id, -32603, "Internal error: #{error.message}")
+        error_response(id, -32603, "Internal error: #{msg}")
       end
 
       def error_response(id, code, message)

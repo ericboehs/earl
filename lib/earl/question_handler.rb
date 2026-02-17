@@ -49,15 +49,17 @@ module Earl
       state = @mutex.synchronize { @pending_questions[post_id] }
       return nil unless state
 
+      questions = state.questions
+      index = state.current_index
       selected = resolve_selected_option(state, emoji_name)
       return nil unless selected
 
-      record_answer(state, state.questions[state.current_index], selected)
+      record_answer(state, questions[index], selected)
       @mutex.synchronize { @pending_questions.delete(post_id) }
       delete_question_post(post_id)
 
-      state.current_index += 1
-      if state.current_index < state.questions.size
+      state.current_index = index + 1
+      if state.current_index < questions.size
         post_current_question(state)
         nil
       else
@@ -124,8 +126,9 @@ module Earl
 
     def build_answer_json(state)
       answers = state.questions.map.with_index do |question, index|
-        answer = state.answers[question["question"]]
-        "Question #{index + 1}: #{question['question']}\nAnswer: #{answer}"
+        q_text = question["question"]
+        answer = state.answers[q_text]
+        "Question #{index + 1}: #{q_text}\nAnswer: #{answer}"
       end.join("\n\n")
 
       { tool_use_id: state.tool_use_id, answer_text: answers }

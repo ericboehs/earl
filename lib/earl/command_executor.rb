@@ -84,14 +84,16 @@ module Earl
     # runner can route them through the normal message pipeline.
     # Returns nil for all other commands (handled inline).
     def execute(command, thread_id:, channel_id:)
-      slash = PASSTHROUGH_COMMANDS[command.name]
+      name = command.name
+      slash = PASSTHROUGH_COMMANDS[name]
       return { passthrough: slash } if slash
 
+      args = command.args
       ctx = CommandContext.new(
         thread_id: thread_id, channel_id: channel_id,
-        arg: command.args.first, args: command.args
+        arg: args.first, args: args
       )
-      dispatch_command(command.name, ctx)
+      dispatch_command(name, ctx)
       nil
     end
 
@@ -115,13 +117,15 @@ module Earl
     end
 
     def handle_stats(ctx)
-      session = @deps.session_manager.get(ctx.thread_id)
+      thread_id = ctx.thread_id
+      manager = @deps.session_manager
+      session = manager.get(thread_id)
       if session
         reply(ctx, format_stats(session.stats))
         return
       end
 
-      persisted = @deps.session_manager.persisted_session_for(ctx.thread_id)
+      persisted = manager.persisted_session_for(thread_id)
       if persisted&.total_cost
         reply(ctx, format_persisted_stats(persisted))
       else

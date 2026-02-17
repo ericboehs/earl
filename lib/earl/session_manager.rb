@@ -162,16 +162,17 @@ module Earl
     end
 
     def create_session(thread_id, short_id, session_config)
+      channel_id = session_config.channel_id
+      working_dir = session_config.working_dir
       log(:info, "Creating new session for thread #{short_id}")
       session = ClaudeSession.new(
-        permission_config: build_permission_config(thread_id, session_config.channel_id),
-        working_dir: session_config.working_dir,
+        permission_config: build_permission_config(thread_id, channel_id),
+        working_dir: working_dir,
         username: session_config.username
       )
       session.start
       @sessions[thread_id] = session
-      @session_store&.save(thread_id, build_persisted(session, channel_id: session_config.channel_id,
-                                                               working_dir: session_config.working_dir))
+      @session_store&.save(thread_id, build_persisted(session, channel_id: channel_id, working_dir: working_dir))
       session
     end
 

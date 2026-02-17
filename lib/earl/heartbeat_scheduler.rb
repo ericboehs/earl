@@ -48,8 +48,9 @@ module Earl
 
     def stop
       @control.stop_requested = true
-      @control.scheduler_thread&.join(5)
-      @control.scheduler_thread&.kill if @control.scheduler_thread&.alive?
+      thread = @control.scheduler_thread
+      thread&.join(5)
+      thread&.kill if thread&.alive?
       @control.scheduler_thread = nil
 
       @mutex.synchronize do
@@ -106,7 +107,8 @@ module Earl
     end
 
     def should_run?(state, now)
-      !state.running && state.next_run_at && now >= state.next_run_at
+      next_run = state.next_run_at
+      !state.running && next_run && now >= next_run
     end
 
     def dispatch_heartbeat(state, now)
@@ -121,23 +123,25 @@ module Earl
 
       def execute_heartbeat(state)
         definition = state.definition
-        log(:info, "Heartbeat '#{definition.name}' starting")
+        name = definition.name
+        log(:info, "Heartbeat '#{name}' starting")
 
         header_post = create_header_post(definition)
         return unless header_post
 
         thread_id = header_post["id"]
         unless thread_id
-          log(:error, "Heartbeat '#{definition.name}': failed to get post ID from Mattermost")
+          log(:error, "Heartbeat '#{name}': failed to get post ID from Mattermost")
           return
         end
 
         session = create_heartbeat_session(definition, state)
         run_session(session, thread_id, state)
       rescue StandardError => error
-        log(:error, "Heartbeat '#{definition.name}' error: #{error.message}")
+        msg = error.message
+        log(:error, "Heartbeat '#{name}' error: #{msg}")
         log(:error, error.backtrace&.first(5)&.join("\n"))
-        @mutex.synchronize { state.last_error = error.message }
+        @mutex.synchronize { state.last_error = msg }
       ensure
         finalize_heartbeat(state)
       end
@@ -150,18 +154,20 @@ module Earl
       end
 
       def create_heartbeat_session(definition, state)
+        persistent = definition.persistent
         session_opts = {
           permission_config: permission_config(definition),
           working_dir: definition.working_dir
         }
 
-        if definition.persistent && state.session_id
-          session_opts[:session_id] = state.session_id
+        saved_session_id = state.session_id
+        if persistent && saved_session_id
+          session_opts[:session_id] = saved_session_id
           session_opts[:mode] = :resume
         end
 
         session = ClaudeSession.new(**session_opts)
-        @mutex.synchronize { state.session_id = session.session_id } if definition.persistent
+        @mutex.synchronize { state.session_id = session.session_id } if persistent
         session
       end
 
@@ -202,10 +208,11 @@ module Earl
       end
 
       def wait_for_completion(session, definition, _completed)
-        deadline = Time.now + definition.timeout
+        timeout = definition.timeout
+        deadline = Time.now + timeout
         until yield
           if Time.now >= deadline
-            log(:warn, "Heartbeat '#{definition.name}' timed out after #{definition.timeout}s")
+            log(:warn, "Heartbeat '#{definition.name}' timed out after #{timeout}s")
             session.kill
             return
           end
@@ -214,29 +221,35 @@ module Earl
       end
 
       def finalize_heartbeat(state)
+        definition = state.definition
+        now = Time.now
         @mutex.synchronize do
           state.running = false
-          state.last_completed_at = Time.now
+          state.last_completed_at = now
           state.run_count += 1
           state.run_thread = nil
 
-          if state.definition.once
+          if definition.once
             state.next_run_at = nil
-            disable_heartbeat(state.definition.name)
+            disable_heartbeat(definition.name)
           else
-            state.next_run_at = compute_next_run(state.definition, Time.now)
+            state.next_run_at = compute_next_run(definition, now)
           end
         end
       end
 
       def compute_next_run(definition, from)
-        if definition.run_at
-          target = Time.at(definition.run_at)
+        run_at = definition.run_at
+        cron = definition.cron
+        interval = definition.interval
+
+        if run_at
+          target = Time.at(run_at)
           target > from ? target : from
-        elsif definition.cron
-          CronParser.new(definition.cron).next_occurrence(from: from)
-        elsif definition.interval
-          from + definition.interval
+        elsif cron
+          CronParser.new(cron).next_occurrence(from: from)
+        elsif interval
+          from + interval
         end
       end
 
@@ -279,36 +292,47 @@ module Earl
         new_names = new_defs.map(&:name)
 
         @mutex.synchronize do
-          new_defs.each do |definition|
-            unless @states.key?(definition.name)
-              @states[definition.name] = HeartbeatState.new(
-                definition: definition,
-                next_run_at: compute_next_run(definition, now),
-                running: false,
-                run_count: 0
-              )
-              log(:info, "Heartbeat reload: added '#{definition.name}'")
-            end
-          end
-
-          @states.each_key do |name|
-            next if new_names.include?(name)
-            next if @states[name].running
-
-            @states.delete(name)
-            log(:info, "Heartbeat reload: removed '#{name}'")
-          end
-
-          new_defs.each do |definition|
-            state = @states[definition.name]
-            next unless state
-            next if state.running
-
-            state.definition = definition
-          end
+          add_new_definitions(new_defs, now)
+          remove_stale_definitions(new_names)
+          update_existing_definitions(new_defs)
         end
 
         log(:info, "Heartbeat config reloaded: #{new_defs.size} definition(s)")
+      end
+
+      def add_new_definitions(new_defs, now)
+        new_defs.each do |definition|
+          name = definition.name
+          next if @states.key?(name)
+
+          @states[name] = HeartbeatState.new(
+            definition: definition,
+            next_run_at: compute_next_run(definition, now),
+            running: false,
+            run_count: 0
+          )
+          log(:info, "Heartbeat reload: added '#{name}'")
+        end
+      end
+
+      def remove_stale_definitions(new_names)
+        @states.each_key do |name|
+          next if new_names.include?(name)
+          next if @states[name].running
+
+          @states.delete(name)
+          log(:info, "Heartbeat reload: removed '#{name}'")
+        end
+      end
+
+      def update_existing_definitions(new_defs)
+        new_defs.each do |definition|
+          state = @states[definition.name]
+          next unless state
+          next if state.running
+
+          state.definition = definition
+        end
       end
 
       def config_file_mtime
@@ -323,9 +347,10 @@ module Earl
       private
 
       def build_status(state)
+        definition = state.definition
         {
-          name: state.definition.name,
-          description: state.definition.description,
+          name: definition.name,
+          description: definition.description,
           next_run_at: state.next_run_at,
           last_run_at: state.last_run_at,
           last_completed_at: state.last_completed_at,

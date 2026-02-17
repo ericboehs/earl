@@ -43,12 +43,16 @@ module Earl
         [ tool_definition ]
       end
 
+      TARGET_REQUIRED_ACTIONS = %w[capture status approve deny send_input kill].freeze
+
       def call(name, arguments)
         return unless name == TOOL_NAME
 
         action = arguments["action"]
-        return text_content("Error: action is required (#{VALID_ACTIONS.join(', ')})") unless action
-        return text_content("Error: unknown action '#{action}'. Valid: #{VALID_ACTIONS.join(', ')}") unless VALID_ACTIONS.include?(action)
+        valid_list = VALID_ACTIONS.join(", ")
+        return text_content("Error: action is required (#{valid_list})") unless action
+        return text_content("Error: unknown action '#{action}'. Valid: #{valid_list}") unless VALID_ACTIONS.include?(action)
+        return text_content("Error: target is required for #{action}") if TARGET_REQUIRED_ACTIONS.include?(action) && !arguments["target"]
 
         send("handle_#{action}", arguments)
       end
@@ -74,8 +78,6 @@ module Earl
 
       def handle_capture(arguments)
         target = arguments["target"]
-        return text_content("Error: target is required for capture") unless target
-
         lines = arguments.fetch("lines", 100).to_i
         lines = [ lines, 1 ].max
         output = @tmux.capture_pane(target, lines: lines)
@@ -90,8 +92,6 @@ module Earl
 
       def handle_status(arguments)
         target = arguments["target"]
-        return text_content("Error: target is required for status") unless target
-
         output = @tmux.capture_pane(target, lines: 200)
         status_label = Reactions::PANE_STATUS_LABELS.fetch(detect_pane_status(target, output: output), "Idle")
         text_content("**`#{target}` status: #{status_label}**\n```\n#{output}\n```")
@@ -105,8 +105,6 @@ module Earl
 
       def handle_approve(arguments)
         target = arguments["target"]
-        return text_content("Error: target is required for approve") unless target
-
         @tmux.send_keys_raw(target, "Enter")
         text_content("Approved permission on `#{target}`.")
       rescue Tmux::NotFound
@@ -119,8 +117,6 @@ module Earl
 
       def handle_deny(arguments)
         target = arguments["target"]
-        return text_content("Error: target is required for deny") unless target
-
         @tmux.send_keys_raw(target, "Escape")
         text_content("Denied permission on `#{target}`.")
       rescue Tmux::NotFound
@@ -133,8 +129,6 @@ module Earl
 
       def handle_send_input(arguments)
         target = arguments["target"]
-        return text_content("Error: target is required for send_input") unless target
-
         text = arguments["text"]
         return text_content("Error: text is required for send_input") unless text
 
@@ -162,8 +156,6 @@ module Earl
 
       def handle_kill(arguments)
         target = arguments["target"]
-        return text_content("Error: target is required for kill") unless target
-
         kill_tmux_session(target)
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
@@ -245,23 +237,27 @@ module Earl
         end
 
         def create_spawned_session(request)
-          command = "claude #{Shellwords.shellescape(request.prompt)}"
+          name = request.name
+          prompt = request.prompt
+          working_dir = request.working_dir
+          session = request.session
+          command = "claude #{Shellwords.shellescape(prompt)}"
 
-          if request.session
-            @tmux.create_window(session: request.session, name: request.name, command: command, working_dir: request.working_dir)
+          if session
+            @tmux.create_window(session: session, name: name, command: command, working_dir: working_dir)
           else
-            @tmux.create_session(name: request.name, command: command, working_dir: request.working_dir)
+            @tmux.create_session(name: name, command: command, working_dir: working_dir)
           end
 
           info = TmuxSessionStore::TmuxSessionInfo.new(
-            name: request.name, channel_id: @config.platform_channel_id,
+            name: name, channel_id: @config.platform_channel_id,
             thread_id: @config.platform_thread_id,
-            working_dir: request.working_dir, prompt: request.prompt, created_at: Time.now.iso8601
+            working_dir: working_dir, prompt: prompt, created_at: Time.now.iso8601
           )
           @tmux_store.save(info)
 
-          mode = request.session ? "window in `#{request.session}`" : "session"
-          text_content("Spawned tmux #{mode} `#{request.name}`.\n- Prompt: #{request.prompt}\n- Dir: #{request.working_dir || Dir.pwd}")
+          mode = session ? "window in `#{session}`" : "session"
+          text_content("Spawned tmux #{mode} `#{name}`.\n- Prompt: #{prompt}\n- Dir: #{working_dir || Dir.pwd}")
         end
 
         def request_spawn_confirmation(request)
@@ -275,10 +271,12 @@ module Earl
         end
 
         def post_confirmation_request(request)
-          dir_line = request.working_dir ? "\n- **Dir:** #{request.working_dir}" : ""
-          session_line = request.session ? "\n- **Session:** #{request.session} (new window)" : ""
+          working_dir = request.working_dir
+          session = request.session
+          dir_line = working_dir ? "\n- **Dir:** #{working_dir}" : ""
+          session_line = session ? "\n- **Session:** #{session} (new window)" : ""
           message = ":rocket: **Spawn Request**\n" \
-                    "Claude wants to spawn #{request.session ? 'window' : 'session'} `#{request.name}`\n" \
+                    "Claude wants to spawn #{session ? 'window' : 'session'} `#{request.name}`\n" \
                     "- **Prompt:** #{request.prompt}#{dir_line}#{session_line}\n" \
                     "React: :+1: approve | :-1: deny"
 
@@ -340,10 +338,11 @@ module Earl
           reaction_queue = Queue.new
 
           ws.on(:message) do |msg|
-            next unless msg.data && !msg.data.empty?
+            data = msg.data
+            next unless data && !data.empty?
 
             begin
-              event = JSON.parse(msg.data)
+              event = JSON.parse(data)
               if event["event"] == "reaction_added"
                 reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
                 reaction_queue.push(reaction_data) if reaction_data["post_id"] == post_id
@@ -365,22 +364,25 @@ module Earl
             end
 
             next unless reaction
-            next if reaction["user_id"] == @config.platform_bot_id
-            next unless allowed_reactor?(reaction["user_id"])
+            user_id = reaction["user_id"]
+            next if user_id == @config.platform_bot_id
+            next unless allowed_reactor?(user_id)
 
-            return :approved if Reactions::APPROVE_EMOJIS.include?(reaction["emoji_name"])
-            return :denied if Reactions::DENY_EMOJIS.include?(reaction["emoji_name"])
+            emoji = reaction["emoji_name"]
+            return :approved if Reactions::APPROVE_EMOJIS.include?(emoji)
+            return :denied if Reactions::DENY_EMOJIS.include?(emoji)
           end
         end
 
         def allowed_reactor?(user_id)
-          return true if @config.allowed_users.empty?
+          allowed = @config.allowed_users
+          return true if allowed.empty?
 
           response = @api.get("/users/#{user_id}")
           return false unless response.is_a?(Net::HTTPSuccess)
 
           user = JSON.parse(response.body)
-          @config.allowed_users.include?(user["username"])
+          allowed.include?(user["username"])
         end
 
         def delete_confirmation_post(post_id)
