@@ -187,18 +187,18 @@ module Earl
         )
         response.start_typing
 
-        session.on_text { |text| response.on_text(text) }
-        session.on_complete do |_|
-          response.on_complete
-          completed = true
-        end
-        session.on_tool_use { |tool_use| response.on_tool_use(tool_use) }
-
+        setup_heartbeat_callbacks(session, response) { completed = true }
         session.start
         session.send_message(definition.prompt)
 
         wait_for_completion(session, definition, completed) { completed }
         log(:info, "Heartbeat '#{definition.name}' completed (run ##{state.run_count + 1})")
+      end
+
+      def setup_heartbeat_callbacks(session, response)
+        session.on_text { |text| response.on_text(text) }
+        session.on_complete { |_| response.on_complete; yield }
+        session.on_tool_use { |tool_use| response.on_tool_use(tool_use) }
       end
 
       def wait_for_completion(session, definition, _completed)

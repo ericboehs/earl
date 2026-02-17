@@ -149,31 +149,11 @@ module Earl
       # --- spawn ---
 
       def handle_spawn(arguments)
-        prompt = arguments["prompt"]
-        return text_content("Error: prompt is required for spawn") unless prompt && !prompt.strip.empty?
+        error = validate_spawn_args(arguments)
+        return error if error
 
-        session = arguments["session"]
-        name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(2)}"
-        working_dir = arguments["working_dir"]
-        return text_content("Error: directory '#{working_dir}' not found") if working_dir && !Dir.exist?(working_dir)
-
-        if session
-          return text_content("Error: session '#{session}' not found") unless @tmux.session_exists?(session)
-        else
-          return text_content("Error: session name '#{name}' cannot contain '.' or ':' (tmux target delimiters)") if name.match?(/[.:]/)
-          return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
-        end
-
-        request = SpawnRequest.new(name: name, prompt: prompt, working_dir: working_dir, session: session)
-        confirmation = request_spawn_confirmation(request)
-        case confirmation
-        when :approved
-          create_spawned_session(request)
-        when :error
-          text_content("Error: spawn confirmation failed (could not post or connect to Mattermost)")
-        else
-          text_content("Spawn denied by user.")
-        end
+        request = build_spawn_request(arguments)
+        execute_spawn(request)
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
@@ -228,9 +208,41 @@ module Earl
         end
       end
 
-      # Spawn confirmation: WebSocket-based reaction polling for spawn requests.
+      # Spawn validation, request building, confirmation, and session creation.
       module SpawnConfirmation
         private
+
+        def validate_spawn_args(arguments)
+          prompt = arguments["prompt"]
+          return text_content("Error: prompt is required for spawn") unless prompt && !prompt.strip.empty?
+
+          working_dir = arguments["working_dir"]
+          return text_content("Error: directory '#{working_dir}' not found") if working_dir && !Dir.exist?(working_dir)
+
+          session = arguments["session"]
+          name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(2)}"
+          if session
+            return text_content("Error: session '#{session}' not found") unless @tmux.session_exists?(session)
+          else
+            return text_content("Error: session name '#{name}' cannot contain '.' or ':' (tmux target delimiters)") if name.match?(/[.:]/)
+            return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
+          end
+
+          nil
+        end
+
+        def build_spawn_request(arguments)
+          name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(2)}"
+          SpawnRequest.new(name: name, prompt: arguments["prompt"], working_dir: arguments["working_dir"], session: arguments["session"])
+        end
+
+        def execute_spawn(request)
+          case request_spawn_confirmation(request)
+          when :approved then create_spawned_session(request)
+          when :error then text_content("Error: spawn confirmation failed (could not post or connect to Mattermost)")
+          else text_content("Spawn denied by user.")
+          end
+        end
 
         def create_spawned_session(request)
           command = "claude #{Shellwords.shellescape(request.prompt)}"

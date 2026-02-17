@@ -56,6 +56,19 @@ module Earl
     # Commands that pass through to Claude as slash commands.
     PASSTHROUGH_COMMANDS = { compact: "/compact" }.freeze
 
+    # Maps command names to handler method symbols.
+    DISPATCH = {
+      help: :handle_help, stats: :handle_stats, stop: :handle_stop,
+      escape: :handle_escape, kill: :handle_kill, cd: :handle_cd,
+      permissions: :handle_permissions, heartbeats: :handle_heartbeats,
+      usage: :handle_usage, context: :handle_context,
+      sessions: :handle_sessions, session_show: :handle_session_show,
+      session_status: :handle_session_status, session_kill: :handle_session_kill,
+      session_nudge: :handle_session_nudge, session_approve: :handle_session_approve,
+      session_deny: :handle_session_deny, session_input: :handle_session_input,
+      spawn: :handle_spawn
+    }.freeze
+
     USAGE_SCRIPT = File.expand_path("../../bin/claude-usage", __dir__)
     CONTEXT_SCRIPT = File.expand_path("../../bin/claude-context", __dir__)
 
@@ -89,31 +102,16 @@ module Earl
     private
 
     def dispatch_command(name, ctx)
-      case name
-      when :help then handle_help(ctx)
-      when :stats then handle_stats(ctx)
-      when :stop then handle_stop(ctx)
-      when :escape then handle_escape(ctx)
-      when :kill then handle_kill(ctx)
-      when :cd then handle_cd(ctx)
-      when :permissions then reply(ctx, "Permission mode is controlled via `EARL_SKIP_PERMISSIONS` env var.")
-      when :heartbeats then handle_heartbeats(ctx)
-      when :usage then handle_usage(ctx)
-      when :context then handle_context(ctx)
-      when :sessions then handle_sessions(ctx)
-      when :session_show then handle_session_show(ctx)
-      when :session_status then handle_session_status(ctx)
-      when :session_kill then handle_session_kill(ctx)
-      when :session_nudge then handle_session_nudge(ctx)
-      when :session_approve then handle_session_approve(ctx)
-      when :session_deny then handle_session_deny(ctx)
-      when :session_input then handle_session_input(ctx)
-      when :spawn then handle_spawn(ctx)
-      end
+      handler = DISPATCH[name]
+      send(handler, ctx) if handler
     end
 
     def handle_help(ctx)
       reply(ctx, HELP_TABLE)
+    end
+
+    def handle_permissions(ctx)
+      reply(ctx, "Permission mode is controlled via `EARL_SKIP_PERMISSIONS` env var.")
     end
 
     def handle_stats(ctx)

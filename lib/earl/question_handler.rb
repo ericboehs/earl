@@ -49,19 +49,14 @@ module Earl
       state = @mutex.synchronize { @pending_questions[post_id] }
       return nil unless state
 
-      answer_index = EMOJI_MAP[emoji_name]
-      return nil unless answer_index
+      selected = resolve_selected_option(state, emoji_name)
+      return nil unless selected
 
-      question = state.questions[state.current_index]
-      options = question["options"] || []
-      return nil unless answer_index < options.size
-
-      record_answer(state, question, options[answer_index])
+      record_answer(state, state.questions[state.current_index], selected)
       @mutex.synchronize { @pending_questions.delete(post_id) }
       delete_question_post(post_id)
 
       state.current_index += 1
-
       if state.current_index < state.questions.size
         post_current_question(state)
         nil
@@ -74,8 +69,22 @@ module Earl
 
     def post_current_question(state)
       question = state.questions[state.current_index]
-      options = question["options"] || []
+      message = build_question_message(question)
 
+      result = @mattermost.create_post(channel_id: state.channel_id, message: message, root_id: state.thread_id)
+      register_question_post(state, result["id"], (question["options"] || []).size)
+    end
+
+    def resolve_selected_option(state, emoji_name)
+      answer_index = EMOJI_MAP[emoji_name]
+      return nil unless answer_index
+
+      options = state.questions[state.current_index]["options"] || []
+      answer_index < options.size ? options[answer_index] : nil
+    end
+
+    def build_question_message(question)
+      options = question["options"] || []
       lines = [ ":question: **#{question['question']}**" ]
       options.each_with_index do |opt, index|
         emoji = EMOJI_NUMBERS[index]
@@ -83,17 +92,13 @@ module Earl
         desc = opt["description"]
         lines << ":#{emoji}: #{label}#{desc ? " — #{desc}" : ''}"
       end
+      lines.join("\n")
+    end
 
-      result = @mattermost.create_post(
-        channel_id: state.channel_id,
-        message: lines.join("\n"),
-        root_id: state.thread_id
-      )
-
-      post_id = result["id"]
+    def register_question_post(state, post_id, option_count)
       if post_id
         state.current_post_id = post_id
-        add_emoji_options(post_id, options.size)
+        add_emoji_options(post_id, option_count)
         @mutex.synchronize { @pending_questions[post_id] = state }
         true
       else
