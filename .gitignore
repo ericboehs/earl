@@ -38,3 +38,6 @@
 
 # Ignore SimpleCov coverage reports
 /coverage
+
+# Ignore git worktrees
+/.worktrees
