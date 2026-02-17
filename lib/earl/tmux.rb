@@ -143,6 +143,14 @@ module Earl
       execute(*args)
     end
 
+    def create_window(session:, name: nil, command: nil, working_dir: nil)
+      args = [ "tmux", "new-window", "-t", session ]
+      args.push("-n", name) if name
+      args.push("-c", working_dir) if working_dir
+      args.push(command) if command
+      execute(*args)
+    end
+
     def kill_session(name)
       execute("tmux", "kill-session", "-t", name)
     rescue Error => error

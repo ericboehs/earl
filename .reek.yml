@@ -226,7 +226,11 @@ detectors:
       - Earl::Runner#enqueue_message                       # Message queue with thread_id, text, channel_id, sender_name
       - Earl::Runner#process_message                       # Session creation with thread_id, text, channel_id, sender_name
       - Earl::Tmux#wait_for_text                            # Polling config: session, text, timeout, interval, lines
+      - Earl::Tmux#create_window                             # Tmux window creation params: session, name, command, working_dir
       - Earl::TmuxMonitor#alert_for_state                   # State transition context params
+      - Earl::Mcp::TmuxHandler#create_spawned_session        # Session/window creation params with optional session target
+      - Earl::Mcp::TmuxHandler#request_spawn_confirmation    # Confirmation flow params with optional session target
+      - Earl::Mcp::TmuxHandler#post_confirmation_request     # Confirmation message params with optional session target
 
   TooManyConstants:
     exclude:

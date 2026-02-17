@@ -159,17 +159,23 @@ module Earl
         prompt = arguments["prompt"]
         return text_content("Error: prompt is required for spawn") unless prompt && !prompt.strip.empty?
 
+        session = arguments["session"]
         name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}"
         return text_content("Error: name '#{name}' cannot contain '.' or ':' (tmux reserved)") if name.match?(/[.:]/)
 
         working_dir = arguments["working_dir"]
         return text_content("Error: directory '#{working_dir}' not found") if working_dir && !Dir.exist?(working_dir)
-        return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
 
-        approved = request_spawn_confirmation(name: name, prompt: prompt, working_dir: working_dir)
+        if session
+          return text_content("Error: session '#{session}' not found") unless @tmux.session_exists?(session)
+        else
+          return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
+        end
+
+        approved = request_spawn_confirmation(name: name, prompt: prompt, working_dir: working_dir, session: session)
         return text_content("Spawn denied by user.") unless approved
 
-        create_spawned_session(name: name, prompt: prompt, working_dir: working_dir)
+        create_spawned_session(name: name, prompt: prompt, working_dir: working_dir, session: session)
       rescue Tmux::Error => error
         text_content("Error: #{error.message}")
       end
@@ -196,9 +202,14 @@ module Earl
 
       # --- spawn helpers ---
 
-      def create_spawned_session(name:, prompt:, working_dir:)
+      def create_spawned_session(name:, prompt:, working_dir:, session: nil)
         command = "claude #{Shellwords.shellescape(prompt)}"
-        @tmux.create_session(name: name, command: command, working_dir: working_dir)
+
+        if session
+          @tmux.create_window(session: session, name: name, command: command, working_dir: working_dir)
+        else
+          @tmux.create_session(name: name, command: command, working_dir: working_dir)
+        end
 
         info = TmuxSessionStore::TmuxSessionInfo.new(
           name: name, channel_id: @config.platform_channel_id,
@@ -207,11 +218,12 @@ module Earl
         )
         @tmux_store.save(info)
 
-        text_content("Spawned tmux session `#{name}`.\n- Prompt: #{prompt}\n- Dir: #{working_dir || Dir.pwd}")
+        mode = session ? "window in `#{session}`" : "session"
+        text_content("Spawned tmux #{mode} `#{name}`.\n- Prompt: #{prompt}\n- Dir: #{working_dir || Dir.pwd}")
       end
 
-      def request_spawn_confirmation(name:, prompt:, working_dir:)
-        post_id = post_confirmation_request(name, prompt, working_dir)
+      def request_spawn_confirmation(name:, prompt:, working_dir:, session: nil)
+        post_id = post_confirmation_request(name, prompt, working_dir, session)
         return false unless post_id
 
         add_reaction_options(post_id)
@@ -220,11 +232,12 @@ module Earl
         result
       end
 
-      def post_confirmation_request(name, prompt, working_dir)
+      def post_confirmation_request(name, prompt, working_dir, session)
         dir_line = working_dir ? "\n- **Dir:** #{working_dir}" : ""
+        session_line = session ? "\n- **Session:** #{session} (new window)" : ""
         message = ":rocket: **Spawn Request**\n" \
-                  "Claude wants to spawn session `#{name}`\n" \
-                  "- **Prompt:** #{prompt}#{dir_line}\n" \
+                  "Claude wants to spawn #{session ? 'window' : 'session'} `#{name}`\n" \
+                  "- **Prompt:** #{prompt}#{dir_line}#{session_line}\n" \
                   "React: :+1: approve | :-1: deny"
 
         response = @api.post("/posts", {
@@ -363,6 +376,10 @@ module Earl
               working_dir: {
                 type: "string",
                 description: "Working directory for spawn"
+              },
+              session: {
+                type: "string",
+                description: "Existing tmux session to add a window to (for spawn). If omitted, creates a new session."
               }
             },
             required: %w[action]

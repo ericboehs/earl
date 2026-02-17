@@ -334,6 +334,31 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_equal 1, @tmux_store.saved.size
   end
 
+  test "spawn creates window in existing session when session param provided" do
+    @tmux.session_exists_result = true
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| true }
+
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "test-window",
+      "session" => "code"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "Spawned"
+    assert_includes text, "window in `code`"
+    assert_equal 0, @tmux.created_sessions.size
+    assert_equal 1, @tmux.created_windows.size
+    assert_equal "code", @tmux.created_windows.first[:session]
+  end
+
+  test "spawn returns error when session param points to nonexistent session" do
+    @tmux.session_exists_result = false
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "session" => "nonexistent"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "not found"
+  end
+
   # --- Mock helpers ---
 
   private
@@ -342,7 +367,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
   class MockTmuxAdapter
     attr_accessor :available_result, :list_all_panes_result, :claude_on_tty_results,
                   :capture_pane_result, :capture_pane_error, :session_exists_result
-    attr_reader :killed_sessions, :created_sessions, :send_keys_calls, :send_keys_raw_calls
+    attr_reader :killed_sessions, :created_sessions, :created_windows, :send_keys_calls, :send_keys_raw_calls
 
     def initialize
       @available_result = true
@@ -353,6 +378,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
       @session_exists_result = false
       @killed_sessions = []
       @created_sessions = []
+      @created_windows = []
       @send_keys_calls = []
       @send_keys_raw_calls = []
     end
@@ -381,6 +407,10 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
     def create_session(name:, command: nil, working_dir: nil)
       @created_sessions << { name: name, command: command, working_dir: working_dir }
+    end
+
+    def create_window(session:, name: nil, command: nil, working_dir: nil)
+      @created_windows << { session: session, name: name, command: command, working_dir: working_dir }
     end
 
     def kill_session(name)
