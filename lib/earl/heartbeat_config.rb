@@ -18,7 +18,7 @@ module Earl
       keyword_init: true
     ) do
       def self.from_config(name, config, working_dir_resolver)
-        schedule = config["schedule"]
+        schedule = config["schedule"] || {}
         new(
           name: name,
           description: config["description"] || name,

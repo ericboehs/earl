@@ -34,6 +34,8 @@ module Earl
     end
 
     def summarize_input(input)
+      return nil unless input
+
       entries = input.to_h.compact
       entries.empty? ? nil : JSON.generate(entries)
     end
