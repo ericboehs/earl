@@ -260,8 +260,8 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     result = @handler.call("manage_tmux_sessions", { "action" => "kill", "target" => "dev" })
     text = result[:content].first[:text]
     assert_includes text, "Killed"
-    assert_equal ["dev"], @tmux.killed_sessions
-    assert_equal ["dev"], @tmux_store.deleted
+    assert_equal [ "dev" ], @tmux.killed_sessions
+    assert_equal [ "dev" ], @tmux_store.deleted
   end
 
   test "kill returns error when target missing" do
@@ -275,7 +275,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     result = @handler.call("manage_tmux_sessions", { "action" => "kill", "target" => "missing" })
     text = result[:content].first[:text]
     assert_includes text, "not found"
-    assert_equal ["missing"], @tmux_store.deleted
+    assert_equal [ "missing" ], @tmux_store.deleted
   end
 
   # --- spawn ---
