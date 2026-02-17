@@ -10,6 +10,8 @@ module Earl
     # the HeartbeatScheduler auto-reloads when it detects file changes.
     # Conforms to the Server handler interface: tool_definitions, handles?, call.
     class HeartbeatHandler
+      include HandlerBase
+
       TOOL_NAMES = %w[manage_heartbeat].freeze
       CONFIG_PATH = File.expand_path("~/.config/earl/heartbeats.yml")
 
@@ -24,10 +26,6 @@ module Earl
 
       def tool_definitions
         [ manage_heartbeat_definition ]
-      end
-
-      def handles?(name)
-        TOOL_NAMES.include?(name)
       end
 
       def call(name, arguments)

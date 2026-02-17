@@ -10,19 +10,24 @@ module Earl
     # Conforms to the Server handler interface: tool_definitions, handles?, call.
     class TmuxHandler
       include Logging
+      include HandlerBase
 
       TOOL_NAME = "manage_tmux_sessions"
+      TOOL_NAMES = [ TOOL_NAME ].freeze
       VALID_ACTIONS = %w[list capture status approve deny send_input spawn kill].freeze
 
-      APPROVE_EMOJIS = %w[+1 white_check_mark].freeze
-      DENY_EMOJIS = %w[-1].freeze
-      REACTION_EMOJIS = (APPROVE_EMOJIS + DENY_EMOJIS).freeze
+      # Reaction emojis and pane status labels for spawn confirmation flow.
+      module Reactions
+        APPROVE_EMOJIS = %w[+1 white_check_mark].freeze
+        DENY_EMOJIS = %w[-1].freeze
+        ALL = (APPROVE_EMOJIS + DENY_EMOJIS).freeze
 
-      PANE_STATUS_LABELS = {
-        active: "Active",
-        permission: "Waiting for permission",
-        idle: "Idle"
-      }.freeze
+        PANE_STATUS_LABELS = {
+          active: "Active",
+          permission: "Waiting for permission",
+          idle: "Idle"
+        }.freeze
+      end
 
       def initialize(config:, api_client:, tmux_store:, tmux_adapter: Tmux)
         @config = config
@@ -33,10 +38,6 @@ module Earl
 
       def tool_definitions
         [ tool_definition ]
-      end
-
-      def handles?(name)
-        name == TOOL_NAME
       end
 
       def call(name, arguments)
@@ -70,7 +71,8 @@ module Earl
         target = pane[:target]
         project = File.basename(pane[:path])
         status = detect_pane_status(target)
-        "- `#{target}` — #{project} (#{PANE_STATUS_LABELS.fetch(status, 'Idle')})"
+        label = Reactions::PANE_STATUS_LABELS.fetch(status, "Idle")
+        "- `#{target}` — #{project} (#{label})"
       end
 
       def detect_pane_status(target, output: nil)
@@ -107,7 +109,7 @@ module Earl
         return text_content("Error: target is required for status") unless target
 
         output = @tmux.capture_pane(target, lines: 200)
-        status_label = PANE_STATUS_LABELS.fetch(detect_pane_status(target, output: output), "Idle")
+        status_label = Reactions::PANE_STATUS_LABELS.fetch(detect_pane_status(target, output: output), "Idle")
         text_content("**`#{target}` status: #{status_label}**\n```\n#{output}\n```")
       rescue Tmux::NotFound
         text_content("Error: session/pane '#{target}' not found")
@@ -168,16 +170,13 @@ module Earl
 
         session = arguments["session"]
         name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(2)}"
-        if session.nil? && name.match?(/[.:]/)
-          return text_content("Error: session name '#{name}' cannot contain '.' or ':' (tmux target delimiters)")
-        end
-
         working_dir = arguments["working_dir"]
         return text_content("Error: directory '#{working_dir}' not found") if working_dir && !Dir.exist?(working_dir)
 
         if session
           return text_content("Error: session '#{session}' not found") unless @tmux.session_exists?(session)
         else
+          return text_content("Error: session name '#{name}' cannot contain '.' or ':' (tmux target delimiters)") if name.match?(/[.:]/)
           return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
         end
 
@@ -269,7 +268,7 @@ module Earl
       end
 
       def add_reaction_options(post_id)
-        REACTION_EMOJIS.each do |emoji|
+        Reactions::ALL.each do |emoji|
           response = @api.post("/reactions", {
             user_id: @config.platform_bot_id,
             post_id: post_id,
@@ -340,8 +339,8 @@ module Earl
           next if reaction["user_id"] == @config.platform_bot_id
           next unless allowed_reactor?(reaction["user_id"])
 
-          return :approved if APPROVE_EMOJIS.include?(reaction["emoji_name"])
-          return :denied if DENY_EMOJIS.include?(reaction["emoji_name"])
+          return :approved if Reactions::APPROVE_EMOJIS.include?(reaction["emoji_name"])
+          return :denied if Reactions::DENY_EMOJIS.include?(reaction["emoji_name"])
         end
       end
 

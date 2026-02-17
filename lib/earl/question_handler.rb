@@ -9,6 +9,8 @@ module Earl
     EMOJI_NUMBERS = %w[one two three four].freeze
     EMOJI_MAP = { "one" => 0, "two" => 1, "three" => 2, "four" => 3 }.freeze
 
+    # Tracks in-progress question flow: which tool_use triggered it, the list of
+    # questions, collected answers, and the Mattermost post/thread IDs.
     QuestionState = Struct.new(:tool_use_id, :questions, :answers, :current_index,
                                :current_post_id, :thread_id, :channel_id, keyword_init: true)
 
@@ -75,8 +77,8 @@ module Earl
       options = question["options"] || []
 
       lines = [ ":question: **#{question['question']}**" ]
-      options.each_with_index do |opt, i|
-        emoji = EMOJI_NUMBERS[i]
+      options.each_with_index do |opt, index|
+        emoji = EMOJI_NUMBERS[index]
         label = opt["label"] || opt.to_s
         desc = opt["description"]
         lines << ":#{emoji}: #{label}#{desc ? " — #{desc}" : ''}"
@@ -100,8 +102,8 @@ module Earl
     end
 
     def add_emoji_options(post_id, count)
-      count.times do |i|
-        @mattermost.add_reaction(post_id: post_id, emoji_name: EMOJI_NUMBERS[i])
+      count.times do |index|
+        @mattermost.add_reaction(post_id: post_id, emoji_name: EMOJI_NUMBERS[index])
       end
     end
 
@@ -116,9 +118,9 @@ module Earl
     end
 
     def build_answer_json(state)
-      answers = state.questions.map.with_index do |q, i|
-        answer = state.answers[q["question"]]
-        "Question #{i + 1}: #{q['question']}\nAnswer: #{answer}"
+      answers = state.questions.map.with_index do |question, index|
+        answer = state.answers[question["question"]]
+        "Question #{index + 1}: #{question['question']}\nAnswer: #{answer}"
       end.join("\n\n")
 
       { tool_use_id: state.tool_use_id, answer_text: answers }

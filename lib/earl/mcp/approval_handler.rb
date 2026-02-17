@@ -11,13 +11,18 @@ module Earl
     # tool names (e.g., Bash) rather than blanket approval.
     class ApprovalHandler
       include Logging
-
-      APPROVE_EMOJIS = %w[+1 white_check_mark].freeze
-      DENY_EMOJIS = %w[-1].freeze
-      REACTION_EMOJIS = %w[+1 white_check_mark -1].freeze
-      ALLOWED_TOOLS_DIR = File.expand_path("~/.config/earl/allowed_tools")
+      include HandlerBase
 
       TOOL_NAME = "permission_prompt"
+      TOOL_NAMES = [ TOOL_NAME ].freeze
+      ALLOWED_TOOLS_DIR = File.expand_path("~/.config/earl/allowed_tools")
+
+      # Reaction emoji sets for the permission approval flow.
+      module Reactions
+        APPROVE = %w[+1 white_check_mark].freeze
+        DENY = %w[-1].freeze
+        ALL = %w[+1 white_check_mark -1].freeze
+      end
 
       def initialize(config:, api_client:)
         @config = config
@@ -43,10 +48,6 @@ module Earl
             }
           }
         ]
-      end
-
-      def handles?(name)
-        name == TOOL_NAME
       end
 
       def call(_name, arguments)
@@ -112,7 +113,7 @@ module Earl
       end
 
       def add_reaction_options(post_id)
-        REACTION_EMOJIS.each do |emoji|
+        Reactions::ALL.each do |emoji|
           @api.post("/reactions", {
             user_id: @config.platform_bot_id,
             post_id: post_id,
@@ -203,13 +204,13 @@ module Earl
       end
 
       def process_reaction(emoji_name, tool_name, input)
-        if APPROVE_EMOJIS.include?(emoji_name)
+        if Reactions::APPROVE.include?(emoji_name)
           if emoji_name == "white_check_mark"
             @mutex.synchronize { @allowed_tools.add(tool_name) }
             save_allowed_tools
           end
           allow_result(input)
-        elsif DENY_EMOJIS.include?(emoji_name)
+        elsif Reactions::DENY.include?(emoji_name)
           deny_result("Denied by user")
         end
       end

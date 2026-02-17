@@ -36,6 +36,7 @@ module Earl
         )
       end
 
+      # Minimal config struct compatible with ApiClient, built from platform env vars.
       ApiConfig = Struct.new(:mattermost_url, :bot_token, :bot_id, keyword_init: true) do
         def api_url(path)
           "#{mattermost_url}/api/v4#{path}"

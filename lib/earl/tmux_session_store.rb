@@ -41,6 +41,12 @@ module Earl
       end
     end
 
+    # Returns names of dead sessions without modifying the store.
+    def cleanup
+      names = @mutex.synchronize { ensure_cache.keys }
+      names.reject { |name| Tmux.session_exists?(name) }
+    end
+
     # Removes entries for tmux sessions that no longer exist.
     # Shell calls happen outside the mutex to avoid blocking other operations
     # if tmux is slow or hung.

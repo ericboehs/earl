@@ -9,22 +9,6 @@ exclude_paths:
 detectors:
   UtilityFunction:
     public_methods_only: true
-    exclude:
-      - Earl::Mcp::ApprovalHandler#handles?    # Handler interface method — intentionally stateless
-      - Earl::Mcp::MemoryHandler#handles?      # Handler interface method — intentionally stateless
-      - Earl::Mcp::HeartbeatHandler#handles?   # Handler interface method — intentionally stateless
-      - Earl::Mcp::TmuxHandler#handles?       # Handler interface method — intentionally stateless
-
-  IrresponsibleModule:
-    exclude:
-      - Earl::QuestionHandler::QuestionState    # Simple state struct
-      - Earl::SessionStore::PersistedSession    # Simple data struct
-      - Earl::Mcp::Config::ApiConfig            # Simple config struct
-
-  UncommunicativeVariableName:
-    exclude:
-      - Earl::QuestionHandler   # Short block vars (i, q) in compact iteration
-      - Earl::SessionStore      # Short block var (v) in transform_values
 
   TooManyInstanceVariables:
     exclude:
@@ -233,14 +217,3 @@ detectors:
       - Earl::Mcp::TmuxHandler#request_spawn_confirmation    # Confirmation flow params with optional session target
       - Earl::Mcp::TmuxHandler#post_confirmation_request     # Confirmation message params with optional session target
 
-  NilCheck:
-    exclude:
-      - Earl::Mcp::TmuxHandler#handle_spawn  # session.nil? distinguishes session vs window creation
-
-  TooManyConstants:
-    exclude:
-      - Earl::Mcp::TmuxHandler    # Action list + reaction emoji sets for spawn confirmation
-
-  MissingSafeMethod:
-    exclude:
-      - Earl::TmuxSessionStore                             # cleanup! is intentionally destructive (no safe version)

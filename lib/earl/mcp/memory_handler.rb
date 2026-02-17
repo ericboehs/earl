@@ -5,6 +5,8 @@ module Earl
     # MCP handler exposing save_memory and search_memory tools.
     # Conforms to the Server handler interface: tool_definitions, handles?, call.
     class MemoryHandler
+      include HandlerBase
+
       TOOL_NAMES = %w[save_memory search_memory].freeze
 
       def initialize(store:, username: nil)
@@ -14,10 +16,6 @@ module Earl
 
       def tool_definitions
         [ save_memory_definition, search_memory_definition ]
-      end
-
-      def handles?(name)
-        TOOL_NAMES.include?(name)
       end
 
       def call(name, arguments)
