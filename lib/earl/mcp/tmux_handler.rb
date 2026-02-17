@@ -70,25 +70,6 @@ module Earl
         text_content("**Claude Sessions (#{claude_panes.size}):**\n\n#{lines.join("\n")}")
       end
 
-      def format_pane(pane)
-        target = pane[:target]
-        project = File.basename(pane[:path])
-        status = detect_pane_status(target)
-        label = Reactions::PANE_STATUS_LABELS.fetch(status, "Idle")
-        "- `#{target}` — #{project} (#{label})"
-      end
-
-      def detect_pane_status(target, output: nil)
-        output ||= @tmux.capture_pane(target, lines: 20)
-        return :permission if output.include?("Do you want to proceed?")
-        return :active if output.include?("esc to interrupt")
-
-        :idle
-      rescue Tmux::Error => error
-        log(:debug, "detect_pane_status failed for #{target}: #{error.message}")
-        :idle
-      end
-
       # --- capture ---
 
       def handle_capture(arguments)
@@ -208,167 +189,197 @@ module Earl
         text_content("Error: #{error.message}")
       end
 
-      def kill_tmux_session(target)
-        @tmux.kill_session(target)
-        @tmux_store.delete(target)
-        text_content("Killed tmux session `#{target}`.")
-      rescue Tmux::NotFound
-        @tmux_store.delete(target)
-        text_content("Error: session '#{target}' not found (cleaned up store)")
-      end
-
-      # --- spawn helpers ---
-
-      def create_spawned_session(request)
-        command = "claude #{Shellwords.shellescape(request.prompt)}"
-
-        if request.session
-          @tmux.create_window(session: request.session, name: request.name, command: command, working_dir: request.working_dir)
-        else
-          @tmux.create_session(name: request.name, command: command, working_dir: request.working_dir)
-        end
-
-        info = TmuxSessionStore::TmuxSessionInfo.new(
-          name: request.name, channel_id: @config.platform_channel_id,
-          thread_id: @config.platform_thread_id,
-          working_dir: request.working_dir, prompt: request.prompt, created_at: Time.now.iso8601
-        )
-        @tmux_store.save(info)
-
-        mode = request.session ? "window in `#{request.session}`" : "session"
-        text_content("Spawned tmux #{mode} `#{request.name}`.\n- Prompt: #{request.prompt}\n- Dir: #{request.working_dir || Dir.pwd}")
-      end
-
-      def request_spawn_confirmation(request)
-        post_id = post_confirmation_request(request)
-        return :error unless post_id
-
-        add_reaction_options(post_id)
-        wait_for_confirmation(post_id)
-      ensure
-        delete_confirmation_post(post_id) if post_id
-      end
-
-      def post_confirmation_request(request)
-        dir_line = request.working_dir ? "\n- **Dir:** #{request.working_dir}" : ""
-        session_line = request.session ? "\n- **Session:** #{request.session} (new window)" : ""
-        message = ":rocket: **Spawn Request**\n" \
-                  "Claude wants to spawn #{request.session ? 'window' : 'session'} `#{request.name}`\n" \
-                  "- **Prompt:** #{request.prompt}#{dir_line}#{session_line}\n" \
-                  "React: :+1: approve | :-1: deny"
-
-        response = @api.post("/posts", {
-          channel_id: @config.platform_channel_id,
-          message: message,
-          root_id: @config.platform_thread_id
-        })
-
-        return unless response.is_a?(Net::HTTPSuccess)
-
-        JSON.parse(response.body)["id"]
-      rescue IOError, JSON::ParserError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
-        log(:error, "Failed to post spawn confirmation: #{error.message}")
-        nil
-      end
-
-      def add_reaction_options(post_id)
-        Reactions::ALL.each do |emoji|
-          response = @api.post("/reactions", {
-            user_id: @config.platform_bot_id,
-            post_id: post_id,
-            emoji_name: emoji
-          })
-          log(:warn, "Failed to add reaction #{emoji} to post #{post_id}") unless response.is_a?(Net::HTTPSuccess)
-        end
-      rescue IOError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
-        log(:error, "Failed to add reaction options to post #{post_id}: #{error.message}")
-      end
-
-      def wait_for_confirmation(post_id)
-        timeout_sec = @config.permission_timeout_ms / 1000.0
-        deadline = Time.now + timeout_sec
-
-        ws = connect_websocket
-        return :error unless ws
-
-        poll_confirmation(ws, post_id, deadline)
-      ensure
-        begin
-          ws&.close
-        rescue IOError, Errno::ECONNRESET => error
-          log(:debug, "Failed to close spawn confirmation WebSocket: #{error.message}")
-        end
-      end
-
-      def connect_websocket
-        ws = WebSocket::Client::Simple.connect(@config.websocket_url)
-        token = @config.platform_token
-        ws_ref = ws
-        ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
-        ws
-      rescue IOError, SocketError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH => error
-        log(:error, "Spawn confirmation WebSocket failed: #{error.message}")
-        nil
-      end
-
-      def poll_confirmation(ws, post_id, deadline)
-        reaction_queue = Queue.new
-
-        ws.on(:message) do |msg|
-          next unless msg.data && !msg.data.empty?
-
-          begin
-            event = JSON.parse(msg.data)
-            if event["event"] == "reaction_added"
-              reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
-              reaction_queue.push(reaction_data) if reaction_data["post_id"] == post_id
-            end
-          rescue JSON::ParserError
-            log(:debug, "Spawn confirmation: skipped unparsable WebSocket message")
-          end
-        end
-
-        loop do
-          remaining = deadline - Time.now
-          return :denied if remaining <= 0
-
-          reaction = begin
-            reaction_queue.pop(true)
-          rescue ThreadError
-            sleep 0.5
-            nil
-          end
-
-          next unless reaction
-          next if reaction["user_id"] == @config.platform_bot_id
-          next unless allowed_reactor?(reaction["user_id"])
-
-          return :approved if Reactions::APPROVE_EMOJIS.include?(reaction["emoji_name"])
-          return :denied if Reactions::DENY_EMOJIS.include?(reaction["emoji_name"])
-        end
-      end
-
-      def allowed_reactor?(user_id)
-        return true if @config.allowed_users.empty?
-
-        response = @api.get("/users/#{user_id}")
-        return false unless response.is_a?(Net::HTTPSuccess)
-
-        user = JSON.parse(response.body)
-        @config.allowed_users.include?(user["username"])
-      end
-
-      def delete_confirmation_post(post_id)
-        @api.delete("/posts/#{post_id}")
-      rescue StandardError => error
-        log(:warn, "Failed to delete spawn confirmation: #{error.message}")
-      end
-
       # --- helpers ---
 
       def text_content(text)
         { content: [ { type: "text", text: text } ] }
       end
+
+      # Pane formatting and status detection.
+      module PaneOperations
+        private
+
+        def format_pane(pane)
+          target = pane[:target]
+          project = File.basename(pane[:path])
+          status = detect_pane_status(target)
+          label = Reactions::PANE_STATUS_LABELS.fetch(status, "Idle")
+          "- `#{target}` — #{project} (#{label})"
+        end
+
+        def detect_pane_status(target, output: nil)
+          output ||= @tmux.capture_pane(target, lines: 20)
+          return :permission if output.include?("Do you want to proceed?")
+          return :active if output.include?("esc to interrupt")
+
+          :idle
+        rescue Tmux::Error => error
+          log(:debug, "detect_pane_status failed for #{target}: #{error.message}")
+          :idle
+        end
+
+        def kill_tmux_session(target)
+          @tmux.kill_session(target)
+          @tmux_store.delete(target)
+          text_content("Killed tmux session `#{target}`.")
+        rescue Tmux::NotFound
+          @tmux_store.delete(target)
+          text_content("Error: session '#{target}' not found (cleaned up store)")
+        end
+      end
+
+      # Spawn confirmation: WebSocket-based reaction polling for spawn requests.
+      module SpawnConfirmation
+        private
+
+        def create_spawned_session(request)
+          command = "claude #{Shellwords.shellescape(request.prompt)}"
+
+          if request.session
+            @tmux.create_window(session: request.session, name: request.name, command: command, working_dir: request.working_dir)
+          else
+            @tmux.create_session(name: request.name, command: command, working_dir: request.working_dir)
+          end
+
+          info = TmuxSessionStore::TmuxSessionInfo.new(
+            name: request.name, channel_id: @config.platform_channel_id,
+            thread_id: @config.platform_thread_id,
+            working_dir: request.working_dir, prompt: request.prompt, created_at: Time.now.iso8601
+          )
+          @tmux_store.save(info)
+
+          mode = request.session ? "window in `#{request.session}`" : "session"
+          text_content("Spawned tmux #{mode} `#{request.name}`.\n- Prompt: #{request.prompt}\n- Dir: #{request.working_dir || Dir.pwd}")
+        end
+
+        def request_spawn_confirmation(request)
+          post_id = post_confirmation_request(request)
+          return :error unless post_id
+
+          add_reaction_options(post_id)
+          wait_for_confirmation(post_id)
+        ensure
+          delete_confirmation_post(post_id) if post_id
+        end
+
+        def post_confirmation_request(request)
+          dir_line = request.working_dir ? "\n- **Dir:** #{request.working_dir}" : ""
+          session_line = request.session ? "\n- **Session:** #{request.session} (new window)" : ""
+          message = ":rocket: **Spawn Request**\n" \
+                    "Claude wants to spawn #{request.session ? 'window' : 'session'} `#{request.name}`\n" \
+                    "- **Prompt:** #{request.prompt}#{dir_line}#{session_line}\n" \
+                    "React: :+1: approve | :-1: deny"
+
+          response = @api.post("/posts", {
+            channel_id: @config.platform_channel_id,
+            message: message,
+            root_id: @config.platform_thread_id
+          })
+
+          return unless response.is_a?(Net::HTTPSuccess)
+
+          JSON.parse(response.body)["id"]
+        rescue IOError, JSON::ParserError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
+          log(:error, "Failed to post spawn confirmation: #{error.message}")
+          nil
+        end
+
+        def add_reaction_options(post_id)
+          Reactions::ALL.each do |emoji|
+            response = @api.post("/reactions", {
+              user_id: @config.platform_bot_id,
+              post_id: post_id,
+              emoji_name: emoji
+            })
+            log(:warn, "Failed to add reaction #{emoji} to post #{post_id}") unless response.is_a?(Net::HTTPSuccess)
+          end
+        rescue IOError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
+          log(:error, "Failed to add reaction options to post #{post_id}: #{error.message}")
+        end
+
+        def wait_for_confirmation(post_id)
+          timeout_sec = @config.permission_timeout_ms / 1000.0
+          deadline = Time.now + timeout_sec
+
+          ws = connect_websocket
+          return :error unless ws
+
+          poll_confirmation(ws, post_id, deadline)
+        ensure
+          begin
+            ws&.close
+          rescue IOError, Errno::ECONNRESET => error
+            log(:debug, "Failed to close spawn confirmation WebSocket: #{error.message}")
+          end
+        end
+
+        def connect_websocket
+          ws = WebSocket::Client::Simple.connect(@config.websocket_url)
+          token = @config.platform_token
+          ws_ref = ws
+          ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
+          ws
+        rescue IOError, SocketError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH => error
+          log(:error, "Spawn confirmation WebSocket failed: #{error.message}")
+          nil
+        end
+
+        def poll_confirmation(ws, post_id, deadline)
+          reaction_queue = Queue.new
+
+          ws.on(:message) do |msg|
+            next unless msg.data && !msg.data.empty?
+
+            begin
+              event = JSON.parse(msg.data)
+              if event["event"] == "reaction_added"
+                reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
+                reaction_queue.push(reaction_data) if reaction_data["post_id"] == post_id
+              end
+            rescue JSON::ParserError
+              log(:debug, "Spawn confirmation: skipped unparsable WebSocket message")
+            end
+          end
+
+          loop do
+            remaining = deadline - Time.now
+            return :denied if remaining <= 0
+
+            reaction = begin
+              reaction_queue.pop(true)
+            rescue ThreadError
+              sleep 0.5
+              nil
+            end
+
+            next unless reaction
+            next if reaction["user_id"] == @config.platform_bot_id
+            next unless allowed_reactor?(reaction["user_id"])
+
+            return :approved if Reactions::APPROVE_EMOJIS.include?(reaction["emoji_name"])
+            return :denied if Reactions::DENY_EMOJIS.include?(reaction["emoji_name"])
+          end
+        end
+
+        def allowed_reactor?(user_id)
+          return true if @config.allowed_users.empty?
+
+          response = @api.get("/users/#{user_id}")
+          return false unless response.is_a?(Net::HTTPSuccess)
+
+          user = JSON.parse(response.body)
+          @config.allowed_users.include?(user["username"])
+        end
+
+        def delete_confirmation_post(post_id)
+          @api.delete("/posts/#{post_id}")
+        rescue StandardError => error
+          log(:warn, "Failed to delete spawn confirmation: #{error.message}")
+        end
+      end
+
+      include PaneOperations
+      include SpawnConfirmation
 
       def tool_definition
         {

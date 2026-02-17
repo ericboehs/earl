@@ -108,56 +108,61 @@ module Earl
         end
       end
 
-      # --- Entry building ---
+      # Entry building: constructs and merges heartbeat configuration hashes.
+      module EntryBuilder
+        private
 
-      def build_entry(arguments)
-        entry = {}
-        entry["description"] = arguments["description"] if arguments["description"]
-        entry["once"] = arguments["once"] if arguments.key?("once")
-        entry["schedule"] = build_schedule(arguments)
+        def build_entry(arguments)
+          entry = {}
+          entry["description"] = arguments["description"] if arguments["description"]
+          entry["once"] = arguments["once"] if arguments.key?("once")
+          entry["schedule"] = build_schedule(arguments)
 
-        # Auto-set run_at for immediate one-offs (once: true with no schedule)
-        if arguments["once"] && entry["schedule"].empty?
-          entry["schedule"]["run_at"] = Time.now.to_i
+          # Auto-set run_at for immediate one-offs (once: true with no schedule)
+          if arguments["once"] && entry["schedule"].empty?
+            entry["schedule"]["run_at"] = Time.now.to_i
+          end
+
+          entry["channel_id"] = arguments["channel_id"] || @default_channel_id
+          entry["working_dir"] = arguments["working_dir"] if arguments["working_dir"]
+          entry["prompt"] = arguments["prompt"] if arguments["prompt"]
+          entry["permission_mode"] = arguments["permission_mode"] if arguments["permission_mode"]
+          entry["persistent"] = arguments["persistent"] if arguments.key?("persistent")
+          entry["timeout"] = arguments["timeout"] if arguments["timeout"]
+          entry["enabled"] = arguments.fetch("enabled", true)
+          entry
         end
 
-        entry["channel_id"] = arguments["channel_id"] || @default_channel_id
-        entry["working_dir"] = arguments["working_dir"] if arguments["working_dir"]
-        entry["prompt"] = arguments["prompt"] if arguments["prompt"]
-        entry["permission_mode"] = arguments["permission_mode"] if arguments["permission_mode"]
-        entry["persistent"] = arguments["persistent"] if arguments.key?("persistent")
-        entry["timeout"] = arguments["timeout"] if arguments["timeout"]
-        entry["enabled"] = arguments.fetch("enabled", true)
-        entry
-      end
+        def build_schedule(arguments)
+          schedule = {}
+          schedule["cron"] = arguments["cron"] if arguments["cron"]
+          schedule["interval"] = arguments["interval"] if arguments["interval"]
+          schedule["run_at"] = arguments["run_at"] if arguments["run_at"]
+          schedule
+        end
 
-      def build_schedule(arguments)
-        schedule = {}
-        schedule["cron"] = arguments["cron"] if arguments["cron"]
-        schedule["interval"] = arguments["interval"] if arguments["interval"]
-        schedule["run_at"] = arguments["run_at"] if arguments["run_at"]
-        schedule
-      end
+        def merge_entry(entry, arguments)
+          MUTABLE_FIELDS.each do |field|
+            next unless arguments.key?(field)
 
-      def merge_entry(entry, arguments)
-        MUTABLE_FIELDS.each do |field|
-          next unless arguments.key?(field)
-
-          case field
-          when "cron"
-            entry["schedule"] ||= {}
-            entry["schedule"]["cron"] = arguments["cron"]
-          when "interval"
-            entry["schedule"] ||= {}
-            entry["schedule"]["interval"] = arguments["interval"]
-          when "run_at"
-            entry["schedule"] ||= {}
-            entry["schedule"]["run_at"] = arguments["run_at"]
-          else
-            entry[field] = arguments[field]
+            case field
+            when "cron"
+              entry["schedule"] ||= {}
+              entry["schedule"]["cron"] = arguments["cron"]
+            when "interval"
+              entry["schedule"] ||= {}
+              entry["schedule"]["interval"] = arguments["interval"]
+            when "run_at"
+              entry["schedule"] ||= {}
+              entry["schedule"]["run_at"] = arguments["run_at"]
+            else
+              entry[field] = arguments[field]
+            end
           end
         end
       end
+
+      include EntryBuilder
 
       # --- Formatting ---
 

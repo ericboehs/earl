@@ -51,10 +51,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     sent_text = nil
     mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     # Stub typing to avoid real HTTP calls
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
     runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "Hello Earl", channel_id: nil, sender_name: nil))
@@ -80,11 +80,11 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:stats) { stats }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     created_posts = []
     updated_posts = []
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
       created_posts << { channel_id: channel_id, message: message, root_id: root_id }
@@ -122,13 +122,13 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "setup_message_handler registers callback with mattermost" do
     runner = Earl::Runner.new
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
 
     # Verify on_message was called during setup (callback is stored)
     runner.send(:setup_message_handler)
 
     # The callback exists (on_message was called with a block)
-    assert_not_nil mm.instance_variable_get(:@on_message)
+    assert_not_nil mm.instance_variable_get(:@callbacks).on_message
   end
 
   test "debounce timer fires when time has not elapsed" do
@@ -143,10 +143,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:send_message) { |_text| }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     updated_posts = []
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
     mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
@@ -175,7 +175,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "start method calls setup methods and enters main loop" do
     runner = Earl::Runner.new
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
 
     # Stub connect to not make real WebSocket calls
     mm.define_singleton_method(:connect) { }
@@ -186,7 +186,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     # Kill the idle checker thread after start
     assert_nothing_raised { runner.start }
   ensure
-    runner.instance_variable_get(:@idle_checker_thread)&.kill
+    runner.instance_variable_get(:@app_state).idle_checker_thread&.kill
   end
 
   test "on_complete without prior text does not update or create posts" do
@@ -206,11 +206,11 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:stats) { stats }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     updated_posts = []
     created_posts = []
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
       updated_posts << { post_id: post_id, message: message }
@@ -242,10 +242,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:send_message) { |_text| }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     update_count = 0
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
     mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
@@ -273,7 +273,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "start enters main loop before exiting" do
     runner = Earl::Runner.new
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     mm.define_singleton_method(:connect) { }
 
     # Set shutting_down after a brief delay so the loop runs at least once
@@ -284,20 +284,20 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     assert_nothing_raised { runner.start }
   ensure
-    runner.instance_variable_get(:@idle_checker_thread)&.kill
+    runner.instance_variable_get(:@app_state).idle_checker_thread&.kill
   end
 
   test "message handler calls enqueue_message for allowed users" do
     runner = Earl::Runner.new
 
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     runner.send(:setup_message_handler)
-    callback = mm.instance_variable_get(:@on_message)
+    callback = mm.instance_variable_get(:@callbacks).on_message
 
     sent_text = nil
     mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
     mm.define_singleton_method(:send_typing) { |**_args| }
 
     callback.call(sender_name: "alice", thread_id: "thread-12345678", text: "Hi Earl", post_id: "post-1", channel_id: "channel-456")
@@ -322,9 +322,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:stats) { stats }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "notif-1" } }
 
@@ -350,9 +350,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     sent_text = nil
     mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
     runner.send(:enqueue_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "hello", channel_id: nil, sender_name: nil))
@@ -376,9 +376,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:stats) { stats }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "notif-1" } }
 
@@ -396,18 +396,18 @@ class Earl::RunnerTest < ActiveSupport::TestCase
   test "message handler ignores non-allowed users" do
     runner = Earl::Runner.new
 
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     runner.send(:setup_message_handler)
 
     # Get the callback that was registered
-    callback = mm.instance_variable_get(:@on_message)
+    callback = mm.instance_variable_get(:@callbacks).on_message
 
     # Mock the session_manager to ensure it's never called for non-allowed user
     session_created = false
     mock_manager = Object.new
     mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| session_created = true }
     mock_manager.define_singleton_method(:touch) { |_id| }
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     callback.call(sender_name: "eve", thread_id: "thread-1", text: "Hi", post_id: "post-1", channel_id: "channel-456")
 
@@ -418,7 +418,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     runner = Earl::Runner.new
 
     executed_command = nil
-    executor = runner.instance_variable_get(:@command_executor)
+    executor = runner.instance_variable_get(:@services).command_executor
     executor.define_singleton_method(:execute) do |command, thread_id:, channel_id:|
       executed_command = command
     end
@@ -435,9 +435,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     sent_text = nil
     mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
     runner.send(:handle_incoming_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "hello", channel_id: "channel-456", sender_name: nil))
@@ -448,10 +448,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "setup_reaction_handler registers callback with mattermost" do
     runner = Earl::Runner.new
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
 
     runner.send(:setup_reaction_handler)
-    assert_not_nil mm.instance_variable_get(:@on_reaction)
+    assert_not_nil mm.instance_variable_get(:@callbacks).on_reaction
   end
 
   test "on_tool_use callback delegates to question_handler" do
@@ -466,9 +466,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:send_message) { |_text| }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
     runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
@@ -490,10 +490,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:send_message) { |_text| }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     created_posts = []
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
       created_posts << { message: message }
@@ -501,7 +501,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     end
 
     question_handler_called = false
-    handler = runner.instance_variable_get(:@question_handler)
+    handler = runner.instance_variable_get(:@services).question_handler
     handler.define_singleton_method(:handle_tool_use) { |**_args| question_handler_called = true; nil }
 
     runner.send(:process_message, Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil, sender_name: nil))
@@ -521,7 +521,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     runner = Earl::Runner.new
 
     # Mock get_user to return a valid allowed username
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
 
     # No pending questions, so reaction handling returns nil
@@ -530,14 +530,14 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     end
   end
 
-  test "find_thread_for_question returns nil" do
+  test "question_threads returns nil for unknown tool_use_id" do
     runner = Earl::Runner.new
-    assert_nil runner.send(:find_thread_for_question, "tu-1")
+    assert_nil runner.instance_variable_get(:@responses).question_threads["tu-1"]
   end
 
   test "resolve_working_dir uses command executor override first" do
     runner = Earl::Runner.new
-    executor = runner.instance_variable_get(:@command_executor)
+    executor = runner.instance_variable_get(:@services).command_executor
 
     # Set a working dir via the executor
     executor.instance_variable_get(:@working_dirs)["thread-1"] = "/custom/path"
@@ -571,10 +571,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:stats) { stats }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     updated_posts = []
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
       updated_posts << { post_id: post_id, message: message }
@@ -612,10 +612,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:stats) { stats }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     updated_posts = []
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
       updated_posts << { post_id: post_id, message: message }
@@ -647,8 +647,8 @@ class Earl::RunnerTest < ActiveSupport::TestCase
   test "configure_channels uses multi-channel when multiple channels configured" do
     ENV["EARL_CHANNELS"] = "chan1:/path1,chan2:/path2"
     runner = Earl::Runner.new
-    mm = runner.instance_variable_get(:@mattermost)
-    channel_ids = mm.instance_variable_get(:@channel_ids)
+    mm = runner.instance_variable_get(:@services).mattermost
+    channel_ids = mm.instance_variable_get(:@connection).channel_ids
     assert channel_ids.size > 1
   end
 
@@ -680,7 +680,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     runner = Earl::Runner.new
 
     executed = false
-    executor = runner.instance_variable_get(:@command_executor)
+    executor = runner.instance_variable_get(:@services).command_executor
     executor.define_singleton_method(:execute) { |*_args, **_kwargs| executed = true }
 
     # "!unknown_thing" is command-like but CommandParser.parse returns nil
@@ -692,10 +692,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "handle_reaction returns early when question handler returns nil result" do
     runner = Earl::Runner.new
-    handler = runner.instance_variable_get(:@question_handler)
+    handler = runner.instance_variable_get(:@services).question_handler
     handler.define_singleton_method(:handle_reaction) { |**_args| nil }
 
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
 
     assert_nothing_raised do
@@ -705,10 +705,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "handle_reaction returns early when find_thread returns nil" do
     runner = Earl::Runner.new
-    handler = runner.instance_variable_get(:@question_handler)
+    handler = runner.instance_variable_get(:@services).question_handler
     handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
 
     # @question_threads is empty, so find_thread_for_question returns nil
@@ -729,9 +729,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:send_message) { |_text| }
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
       { "id" => "question-post-1" }
@@ -758,7 +758,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     })
 
     # Verify that question_threads was populated
-    question_threads = runner.instance_variable_get(:@question_threads)
+    question_threads = runner.instance_variable_get(:@responses).question_threads
     assert_equal "thread-12345678", question_threads["tu-99"]
   end
 
@@ -768,9 +768,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_manager = Object.new
     mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| raise "session creation failed" }
     mock_manager.define_singleton_method(:touch) { |_id| }
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
 
     # Claim the thread first
@@ -804,9 +804,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     end
 
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
 
@@ -819,13 +819,13 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert queue.try_claim("thread-12345678"), "Queue claim should have been released after dead session"
 
     # Active response should be cleaned up
-    assert_nil runner.instance_variable_get(:@active_responses)["thread-12345678"]
+    assert_nil runner.instance_variable_get(:@responses).active_responses["thread-12345678"]
   end
 
-  test "find_thread_for_question returns thread_id for known tool_use_id" do
+  test "question_threads returns thread_id for known tool_use_id" do
     runner = Earl::Runner.new
-    runner.instance_variable_get(:@question_threads)["tu-42"] = "thread-abcd1234"
-    assert_equal "thread-abcd1234", runner.send(:find_thread_for_question, "tu-42")
+    runner.instance_variable_get(:@responses).question_threads["tu-42"] = "thread-abcd1234"
+    assert_equal "thread-abcd1234", runner.instance_variable_get(:@responses).question_threads["tu-42"]
   end
 
   test "stop_if_idle skips paused sessions" do
@@ -836,7 +836,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     )
 
     stopped = false
-    manager = runner.instance_variable_get(:@session_manager)
+    manager = runner.instance_variable_get(:@services).session_manager
     manager.define_singleton_method(:stop_session) { |_id| stopped = true }
 
     runner.send(:stop_if_idle, "thread-12345678", persisted)
@@ -851,7 +851,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     )
 
     stopped = false
-    manager = runner.instance_variable_get(:@session_manager)
+    manager = runner.instance_variable_get(:@services).session_manager
     manager.define_singleton_method(:stop_session) { |_id| stopped = true }
 
     runner.send(:stop_if_idle, "thread-12345678", persisted)
@@ -866,7 +866,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     )
 
     stopped = false
-    manager = runner.instance_variable_get(:@session_manager)
+    manager = runner.instance_variable_get(:@services).session_manager
     manager.define_singleton_method(:stop_session) { |_id| stopped = true }
 
     runner.send(:stop_if_idle, "thread-12345678", persisted)
@@ -881,7 +881,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     )
 
     stopped = false
-    manager = runner.instance_variable_get(:@session_manager)
+    manager = runner.instance_variable_get(:@services).session_manager
     manager.define_singleton_method(:stop_session) { |_id| stopped = true }
 
     assert_nothing_raised { runner.send(:stop_if_idle, "thread-12345678", persisted) }
@@ -890,20 +890,20 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "handle_reaction sends answer when thread found and session exists" do
     runner = Earl::Runner.new
-    handler = runner.instance_variable_get(:@question_handler)
+    handler = runner.instance_variable_get(:@services).question_handler
     handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
     # Populate @question_threads to simulate a prior tool_use capture
-    runner.instance_variable_get(:@question_threads)["tu-1"] = "thread-12345678"
+    runner.instance_variable_get(:@responses).question_threads["tu-1"] = "thread-12345678"
 
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
 
     sent_messages = []
     mock_session = Object.new
     mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
 
-    manager = runner.instance_variable_get(:@session_manager)
+    manager = runner.instance_variable_get(:@services).session_manager
     manager.define_singleton_method(:get) { |_id| mock_session }
 
     runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
@@ -912,17 +912,17 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "handle_reaction skips send when session is nil" do
     runner = Earl::Runner.new
-    handler = runner.instance_variable_get(:@question_handler)
+    handler = runner.instance_variable_get(:@services).question_handler
     handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
     # Populate @question_threads to simulate a prior tool_use capture
-    runner.instance_variable_get(:@question_threads)["tu-1"] = "thread-12345678"
+    runner.instance_variable_get(:@responses).question_threads["tu-1"] = "thread-12345678"
 
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
 
     # session_manager.get returns nil
-    manager = runner.instance_variable_get(:@session_manager)
+    manager = runner.instance_variable_get(:@services).session_manager
     manager.define_singleton_method(:get) { |_id| nil }
 
     # Should not raise (session&.send_message with nil session)
@@ -934,10 +934,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
   test "handle_reaction blocks non-allowed users" do
     runner = Earl::Runner.new
 
-    mm = runner.instance_variable_get(:@mattermost)
+    mm = runner.instance_variable_get(:@services).mattermost
     mm.define_singleton_method(:get_user) { |user_id:| { "username" => "eve" } }
 
-    handler = runner.instance_variable_get(:@question_handler)
+    handler = runner.instance_variable_get(:@services).question_handler
     handler_called = false
     handler.define_singleton_method(:handle_reaction) { |**_args| handler_called = true; nil }
 
@@ -949,7 +949,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     ENV["EARL_ALLOWED_USERS"] = ""
     runner = Earl::Runner.new
 
-    handler = runner.instance_variable_get(:@question_handler)
+    handler = runner.instance_variable_get(:@services).question_handler
     handler.define_singleton_method(:handle_reaction) { |**_args| nil }
 
     # Should not need get_user when allowlist is empty
@@ -963,10 +963,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
     # Create a thread that mimics the idle checker
     thread = Thread.new { sleep 60 }
-    runner.instance_variable_set(:@idle_checker_thread, thread)
+    runner.instance_variable_get(:@app_state).idle_checker_thread = thread
 
     # Stub session_manager.pause_all
-    manager = runner.instance_variable_get(:@session_manager)
+    manager = runner.instance_variable_get(:@services).session_manager
     manager.define_singleton_method(:pause_all) { }
 
     runner.send(:shutdown)
@@ -976,9 +976,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   test "shutdown works when idle_checker_thread is nil" do
     runner = Earl::Runner.new
-    runner.instance_variable_set(:@idle_checker_thread, nil)
+    runner.instance_variable_get(:@app_state).idle_checker_thread = nil
 
-    manager = runner.instance_variable_get(:@session_manager)
+    manager = runner.instance_variable_get(:@services).session_manager
     manager.define_singleton_method(:pause_all) { }
 
     # Should not raise even with nil thread
@@ -997,9 +997,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| mock_session }
     mock_manager.define_singleton_method(:touch) { |_id| }
     mock_manager.define_singleton_method(:save_stats) { |_id| }
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:get_thread_posts) do |_thread_id|
       [
@@ -1029,9 +1029,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| mock_session }
     mock_manager.define_singleton_method(:touch) { |_id| }
     mock_manager.define_singleton_method(:save_stats) { |_id| }
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:get_thread_posts) { |_thread_id| [] }
 
@@ -1047,10 +1047,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     sent_text = nil
     mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
     mock_manager = build_mock_manager(mock_session)
-    runner.instance_variable_set(:@session_manager, mock_manager)
+    runner.instance_variable_get(:@services).session_manager = mock_manager
 
     thread_posts_called = false
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:send_typing) { |**_args| }
     mock_mm.define_singleton_method(:get_thread_posts) { |_id| thread_posts_called = true; [] }
 
@@ -1064,7 +1064,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
   test "build_contextual_message excludes current message from transcript" do
     runner = Earl::Runner.new
 
-    mock_mm = runner.instance_variable_get(:@mattermost)
+    mock_mm = runner.instance_variable_get(:@services).mattermost
     mock_mm.define_singleton_method(:get_thread_posts) do |_thread_id|
       [
         { sender: "user", message: "!help", is_bot: false },
@@ -1084,7 +1084,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
   test "check_idle_sessions iterates persisted sessions" do
     runner = Earl::Runner.new
     store = Earl::SessionStore.new(path: File.join(Dir.tmpdir, "earl-test-idle-#{SecureRandom.hex(4)}.json"))
-    runner.instance_variable_set(:@session_store, store)
+    runner.instance_variable_get(:@services).session_store = store
 
     session = Earl::SessionStore::PersistedSession.new(
       claude_session_id: "sess-1", channel_id: "ch-1", working_dir: "/tmp",

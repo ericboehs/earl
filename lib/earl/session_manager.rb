@@ -110,7 +110,7 @@ module Earl
 
       def apply_stats_to_persisted(persisted, session)
         stats = session.stats
-        persisted.total_cost = session.total_cost
+        persisted.total_cost = stats.total_cost
         persisted.total_input_tokens = stats.total_input_tokens
         persisted.total_output_tokens = stats.total_output_tokens
       end
@@ -193,7 +193,7 @@ module Earl
         last_activity_at: now,
         is_paused: paused == :paused,
         message_count: 0,
-        total_cost: session.total_cost,
+        total_cost: stats.total_cost,
         total_input_tokens: stats.total_input_tokens,
         total_output_tokens: stats.total_output_tokens
       )

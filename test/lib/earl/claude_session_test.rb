@@ -21,7 +21,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
   test "total_cost starts at zero" do
     session = Earl::ClaudeSession.new
-    assert_equal 0.0, session.total_cost
+    assert_equal 0.0, session.stats.total_cost
   end
 
   test "stats starts with zero tokens" do
@@ -196,7 +196,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     event = { "type" => "result", "total_cost_usd" => 0.123, "subtype" => "success" }
     session.send(:handle_event, event)
 
-    assert_equal 0.123, session.total_cost
+    assert_equal 0.123, session.stats.total_cost
   end
 
   test "handle_event parses usage from result events" do
@@ -309,7 +309,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     event = { "type" => "result", "subtype" => "success" }
     session.send(:handle_event, event)
 
-    assert_equal 0.0, session.total_cost
+    assert_equal 0.0, session.stats.total_cost
   end
 
   test "handle_event handles system events without error" do
@@ -354,7 +354,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
     # Use cat as a process that stays alive and echoes back
     stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
-    process_state = session.instance_variable_get(:@process_state)
+    process_state = session.instance_variable_get(:@runtime).process_state
     process_state.stdin = stdin
     process_state.process = wait_thread
 
@@ -378,7 +378,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
     # Use a process that stays alive
     stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
-    process_state = session.instance_variable_get(:@process_state)
+    process_state = session.instance_variable_get(:@runtime).process_state
     process_state.stdin = stdin
     process_state.process = wait_thread
 
@@ -402,7 +402,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
     # Use a process that stays alive but close stdin
     stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
-    process_state = session.instance_variable_get(:@process_state)
+    process_state = session.instance_variable_get(:@runtime).process_state
     process_state.stdin = stdin
     process_state.process = wait_thread
     stdin.close
@@ -424,7 +424,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     stdin, _stdout, _stderr, wait_thread = Open3.popen3("true")
     wait_thread.value # wait for it to exit
 
-    process_state = session.instance_variable_get(:@process_state)
+    process_state = session.instance_variable_get(:@runtime).process_state
     process_state.process = wait_thread
     process_state.stdin = stdin
 
@@ -494,7 +494,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
       "ruby", "-e", "trap('INT'){}; loop { sleep 1 rescue nil }"
     )
     sleep 0.3 # let child process start and set up trap handler
-    process_state = session.instance_variable_get(:@process_state)
+    process_state = session.instance_variable_get(:@runtime).process_state
     process_state.process = wait_thread
     process_state.stdin = stdin
 
@@ -514,7 +514,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     # sleep doesn't trap INT so it dies from the first signal
     stdin, stdout, stderr, wait_thread = Open3.popen3("sleep", "60")
     sleep 0.2
-    process_state = session.instance_variable_get(:@process_state)
+    process_state = session.instance_variable_get(:@runtime).process_state
     process_state.process = wait_thread
     process_state.stdin = stdin
 
@@ -538,7 +538,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     reader.join
     stderr_t.join
 
-    process_state = session.instance_variable_get(:@process_state)
+    process_state = session.instance_variable_get(:@runtime).process_state
     process_state.process = wait_thread
     # Leave stdin as nil (default) to cover &. nil branch
     process_state.reader_thread = reader
@@ -568,7 +568,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
     event = { "type" => "result", "total_cost_usd" => 0.05, "subtype" => "success" }
     assert_nothing_raised { session.send(:handle_event, event) }
-    assert_equal 0.05, session.total_cost
+    assert_equal 0.05, session.stats.total_cost
   end
 
   # --- CLI args tests ---
@@ -683,7 +683,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
     # Use cat as a process that stays alive
     stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
-    process_state = session.instance_variable_get(:@process_state)
+    process_state = session.instance_variable_get(:@runtime).process_state
     process_state.stdin = stdin
     process_state.process = wait_thread
 

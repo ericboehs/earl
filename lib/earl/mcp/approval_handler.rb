@@ -126,126 +126,136 @@ module Earl
         end
       end
 
-      def wait_for_reaction(post_id, request)
-        timeout_sec = @config.permission_timeout_ms / 1000.0
-        deadline = Time.now + timeout_sec
-
-        ws = connect_websocket
-        unless ws
-          log(:error, "WebSocket connection failed, denying permission")
-          return deny_result("WebSocket connection failed")
-        end
-
-        result = poll_for_reaction(ws, post_id, request, deadline)
-
-        result || deny_result("Timed out waiting for approval")
-      ensure
-        begin
-          ws&.close
-        rescue StandardError
-          nil
-        end
-      end
-
-      def connect_websocket
-        ws = WebSocket::Client::Simple.connect(@config.websocket_url)
-        token = @config.platform_token
-        ws_ref = ws
-        ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
-        ws
-      rescue StandardError => error
-        log(:error, "MCP WebSocket connect failed: #{error.message}")
-        nil
-      end
-
-      def poll_for_reaction(ws, post_id, request, deadline)
-        reaction_queue = Queue.new
-
-        ws&.on(:message) do |msg|
-          next unless msg.data && !msg.data.empty?
-
-          begin
-            event = JSON.parse(msg.data)
-            if event["event"] == "reaction_added"
-              reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
-              if reaction_data["post_id"] == post_id
-                reaction_queue.push(reaction_data)
-              end
-            end
-          rescue JSON::ParserError
-            # Skip unparsable WebSocket frames (e.g., auth ack, malformed events)
-            log(:debug, "MCP approval: skipped unparsable WebSocket message")
-          end
-        end
-
-        loop do
-          remaining = deadline - Time.now
-          return nil if remaining <= 0
-
-          reaction = begin
-            reaction_queue.pop(true)
-          rescue ThreadError
-            sleep 0.5
-            nil
-          end
-
-          next unless reaction
-          next if reaction["user_id"] == @config.platform_bot_id
-          next unless allowed_reactor?(reaction["user_id"])
-
-          return process_reaction(reaction["emoji_name"], request)
-        end
-      end
-
-      def allowed_reactor?(user_id)
-        return true if @config.allowed_users.empty?
-
-        response = @api.get("/users/#{user_id}")
-        return false unless response.is_a?(Net::HTTPSuccess)
-
-        user = JSON.parse(response.body)
-        @config.allowed_users.include?(user["username"])
-      end
-
-      def process_reaction(emoji_name, request)
-        if Reactions::APPROVE.include?(emoji_name)
-          if emoji_name == "white_check_mark"
-            @mutex.synchronize { @allowed_tools.add(request.tool_name) }
-            save_allowed_tools
-          end
-          allow_result(request.input)
-        elsif Reactions::DENY.include?(emoji_name)
-          deny_result("Denied by user")
-        end
-      end
-
       def delete_permission_post(post_id)
         @api.delete("/posts/#{post_id}")
       rescue StandardError => error
         log(:warn, "Failed to delete permission post #{post_id}: #{error.message}")
       end
 
-      # Persistence for per-tool allowed list
+      # WebSocket-based reaction polling for permission decisions.
+      module ReactionPolling
+        private
 
-      def load_allowed_tools
-        path = allowed_tools_path
-        return Set.new unless File.exist?(path)
+        def wait_for_reaction(post_id, request)
+          timeout_sec = @config.permission_timeout_ms / 1000.0
+          deadline = Time.now + timeout_sec
 
-        Set.new(JSON.parse(File.read(path)))
-      rescue JSON::ParserError, Errno::ENOENT
-        Set.new
+          ws = connect_websocket
+          unless ws
+            log(:error, "WebSocket connection failed, denying permission")
+            return deny_result("WebSocket connection failed")
+          end
+
+          result = poll_for_reaction(ws, post_id, request, deadline)
+
+          result || deny_result("Timed out waiting for approval")
+        ensure
+          begin
+            ws&.close
+          rescue StandardError
+            nil
+          end
+        end
+
+        def connect_websocket
+          ws = WebSocket::Client::Simple.connect(@config.websocket_url)
+          token = @config.platform_token
+          ws_ref = ws
+          ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
+          ws
+        rescue StandardError => error
+          log(:error, "MCP WebSocket connect failed: #{error.message}")
+          nil
+        end
+
+        def poll_for_reaction(ws, post_id, request, deadline)
+          reaction_queue = Queue.new
+
+          ws&.on(:message) do |msg|
+            next unless msg.data && !msg.data.empty?
+
+            begin
+              event = JSON.parse(msg.data)
+              if event["event"] == "reaction_added"
+                reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
+                if reaction_data["post_id"] == post_id
+                  reaction_queue.push(reaction_data)
+                end
+              end
+            rescue JSON::ParserError
+              log(:debug, "MCP approval: skipped unparsable WebSocket message")
+            end
+          end
+
+          loop do
+            remaining = deadline - Time.now
+            return nil if remaining <= 0
+
+            reaction = begin
+              reaction_queue.pop(true)
+            rescue ThreadError
+              sleep 0.5
+              nil
+            end
+
+            next unless reaction
+            next if reaction["user_id"] == @config.platform_bot_id
+            next unless allowed_reactor?(reaction["user_id"])
+
+            return process_reaction(reaction["emoji_name"], request)
+          end
+        end
+
+        def allowed_reactor?(user_id)
+          return true if @config.allowed_users.empty?
+
+          response = @api.get("/users/#{user_id}")
+          return false unless response.is_a?(Net::HTTPSuccess)
+
+          user = JSON.parse(response.body)
+          @config.allowed_users.include?(user["username"])
+        end
+
+        def process_reaction(emoji_name, request)
+          if Reactions::APPROVE.include?(emoji_name)
+            if emoji_name == "white_check_mark"
+              @mutex.synchronize { @allowed_tools.add(request.tool_name) }
+              save_allowed_tools
+            end
+            allow_result(request.input)
+          elsif Reactions::DENY.include?(emoji_name)
+            deny_result("Denied by user")
+          end
+        end
       end
 
-      def save_allowed_tools
-        FileUtils.mkdir_p(ALLOWED_TOOLS_DIR)
-        File.write(allowed_tools_path, JSON.generate(@allowed_tools.to_a))
-      rescue StandardError => error
-        log(:warn, "Failed to save allowed tools: #{error.message}")
+      # Persistence for per-tool allowed list.
+      module AllowedToolsPersistence
+        private
+
+        def load_allowed_tools
+          path = allowed_tools_path
+          return Set.new unless File.exist?(path)
+
+          Set.new(JSON.parse(File.read(path)))
+        rescue JSON::ParserError, Errno::ENOENT
+          Set.new
+        end
+
+        def save_allowed_tools
+          FileUtils.mkdir_p(ALLOWED_TOOLS_DIR)
+          File.write(allowed_tools_path, JSON.generate(@allowed_tools.to_a))
+        rescue StandardError => error
+          log(:warn, "Failed to save allowed tools: #{error.message}")
+        end
+
+        def allowed_tools_path
+          File.join(ALLOWED_TOOLS_DIR, "#{@config.platform_thread_id}.json")
+        end
       end
 
-      def allowed_tools_path
-        File.join(ALLOWED_TOOLS_DIR, "#{@config.platform_thread_id}.json")
-      end
+      include ReactionPolling
+      include AllowedToolsPersistence
     end
   end
 end

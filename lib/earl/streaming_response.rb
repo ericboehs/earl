@@ -7,18 +7,18 @@ module Earl
     include Logging
     include ToolInputFormatter
     DEBOUNCE_MS = 300
-    TOOL_PREFIXES = ToolInputFormatter::TOOL_ICONS.values.uniq.concat([ "⚙️" ]).freeze
+    TOOL_PREFIXES = ToolInputFormatter::TOOL_ICONS.values.uniq.concat([ "\u2699\uFE0F" ]).freeze
 
     # Holds the Mattermost thread and channel context for posting.
     Context = Struct.new(:thread_id, :mattermost, :channel_id, keyword_init: true)
-    # Tracks the reply post lifecycle: ID, failure state, text, and debounce timing.
-    PostState = Struct.new(:reply_post_id, :create_failed, :full_text, :last_update_at, :debounce_timer, keyword_init: true)
+    # Tracks the reply post lifecycle: ID, failure state, text, debounce timing, and typing thread.
+    PostState = Struct.new(:reply_post_id, :create_failed, :full_text, :last_update_at,
+                           :debounce_timer, :typing_thread, keyword_init: true)
 
     def initialize(thread_id:, mattermost:, channel_id:)
       @context = Context.new(thread_id: thread_id, mattermost: mattermost, channel_id: channel_id)
       @post_state = PostState.new(create_failed: false, full_text: "", last_update_at: Time.now)
       @segments = []
-      @typing_thread = nil
       @mutex = Mutex.new
     end
 
@@ -27,7 +27,7 @@ module Earl
     end
 
     def start_typing
-      @typing_thread = Thread.new { typing_loop }
+      @post_state.typing_thread = Thread.new { typing_loop }
     end
 
     def on_text(text)
@@ -52,8 +52,8 @@ module Earl
     end
 
     def stop_typing
-      @typing_thread&.kill
-      @typing_thread = nil
+      @post_state.typing_thread&.kill
+      @post_state.typing_thread = nil
     end
 
     private
@@ -82,89 +82,100 @@ module Earl
       schedule_update
     end
 
-    def create_initial_post(text)
-      result = @context.mattermost.create_post(channel_id: @context.channel_id, message: text, root_id: @context.thread_id)
-      post_id = result["id"]
-      return handle_create_failure unless post_id
+    # Post creation and update lifecycle.
+    module PostUpdating
+      private
 
-      @post_state.reply_post_id = post_id
-      @post_state.last_update_at = Time.now
-    end
+      def create_initial_post(text)
+        result = @context.mattermost.create_post(channel_id: @context.channel_id, message: text, root_id: @context.thread_id)
+        post_id = result["id"]
+        return handle_create_failure unless post_id
 
-    def handle_create_failure
-      @post_state.create_failed = true
-      log(:error, "Failed to create post for thread #{short_id} — subsequent text will be dropped")
-    end
+        @post_state.reply_post_id = post_id
+        @post_state.last_update_at = Time.now
+      end
 
-    def schedule_update
-      elapsed_ms = (Time.now - @post_state.last_update_at) * 1000
+      def handle_create_failure
+        @post_state.create_failed = true
+        log(:error, "Failed to create post for thread #{short_id} \u2014 subsequent text will be dropped")
+      end
 
-      if elapsed_ms >= DEBOUNCE_MS
-        update_post
-      else
-        start_debounce_timer
+      def schedule_update
+        elapsed_ms = (Time.now - @post_state.last_update_at) * 1000
+
+        if elapsed_ms >= DEBOUNCE_MS
+          update_post
+        else
+          start_debounce_timer
+        end
+      end
+
+      def start_debounce_timer
+        return if @post_state.debounce_timer
+
+        @post_state.debounce_timer = Thread.new do
+          sleep DEBOUNCE_MS / 1000.0
+          @mutex.synchronize { update_post }
+        end
+      end
+
+      def update_post
+        @post_state.debounce_timer = nil
+        @context.mattermost.update_post(post_id: @post_state.reply_post_id, message: @post_state.full_text)
+        @post_state.last_update_at = Time.now
       end
     end
 
-    def start_debounce_timer
-      return if @post_state.debounce_timer
+    # Finalization: completes the response with stats and handles multi-segment posts.
+    module Finalization
+      private
 
-      @post_state.debounce_timer = Thread.new do
-        sleep DEBOUNCE_MS / 1000.0
-        @mutex.synchronize { update_post }
+      def finalize(stats_line)
+        @post_state.debounce_timer&.join(1)
+        stop_typing
+        return if @post_state.full_text.empty? && !@post_state.reply_post_id
+
+        final_text = build_final_text(stats_line)
+
+        if only_text_segments?
+          @post_state.full_text = final_text
+          update_post if @post_state.reply_post_id
+        else
+          remove_last_text_from_streamed_post
+          create_notification_post(final_text)
+        end
+      end
+
+      def only_text_segments?
+        @segments.none? { |segment| tool_segment?(segment) }
+      end
+
+      def build_final_text(stats_line)
+        last_text = @segments.reverse.find { |segment| !tool_segment?(segment) }
+        text = last_text || @post_state.full_text
+        stats_line ? "#{text}\n\n---\n#{stats_line}" : text
+      end
+
+      def remove_last_text_from_streamed_post
+        return unless @post_state.reply_post_id
+
+        last_text_index = @segments.rindex { |segment| !tool_segment?(segment) }
+        return unless last_text_index
+
+        @segments.delete_at(last_text_index)
+        @post_state.full_text = @segments.join("\n\n")
+        update_post unless @post_state.full_text.empty?
+      end
+
+      def create_notification_post(text)
+        @context.mattermost.create_post(
+          channel_id: @context.channel_id, message: text, root_id: @context.thread_id
+        )
       end
     end
 
-    def update_post
-      @post_state.debounce_timer = nil
-      @context.mattermost.update_post(post_id: @post_state.reply_post_id, message: @post_state.full_text)
-      @post_state.last_update_at = Time.now
-    end
-
-    def finalize(stats_line)
-      @post_state.debounce_timer&.join(1) # Wait for any pending debounce
-      stop_typing
-      return if @post_state.full_text.empty? && !@post_state.reply_post_id
-
-      final_text = build_final_text(stats_line)
-
-      if only_text_segments?
-        # Simple response (no tool use) — edit existing post with stats footer
-        @post_state.full_text = final_text
-        update_post if @post_state.reply_post_id
-      else
-        # Multi-segment response — pull final answer out into a new post
-        remove_last_text_from_streamed_post
-        create_notification_post(final_text)
-      end
-    end
-
-    def only_text_segments?
-      @segments.none? { |segment| tool_segment?(segment) }
-    end
-
-    def build_final_text(stats_line)
-      last_text = @segments.reverse.find { |segment| !tool_segment?(segment) }
-      text = last_text || @post_state.full_text
-      stats_line ? "#{text}\n\n---\n#{stats_line}" : text
-    end
-
-    def remove_last_text_from_streamed_post
-      return unless @post_state.reply_post_id
-
-      last_text_index = @segments.rindex { |segment| !tool_segment?(segment) }
-      return unless last_text_index
-
-      @segments.delete_at(last_text_index)
-      @post_state.full_text = @segments.join("\n\n")
-      update_post unless @post_state.full_text.empty?
-    end
-
-    def create_notification_post(text)
-      @context.mattermost.create_post(
-        channel_id: @context.channel_id, message: text, root_id: @context.thread_id
-      )
-    end
+    include PostUpdating
+    include Finalization
 
     def handle_tool_use_display(tool_use)
       return if tool_use[:name] == "AskUserQuestion"
