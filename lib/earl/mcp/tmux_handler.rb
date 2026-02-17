@@ -76,9 +76,35 @@ module Earl
         :idle
       end
 
-      # Placeholder stubs for remaining actions (implemented in later tasks)
-      def handle_capture(_arguments) = text_content("Not yet implemented")
-      def handle_status(_arguments) = text_content("Not yet implemented")
+      # --- capture ---
+
+      def handle_capture(arguments)
+        target = arguments["target"]
+        return text_content("Error: target is required for capture") unless target
+
+        lines = arguments.fetch("lines", 100).to_i
+        output = @tmux.capture_pane(target, lines: lines)
+        text_content("**`#{target}` output (last #{lines} lines):**\n```\n#{output}\n```")
+      rescue Tmux::NotFound
+        text_content("Error: session/pane '#{target}' not found")
+      rescue Tmux::Error => error
+        text_content("Error: #{error.message}")
+      end
+
+      # --- status ---
+
+      def handle_status(arguments)
+        target = arguments["target"]
+        return text_content("Error: target is required for status") unless target
+
+        output = @tmux.capture_pane(target, lines: 200)
+        status_label = PANE_STATUS_LABELS.fetch(detect_pane_status(target), "Idle")
+        text_content("**`#{target}` status: #{status_label}**\n```\n#{output}\n```")
+      rescue Tmux::NotFound
+        text_content("Error: session/pane '#{target}' not found")
+      rescue Tmux::Error => error
+        text_content("Error: #{error.message}")
+      end
       def handle_approve(_arguments) = text_content("Not yet implemented")
       def handle_deny(_arguments) = text_content("Not yet implemented")
       def handle_send_input(_arguments) = text_content("Not yet implemented")

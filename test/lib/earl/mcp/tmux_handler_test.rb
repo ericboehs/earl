@@ -160,6 +160,45 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_includes text, "Idle"
   end
 
+  # --- capture ---
+
+  test "capture returns error when target is missing" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "capture" })
+    text = result[:content].first[:text]
+    assert_includes text, "target is required"
+  end
+
+  test "capture returns pane output" do
+    @tmux.capture_pane_result = "line 1\nline 2\nline 3\n"
+    result = @handler.call("manage_tmux_sessions", { "action" => "capture", "target" => "code:1.0" })
+    text = result[:content].first[:text]
+    assert_includes text, "line 1"
+    assert_includes text, "line 3"
+  end
+
+  test "capture returns error for missing session" do
+    @tmux.capture_pane_error = Earl::Tmux::NotFound.new("not found")
+    result = @handler.call("manage_tmux_sessions", { "action" => "capture", "target" => "missing:1.0" })
+    text = result[:content].first[:text]
+    assert_includes text, "not found"
+  end
+
+  # --- status ---
+
+  test "status returns error when target is missing" do
+    result = @handler.call("manage_tmux_sessions", { "action" => "status" })
+    text = result[:content].first[:text]
+    assert_includes text, "target is required"
+  end
+
+  test "status returns pane output with status label" do
+    @tmux.capture_pane_result = "detailed output\n"
+    result = @handler.call("manage_tmux_sessions", { "action" => "status", "target" => "code:1.0" })
+    text = result[:content].first[:text]
+    assert_includes text, "detailed output"
+    assert_includes text, "status"
+  end
+
   # --- Mock helpers ---
 
   private

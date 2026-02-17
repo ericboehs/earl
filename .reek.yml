@@ -13,6 +13,7 @@ detectors:
       - Earl::Mcp::ApprovalHandler#handles?    # Handler interface method — intentionally stateless
       - Earl::Mcp::MemoryHandler#handles?      # Handler interface method — intentionally stateless
       - Earl::Mcp::HeartbeatHandler#handles?   # Handler interface method — intentionally stateless
+      - Earl::Mcp::TmuxHandler#handles?       # Handler interface method — intentionally stateless
 
   IrresponsibleModule:
     exclude:
@@ -45,6 +46,7 @@ detectors:
       - Earl::Mcp::ApprovalHandler # Permission flow: post, react, poll, persist + handler interface
       - Earl::HeartbeatScheduler # Lifecycle + cron + state management + YAML I/O
       - Earl::Mcp::HeartbeatHandler # CRUD operations + builder/formatter + MCP handler interface
+      - Earl::Mcp::TmuxHandler     # One method per action (list/capture/status/approve/deny/send/spawn/kill) + helpers
 
   DataClump:
     exclude:
@@ -87,6 +89,9 @@ detectors:
       - Earl::StreamingResponse#extract_tool_detail       # Case dispatch across tool types
       - Earl::Mattermost::ApiClient#send_request          # Retry loop with connection setup
       - Earl::Mcp::Server#tools_call_response             # Extract params, call handler, format response
+      - Earl::Mcp::TmuxHandler#handle_list                   # Guard checks + list + filter + format
+      - Earl::Mcp::TmuxHandler#handle_capture                # Guard + capture + format + error handling
+      - Earl::Mcp::TmuxHandler#handle_status                 # Guard + capture + status detect + format + error handling
       - Earl::Tmux#list_sessions                           # Format + execute + parse tmux output
       - Earl::Tmux#list_panes                              # Format + execute + parse tmux output
       - Earl::Tmux#list_all_panes                          # Aggregate panes across sessions
@@ -130,6 +135,8 @@ detectors:
       - Earl::QuestionHandler#post_current_question                 # Reads question state fields
       - Earl::StreamingResponse#format_tool_use                     # Reads tool_use hash fields
       - Earl::TmuxMonitor::PollState#update_stall_count             # Reads entry hash fields
+      - Earl::Mcp::TmuxHandler#format_pane                          # Reads pane hash fields for formatting
+      - Earl::Mcp::TmuxHandler#detect_pane_status                   # Reads capture output to classify status
 
   ControlParameter:
     exclude:
@@ -144,6 +151,7 @@ detectors:
       - Earl::ToolInputFormatter#extract_tool_detail_from   # input nil-guard is defensive
       - Earl::TmuxMonitor#alert_for_state                   # state dispatches alert type
       - Earl::TmuxMonitor::PollState#no_pending_for?        # name filters pending interactions
+      - Earl::Mcp::TmuxHandler#call                        # name dispatches to action handler
 
   DuplicateMethodCall:
     exclude:
@@ -177,6 +185,7 @@ detectors:
       - Earl::Tmux#wait_for_text                              # Time.now called at start and deadline check
       - Earl::TmuxSessionStore#cleanup!                       # @mutex.synchronize in multiple branches
       - Earl::TmuxSessionStore#read_store                     # error.message in rescue
+      - Earl::Mcp::TmuxHandler#call                          # VALID_ACTIONS.join in two error messages
 
   NestedIterators:
     exclude:
