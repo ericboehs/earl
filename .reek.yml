@@ -94,6 +94,7 @@ detectors:
       - Earl::Mcp::TmuxHandler#handle_capture                # Guard + capture + format + error handling
       - Earl::Mcp::TmuxHandler#handle_status                 # Guard + capture + status detect + format + error handling
       - Earl::Mcp::TmuxHandler#handle_send_input              # Guard checks for target + text + send + format + error handling
+      - Earl::Mcp::TmuxHandler#handle_kill                     # Guard + kill + store cleanup + error handling
       - Earl::Mcp::TmuxHandler#handle_spawn                    # Validation guards + confirmation + create
       - Earl::Mcp::TmuxHandler#post_confirmation_request       # Build message + post + parse response
       - Earl::Mcp::TmuxHandler#connect_websocket               # WebSocket connect + authenticate
@@ -193,6 +194,7 @@ detectors:
       - Earl::TmuxSessionStore#cleanup!                       # @mutex.synchronize in multiple branches
       - Earl::TmuxSessionStore#read_store                     # error.message in rescue
       - Earl::Mcp::TmuxHandler#call                          # VALID_ACTIONS.join in two error messages
+      - Earl::Mcp::TmuxHandler#handle_kill                    # @tmux_store.delete in happy path + NotFound rescue via kill_tmux_session
       - Earl::Mcp::TmuxHandler#kill_tmux_session              # @tmux_store.delete in happy path + NotFound rescue
       - Earl::Mcp::TmuxHandler#poll_confirmation              # msg.data checks + reaction field access in WebSocket callback
 
