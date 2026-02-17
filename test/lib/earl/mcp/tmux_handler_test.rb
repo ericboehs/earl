@@ -286,7 +286,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_includes text, "prompt is required"
   end
 
-  test "spawn returns error when name contains dot" do
+  test "spawn returns error when session name contains dot" do
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "bad.name"
     })
@@ -294,12 +294,25 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_includes text, "cannot contain"
   end
 
-  test "spawn returns error when name contains colon" do
+  test "spawn returns error when session name contains colon" do
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "bad:name"
     })
     text = result[:content].first[:text]
     assert_includes text, "cannot contain"
+  end
+
+  test "spawn allows dot and colon in window name when session param provided" do
+    @tmux.session_exists_result = true
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| true }
+
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "window.with:chars",
+      "session" => "code"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "Spawned"
+    assert_equal 1, @tmux.created_windows.size
   end
 
   test "spawn returns error when session already exists" do
@@ -348,6 +361,19 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
     assert_equal 0, @tmux.created_sessions.size
     assert_equal 1, @tmux.created_windows.size
     assert_equal "code", @tmux.created_windows.first[:session]
+  end
+
+  test "spawn returns denied message when confirmation is rejected" do
+    @tmux.session_exists_result = false
+    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| false }
+
+    result = @handler.call("manage_tmux_sessions", {
+      "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "denied"
+    assert_equal 0, @tmux.created_sessions.size
+    assert_equal 0, @tmux_store.saved.size
   end
 
   test "spawn returns error when session param points to nonexistent session" do

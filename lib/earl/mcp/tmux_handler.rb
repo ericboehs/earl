@@ -72,8 +72,8 @@ module Earl
         "- `#{target}` — #{project} (#{PANE_STATUS_LABELS.fetch(status, 'Idle')})"
       end
 
-      def detect_pane_status(target)
-        output = @tmux.capture_pane(target, lines: 20)
+      def detect_pane_status(target, output: nil)
+        output ||= @tmux.capture_pane(target, lines: 20)
         return :permission if output.include?("Do you want to proceed?")
         return :active if output.include?("esc to interrupt")
 
@@ -89,6 +89,7 @@ module Earl
         return text_content("Error: target is required for capture") unless target
 
         lines = arguments.fetch("lines", 100).to_i
+        lines = [ lines, 1 ].max
         output = @tmux.capture_pane(target, lines: lines)
         text_content("**`#{target}` output (last #{lines} lines):**\n```\n#{output}\n```")
       rescue Tmux::NotFound
@@ -104,7 +105,7 @@ module Earl
         return text_content("Error: target is required for status") unless target
 
         output = @tmux.capture_pane(target, lines: 200)
-        status_label = PANE_STATUS_LABELS.fetch(detect_pane_status(target), "Idle")
+        status_label = PANE_STATUS_LABELS.fetch(detect_pane_status(target, output: output), "Idle")
         text_content("**`#{target}` status: #{status_label}**\n```\n#{output}\n```")
       rescue Tmux::NotFound
         text_content("Error: session/pane '#{target}' not found")
@@ -161,7 +162,9 @@ module Earl
 
         session = arguments["session"]
         name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}"
-        return text_content("Error: name '#{name}' cannot contain '.' or ':' (tmux reserved)") if name.match?(/[.:]/)
+        if session.nil? && name.match?(/[.:]/)
+          return text_content("Error: session name '#{name}' cannot contain '.' or ':' (tmux target delimiters)")
+        end
 
         working_dir = arguments["working_dir"]
         return text_content("Error: directory '#{working_dir}' not found") if working_dir && !Dir.exist?(working_dir)

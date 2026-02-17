@@ -232,6 +232,10 @@ detectors:
       - Earl::Mcp::TmuxHandler#request_spawn_confirmation    # Confirmation flow params with optional session target
       - Earl::Mcp::TmuxHandler#post_confirmation_request     # Confirmation message params with optional session target
 
+  NilCheck:
+    exclude:
+      - Earl::Mcp::TmuxHandler#handle_spawn  # session.nil? distinguishes session vs window creation
+
   TooManyConstants:
     exclude:
       - Earl::Mcp::TmuxHandler    # Action list + reaction emoji sets for spawn confirmation
