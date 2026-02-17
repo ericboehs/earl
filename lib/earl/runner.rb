@@ -33,7 +33,6 @@ module Earl
       @question_threads = {} # tool_use_id -> thread_id
       @active_responses = {} # thread_id -> StreamingResponse
       @idle_checker_thread = nil
-      @shutdown_mutex = Mutex.new
 
       configure_channels
     end
@@ -77,14 +76,9 @@ module Earl
     end
 
     def handle_shutdown_signal
-      proceed = @shutdown_mutex.synchronize do
-        next false if @app_state.shutting_down
+      return if @app_state.shutting_down
 
-        @app_state.shutting_down = true
-        true
-      end
-      return unless proceed
-
+      @app_state.shutting_down = true
       Thread.new { shutdown }
     end
 

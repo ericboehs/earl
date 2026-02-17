@@ -21,7 +21,11 @@ memory_handler = Earl::Mcp::MemoryHandler.new(
 heartbeat_handler = Earl::Mcp::HeartbeatHandler.new(
   default_channel_id: ENV["PLATFORM_CHANNEL_ID"]
 )
+tmux_store = Earl::TmuxSessionStore.new
+tmux_handler = Earl::Mcp::TmuxHandler.new(
+  config: config, api_client: api_client, tmux_store: tmux_store
+)
 
-server = Earl::Mcp::Server.new(handlers: [ approval_handler, memory_handler, heartbeat_handler ])
+server = Earl::Mcp::Server.new(handlers: [ approval_handler, memory_handler, heartbeat_handler, tmux_handler ])
 
 server.run

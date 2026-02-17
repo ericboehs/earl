@@ -70,6 +70,7 @@ lib/
       approval_handler.rb         # Permission approval via Mattermost reactions
       memory_handler.rb           # save_memory / search_memory MCP tools
       heartbeat_handler.rb        # manage_heartbeat MCP tool (CRUD heartbeat schedules)
+      tmux_handler.rb              # manage_tmux_sessions MCP tool (list, capture, approve, spawn, kill)
     memory/
       store.rb                    # File I/O for persistent memory (markdown files)
       prompt_builder.rb           # Builds system prompt from memory store
@@ -109,6 +110,7 @@ User posts in channel
 - **Shutdown**: SIGINT sends INT to Claude process, waits ~2s, then TERM. Runner calls `pause_all` to persist sessions before exit.
 - **Memory**: Persistent facts stored as markdown in `~/.config/earl/memory/`. Injected into Claude sessions via `--append-system-prompt`. Claude can save/search via MCP tools.
 - **Heartbeats**: Scheduled tasks (cron/interval/one-shot via `run_at`) that spawn Claude sessions, posting results to configured channels. One-off tasks (`once: true`) auto-disable after execution. Config auto-reloads on file change. Claude can manage schedules via the `manage_heartbeat` MCP tool.
+- **Tmux MCP tool**: `manage_tmux_sessions` tool exposes tmux session control to spawned Claude sessions. Actions: list, capture, status, approve, deny, send_input, spawn (requires Mattermost confirmation), kill.
 - **Tmux Session Supervisor**: Mattermost becomes a control plane for all running Claude sessions (both EARL-managed and standalone tmux-based). `!sessions` lists all tmux panes running Claude with per-pane status (🟢 Active / 🟠 Waiting for permission / 🟡 Idle). Detection uses `list_all_panes` + `claude_on_tty?` (ps-based TTY check). `!session <name> approve/deny` remotely handles Claude CLI permission dialogs. `!session <name> status` shows AI-summarized state. `!spawn "prompt"` creates new Claude sessions in tmux. TmuxMonitor runs a background poller that detects questions and permission prompts in tmux panes and forwards them to Mattermost for reaction-based handling. Uses `|||` field separator for tmux 3.6+ compatibility.
 - **Thread context**: When a Claude session is first created for a thread that already has messages (e.g., from `!` commands and EARL replies), the Mattermost thread transcript (up to 20 posts) is prepended so Claude has context for follow-up messages.
 
