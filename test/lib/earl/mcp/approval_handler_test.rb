@@ -334,7 +334,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
+    context = Earl::Mcp::ApprovalHandler::ReactionPolling::PollContext.new(ws: mock_ws, post_id: "post-123", request: request, deadline: deadline)
+    result = handler.send(:poll_for_reaction, context)
 
     assert_equal "allow", result[:behavior]
   end
@@ -350,7 +351,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
+    context = Earl::Mcp::ApprovalHandler::ReactionPolling::PollContext.new(ws: mock_ws, post_id: "post-123", request: request, deadline: deadline)
+    result = handler.send(:poll_for_reaction, context)
 
     assert_equal "allow", result[:behavior]
     assert handler.instance_variable_get(:@allowed_tools).include?("Bash")
@@ -367,7 +369,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
+    context = Earl::Mcp::ApprovalHandler::ReactionPolling::PollContext.new(ws: mock_ws, post_id: "post-123", request: request, deadline: deadline)
+    result = handler.send(:poll_for_reaction, context)
 
     assert_equal "deny", result[:behavior]
   end
@@ -379,7 +382,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
 
     # No reaction emitted — should time out
     deadline = Time.now + 0.2
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
+    context = Earl::Mcp::ApprovalHandler::ReactionPolling::PollContext.new(ws: mock_ws, post_id: "post-123", request: request, deadline: deadline)
+    result = handler.send(:poll_for_reaction, context)
 
     assert_nil result
   end
@@ -399,7 +403,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
+    context = Earl::Mcp::ApprovalHandler::ReactionPolling::PollContext.new(ws: mock_ws, post_id: "post-123", request: request, deadline: deadline)
+    result = handler.send(:poll_for_reaction, context)
 
     # Should skip bot reaction and process user's deny
     assert_equal "deny", result[:behavior]
@@ -420,7 +425,8 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     end
 
     deadline = Time.now + 5
-    result = handler.send(:poll_for_reaction, mock_ws, "post-123", request, deadline)
+    context = Earl::Mcp::ApprovalHandler::ReactionPolling::PollContext.new(ws: mock_ws, post_id: "post-123", request: request, deadline: deadline)
+    result = handler.send(:poll_for_reaction, context)
 
     assert_equal "allow", result[:behavior]
   end

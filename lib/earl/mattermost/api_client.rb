@@ -45,13 +45,16 @@ module Earl
       end
 
       def build_request(method_class, uri, body)
+        token = @config.bot_token
         req = method_class.new(uri)
-        req["Authorization"] = "Bearer #{@config.bot_token}"
-        if body
-          req["Content-Type"] = "application/json"
-          req.body = JSON.generate(body)
-        end
+        req["Authorization"] = "Bearer #{token}"
+        apply_json_body(req, body) if body
         req
+      end
+
+      def apply_json_body(req, body)
+        req["Content-Type"] = "application/json"
+        req.body = JSON.generate(body)
       end
 
       MAX_RETRIES = 2
@@ -61,11 +64,9 @@ module Earl
         attempts = 0
         begin
           attempts += 1
-          http = Net::HTTP.new(uri.host, uri.port)
-          http.use_ssl = @config.mattermost_url.start_with?("https")
-          http.open_timeout = 10
-          http.read_timeout = 15
-          http.request(req)
+          Net::HTTP.start(uri.host, uri.port,
+                          use_ssl: @config.mattermost_url.start_with?("https"),
+                          open_timeout: 10, read_timeout: 15) { |http| http.request(req) }
         rescue Net::ReadTimeout, Net::OpenTimeout, Errno::ECONNRESET, Errno::ECONNREFUSED, IOError => error
           raise if attempts > MAX_RETRIES
 

@@ -12,7 +12,15 @@ module Earl
     # Tracks in-progress question flow: which tool_use triggered it, the list of
     # questions, collected answers, and the Mattermost post/thread IDs.
     QuestionState = Struct.new(:tool_use_id, :questions, :answers, :current_index,
-                               :current_post_id, :thread_id, :channel_id, keyword_init: true)
+                               :current_post_id, :thread_id, :channel_id, keyword_init: true) do
+      def current_question
+        questions[current_index]
+      end
+
+      def all_questions_answered?
+        current_index >= questions.size
+      end
+    end
 
     def initialize(mattermost:)
       @mattermost = mattermost
@@ -21,20 +29,15 @@ module Earl
     end
 
     def handle_tool_use(thread_id:, tool_use:, channel_id: nil)
-      return nil unless tool_use[:name] == "AskUserQuestion"
+      name, input, tool_use_id = tool_use.values_at(:name, :input, :id)
+      return nil unless name == "AskUserQuestion"
 
-      input = tool_use[:input]
       questions = input["questions"] || []
       return nil if questions.empty?
 
-      tool_use_id = tool_use[:id]
       state = QuestionState.new(
-        tool_use_id: tool_use_id,
-        questions: questions,
-        answers: {},
-        current_index: 0,
-        thread_id: thread_id,
-        channel_id: channel_id
+        tool_use_id: tool_use_id, questions: questions, answers: {},
+        current_index: 0, thread_id: thread_id, channel_id: channel_id
       )
 
       unless post_current_question(state)
@@ -46,35 +49,53 @@ module Earl
     end
 
     def handle_reaction(post_id:, emoji_name:)
-      state = @mutex.synchronize { @pending_questions[post_id] }
+      state = fetch_pending(post_id)
       return nil unless state
 
-      questions = state.questions
-      index = state.current_index
       selected = resolve_selected_option(state, emoji_name)
       return nil unless selected
 
-      record_answer(state, questions[index], selected)
-      @mutex.synchronize { @pending_questions.delete(post_id) }
-      delete_question_post(post_id)
-
-      state.current_index = index + 1
-      if state.current_index < questions.size
-        post_current_question(state)
-        nil
-      else
-        build_answer_json(state)
-      end
+      accept_answer(state, post_id, selected)
     end
 
     private
 
+    def fetch_pending(post_id)
+      @mutex.synchronize { @pending_questions[post_id] }
+    end
+
+    def release_pending(post_id)
+      @mutex.synchronize { @pending_questions.delete(post_id) }
+      delete_question_post(post_id)
+    end
+
+    def accept_answer(state, post_id, selected)
+      index = state.current_index
+      record_answer(state, state.questions[index], selected)
+      release_pending(post_id)
+      advance_question(state, index)
+    end
+
+    def advance_question(state, index)
+      next_index = index + 1
+      state.current_index = next_index
+      return build_answer_json(state) unless next_index < state.questions.size
+
+      post_current_question(state)
+      nil
+    end
+
     def post_current_question(state)
-      question = state.questions[state.current_index]
+      question = state.current_question
       message = build_question_message(question)
 
-      result = @mattermost.create_post(channel_id: state.channel_id, message: message, root_id: state.thread_id)
-      register_question_post(state, result["id"], (question["options"] || []).size)
+      post_id = create_question_post(state.channel_id, state.thread_id, message)
+      register_question_post(state, post_id, (question["options"] || []).size)
+    end
+
+    def create_question_post(channel_id, thread_id, message)
+      result = @mattermost.create_post(channel_id: channel_id, message: message, root_id: thread_id)
+      result["id"]
     end
 
     def resolve_selected_option(state, emoji_name)

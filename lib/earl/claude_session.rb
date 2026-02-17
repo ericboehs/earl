@@ -17,6 +17,11 @@ module Earl
         stdin.write(payload)
         stdin.flush
       end
+
+      def join_io_threads
+        reader_thread&.join(3)
+        stderr_thread&.join(1)
+      end
     end
     # Holds text-streaming, tool-use, and completion callback procs.
     Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_system, keyword_init: true)
@@ -68,18 +73,31 @@ module Earl
         self.complete_at = nil
       end
 
+      def begin_turn
+        reset_turn
+        self.message_sent_at = Time.now
+      end
+
       def format_summary(prefix)
-        parts = [ "#{prefix}:" ]
+        parts = [ "#{prefix}:", format_token_stats, *format_timing_stats ]
+        parts << "model=#{model_id}" if model_id
+        parts.join(" | ")
+      end
+
+      def format_token_stats
         total = total_input_tokens + total_output_tokens
-        parts << "#{total} tokens (turn: in:#{turn_input_tokens} out:#{turn_output_tokens})"
+        "#{total} tokens (turn: in:#{turn_input_tokens} out:#{turn_output_tokens})"
+      end
+
+      def format_timing_stats
+        parts = []
         pct = context_percent
         parts << format("%.0f%% context", pct) if pct
         ttft = time_to_first_token
         parts << format("TTFT: %.1fs", ttft) if ttft
         tps = tokens_per_second
         parts << format("%.0f tok/s", tps) if tps
-        parts << "model=#{model_id}" if model_id
-        parts.join(" | ")
+        parts
       end
     end
 
@@ -125,11 +143,8 @@ module Earl
         return false
       end
 
-      payload = JSON.generate({ type: "user", message: { role: "user", content: text } }) + "\n"
-      @runtime.mutex.synchronize { @runtime.process_state.write(payload) }
-
-      @stats.reset_turn
-      @stats.message_sent_at = Time.now
+      write_to_stdin(text)
+      @stats.begin_turn
       log(:debug, "Sent message to Claude #{short_id}: #{text[0..60]}")
       true
     rescue IOError, Errno::EPIPE => error
@@ -138,6 +153,11 @@ module Earl
     end
 
     private
+
+    def write_to_stdin(text)
+      payload = JSON.generate({ type: "user", message: { role: "user", content: text } }) + "\n"
+      @runtime.mutex.synchronize { @runtime.process_state.write(payload) }
+    end
 
     def short_id
       @session_id[0..7]
@@ -176,8 +196,7 @@ module Earl
       end
 
       def join_threads
-        @runtime.process_state.reader_thread&.join(3)
-        @runtime.process_state.stderr_thread&.join(1)
+        @runtime.process_state.join_io_threads
       end
 
       def terminate_process
@@ -336,10 +355,13 @@ module Earl
 
       def emit_tool_use_blocks(content)
         content.each do |item|
-          next unless item["type"] == "tool_use"
-
-          @runtime.callbacks.on_tool_use&.call(id: item["id"], name: item["name"], input: item["input"])
+          emit_single_tool_use(item) if item["type"] == "tool_use"
         end
+      end
+
+      def emit_single_tool_use(item)
+        tool_id, tool_name, tool_input = item.values_at("id", "name", "input")
+        @runtime.callbacks.on_tool_use&.call(id: tool_id, name: tool_name, input: tool_input)
       end
 
       def handle_result_event(event)
@@ -359,20 +381,29 @@ module Earl
       def extract_usage(usage)
         return unless usage.is_a?(Hash)
 
-        @stats.turn_input_tokens = usage["input_tokens"] || 0
-        @stats.turn_output_tokens = usage["output_tokens"] || 0
-        @stats.cache_read_tokens = usage["cache_read_input_tokens"] || 0
-        @stats.cache_creation_tokens = usage["cache_creation_input_tokens"] || 0
+        input, output, cache_read, cache_create = usage.values_at(
+          "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"
+        )
+        @stats.turn_input_tokens = input || 0
+        @stats.turn_output_tokens = output || 0
+        @stats.cache_read_tokens = cache_read || 0
+        @stats.cache_creation_tokens = cache_create || 0
       end
 
       def extract_model_usage(model_usage)
         return unless model_usage.is_a?(Hash)
 
-        hash_entries = model_usage.select { |_, data| data.is_a?(Hash) }
-        return if hash_entries.empty?
+        apply_hash_entries(model_usage)
+      end
 
-        primary_id, primary_data = hash_entries.max_by { |_, data| data["contextWindow"] || 0 }
-        apply_model_stats(primary_id, primary_data, hash_entries)
+      def apply_hash_entries(model_usage)
+        entries = model_usage.select { |_, val| val.is_a?(Hash) }
+        apply_primary_model_stats(entries) unless entries.empty?
+      end
+
+      def apply_primary_model_stats(entries)
+        primary_id, primary_data = entries.max_by { |_, data| data["contextWindow"] || 0 }
+        apply_model_stats(primary_id, primary_data, entries)
       end
 
       def apply_model_stats(model_id, primary_data, entries)
@@ -388,13 +419,15 @@ module Earl
       end
 
       def format_result_log
-        parts = [ "Claude result:" ]
-        parts << format_token_counts
-        parts << format_context_usage
-        parts << format_timing
-        parts << format_cost
         model = @stats.model_id
-        parts << "model=#{model}" if model
+        parts = [
+          "Claude result:",
+          format_token_counts,
+          format_context_usage,
+          format_timing,
+          format_cost,
+          ("model=#{model}" if model)
+        ]
         parts.compact.join(" | ")
       end
 

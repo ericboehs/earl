@@ -81,12 +81,12 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
     scheduler = build_scheduler(mattermost: mock_mm)
 
     definition = build_definition(description: "Morning briefing")
-    result = scheduler.send(:create_header_post, definition)
+    result = scheduler.send(:post_heartbeat_header, definition.channel_id, definition.description)
 
     assert_equal 1, posted.size
     assert_includes posted.first[:message], "Morning briefing"
     assert_includes posted.first[:message], "🫀"
-    assert_equal({ "id" => "header-post-1" }, result)
+    assert_equal("header-post-1", result)
   end
 
   test "compute_next_run uses cron parser for cron definitions" do
@@ -127,13 +127,16 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
   test "permission_config returns nil for auto mode" do
     scheduler = build_scheduler
     definition = build_definition(permission_mode: :auto)
-    assert_nil scheduler.send(:permission_config, definition)
+    opts = scheduler.send(:heartbeat_session_opts, definition)
+    assert_nil opts[:permission_config]
   end
 
   test "permission_config returns hash for interactive mode" do
+    ENV["EARL_SKIP_PERMISSIONS"] = "false"
     scheduler = build_scheduler
     definition = build_definition(permission_mode: :interactive)
-    config = scheduler.send(:permission_config, definition)
+    opts = scheduler.send(:heartbeat_session_opts, definition)
+    config = opts[:permission_config]
     assert_equal "https://mattermost.example.com", config["PLATFORM_URL"]
     assert_equal "test-token", config["PLATFORM_TOKEN"]
   end
@@ -228,7 +231,7 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
     )
 
     # Stub session creation and run
-    scheduler.define_singleton_method(:create_heartbeat_session) do |_def, _state|
+    scheduler.define_singleton_method(:build_heartbeat_session) do |_def, _state|
       session = Object.new
       session.define_singleton_method(:on_text) { |&_block| }
       session.define_singleton_method(:on_complete) { |&block| block.call(nil) } # complete immediately
@@ -258,7 +261,7 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
     )
 
     session_created = false
-    scheduler.define_singleton_method(:create_heartbeat_session) { |_def, _state| session_created = true }
+    scheduler.define_singleton_method(:build_heartbeat_session) { |_def, _state| session_created = true }
 
     scheduler.send(:execute_heartbeat, state)
 
@@ -275,7 +278,7 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
       definition: definition, running: true, run_count: 0
     )
 
-    scheduler.define_singleton_method(:create_heartbeat_session) { |_def, _state| raise "session error" }
+    scheduler.define_singleton_method(:build_heartbeat_session) { |_def, _state| raise "session error" }
 
     scheduler.send(:execute_heartbeat, state)
 
@@ -284,28 +287,27 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
     assert_equal 1, state.run_count
   end
 
-  test "wait_for_completion returns when block yields true" do
+  test "await_heartbeat_completion returns when heartbeat completes" do
     scheduler = build_scheduler
-    definition = build_definition(timeout: 10)
     session = Object.new
     session.define_singleton_method(:kill) { }
 
-    completed = false
-    Thread.new { sleep 0.1; completed = true }
+    scheduler.instance_variable_set(:@heartbeat_completed, false)
+    Thread.new { sleep 0.1; scheduler.instance_variable_set(:@heartbeat_completed, true) }
 
-    scheduler.send(:wait_for_completion, session, definition, nil) { completed }
-    assert completed
+    scheduler.send(:await_heartbeat_completion, session, 10)
+    assert scheduler.instance_variable_get(:@heartbeat_completed)
   end
 
-  test "wait_for_completion kills session on timeout" do
+  test "await_heartbeat_completion kills session on timeout" do
     scheduler = build_scheduler
-    definition = build_definition(timeout: 1)
 
     killed = false
     session = Object.new
     session.define_singleton_method(:kill) { killed = true }
 
-    scheduler.send(:wait_for_completion, session, definition, nil) { false }
+    scheduler.instance_variable_set(:@heartbeat_completed, false)
+    scheduler.send(:await_heartbeat_completion, session, 1)
     assert killed
   end
 
@@ -493,19 +495,19 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
     FileUtils.rm_rf(tmp)
   end
 
-  test "create_heartbeat_session creates new session for non-persistent" do
+  test "build_heartbeat_session creates new session for non-persistent" do
     scheduler = build_scheduler
     definition = build_definition(persistent: false)
     state = Earl::HeartbeatScheduler::HeartbeatState.new(
       definition: definition, running: false, run_count: 0
     )
 
-    session = scheduler.send(:create_heartbeat_session, definition, state)
+    session = scheduler.send(:build_heartbeat_session, definition, state)
     assert_instance_of Earl::ClaudeSession, session
     assert_not_nil session.session_id
   end
 
-  test "create_heartbeat_session reuses session_id for persistent" do
+  test "build_heartbeat_session reuses session_id for persistent" do
     scheduler = build_scheduler
     definition = build_definition(persistent: true)
     state = Earl::HeartbeatScheduler::HeartbeatState.new(
@@ -513,7 +515,7 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
       session_id: "existing-session-id"
     )
 
-    session = scheduler.send(:create_heartbeat_session, definition, state)
+    session = scheduler.send(:build_heartbeat_session, definition, state)
     assert_equal "existing-session-id", session.session_id
   end
 

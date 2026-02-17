@@ -62,7 +62,7 @@ module Earl
         name = arguments["name"]
         data = load_yaml
         heartbeats = (data["heartbeats"] ||= {})
-        return text_content("Error: heartbeat '#{name}' already exists") if heartbeats[name]
+        return text_content("Error: heartbeat '#{name}' already exists") if heartbeats.key?(name)
 
         heartbeats[name] = build_entry(arguments)
         save_yaml(data)
@@ -73,7 +73,7 @@ module Earl
         name = arguments["name"]
         data = load_yaml
         heartbeats = (data["heartbeats"] ||= {})
-        entry = heartbeats[name]
+        entry = heartbeats.fetch(name, nil)
         return text_content("Error: heartbeat '#{name}' not found") unless entry
 
         merge_entry(entry, arguments)
@@ -85,9 +85,9 @@ module Earl
         name = arguments["name"]
         data = load_yaml
         heartbeats = (data["heartbeats"] ||= {})
-        return text_content("Error: heartbeat '#{name}' not found") unless heartbeats[name]
+        removed = heartbeats.delete(name)
+        return text_content("Error: heartbeat '#{name}' not found") unless removed
 
-        heartbeats.delete(name)
         save_yaml(data)
         text_content("Deleted heartbeat '#{name}'. Scheduler will remove it within 30 seconds.")
       end
@@ -112,60 +112,47 @@ module Earl
 
       # Entry building: constructs and merges heartbeat configuration hashes.
       module EntryBuilder
+        OPTIONAL_STRING_KEYS = %w[working_dir prompt permission_mode timeout].freeze
+        SCHEDULE_KEYS = %w[cron interval run_at].freeze
+
         private
 
         def build_entry(arguments)
-          description = arguments["description"]
-          once = arguments["once"]
-          working_dir = arguments["working_dir"]
-          prompt = arguments["prompt"]
-          permission_mode = arguments["permission_mode"]
-          timeout = arguments["timeout"]
+          schedule = slice_present(arguments, SCHEDULE_KEYS)
+          schedule["run_at"] = Time.now.to_i if arguments["once"] && schedule.empty?
 
-          entry = {}
-          entry["description"] = description if description
-          entry["once"] = once if arguments.key?("once")
-          schedule = build_schedule(arguments)
-          entry["schedule"] = schedule
-
-          # Auto-set run_at for immediate one-offs (once: true with no schedule)
-          schedule["run_at"] = Time.now.to_i if once && schedule.empty?
-
-          entry["channel_id"] = arguments["channel_id"] || @default_channel_id
-          entry["working_dir"] = working_dir if working_dir
-          entry["prompt"] = prompt if prompt
-          entry["permission_mode"] = permission_mode if permission_mode
-          entry["persistent"] = arguments["persistent"] if arguments.key?("persistent")
-          entry["timeout"] = timeout if timeout
-          entry["enabled"] = arguments.fetch("enabled", true)
-          entry
+          base = slice_present(arguments, %w[description once])
+          base.merge(
+            "schedule" => schedule,
+            "channel_id" => arguments["channel_id"] || @default_channel_id,
+            "enabled" => arguments.fetch("enabled", true)
+          ).merge(slice_present(arguments, OPTIONAL_STRING_KEYS))
+            .merge(slice_key(arguments, "persistent"))
         end
 
-        def build_schedule(arguments)
-          cron = arguments["cron"]
-          interval = arguments["interval"]
-          run_at = arguments["run_at"]
+        def slice_present(hash, keys)
+          keys.each_with_object({}) do |key, result|
+            result[key] = hash[key] if hash.key?(key)
+          end
+        end
 
-          schedule = {}
-          schedule["cron"] = cron if cron
-          schedule["interval"] = interval if interval
-          schedule["run_at"] = run_at if run_at
-          schedule
+        def slice_key(hash, key)
+          hash.key?(key) ? { key => hash[key] } : {}
         end
 
         def merge_entry(entry, arguments)
-          schedule = nil
+          schedule = (entry["schedule"] ||= {})
           MUTABLE_FIELDS.each do |field|
             next unless arguments.key?(field)
 
-            case field
-            when "cron", "interval", "run_at"
-              schedule ||= (entry["schedule"] ||= {})
-              schedule[field] = arguments[field]
-            else
-              entry[field] = arguments[field]
-            end
+            value = arguments[field]
+            target = SCHEDULE_KEYS.include?(field) ? schedule : entry
+            target[field] = value
           end
+        end
+
+        def build_schedule(arguments)
+          slice_present(arguments, SCHEDULE_KEYS)
         end
       end
 
@@ -174,11 +161,20 @@ module Earl
       # --- Formatting ---
 
       def format_heartbeat(name, config)
-        schedule = config["schedule"] || {}
+        schedule, enabled, once, description = extract_display_fields(config, name)
         schedule_str = format_schedule(schedule)
-        enabled = config.fetch("enabled", true) ? "enabled" : "disabled"
-        once_badge = config.fetch("once", false) ? ", once" : ""
-        "- **#{name}** (#{enabled}#{once_badge}, #{schedule_str})\n  #{config['description'] || name}"
+        enabled_str = enabled ? "enabled" : "disabled"
+        once_badge = once ? ", once" : ""
+        "- **#{name}** (#{enabled_str}#{once_badge}, #{schedule_str})\n  #{description}"
+      end
+
+      def extract_display_fields(config, name)
+        [
+          config["schedule"] || {},
+          config.fetch("enabled", true),
+          config.fetch("once", false),
+          config["description"] || name
+        ]
       end
 
       def format_schedule(schedule)

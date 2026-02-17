@@ -30,6 +30,20 @@ module Earl
 
         self.definition = new_definition
       end
+
+      def dispatch(now, &block)
+        self.running = true
+        self.last_run_at = now
+        self.run_thread = Thread.new(&block)
+      end
+
+      def mark_completed(next_run)
+        self.running = false
+        self.last_completed_at = Time.now
+        self.run_count += 1
+        self.run_thread = nil
+        self.next_run_at = next_run
+      end
     end
 
     # Groups injected service dependencies to keep ivar count low.
@@ -127,9 +141,7 @@ module Earl
     end
 
     def dispatch_heartbeat(state, now)
-      state.running = true
-      state.last_run_at = now
-      state.run_thread = Thread.new { execute_heartbeat(state) }
+      state.dispatch(now) { execute_heartbeat(state) }
     end
 
     # Heartbeat execution: creates sessions, streams responses, handles completion.
@@ -140,80 +152,68 @@ module Earl
         definition = state.definition
         name = definition.name
         log(:info, "Heartbeat '#{name}' starting")
+        thread_id = post_heartbeat_header(definition.channel_id, definition.description)
+        return unless thread_id
 
-        header_post = create_header_post(definition)
-        return unless header_post
-
-        thread_id = header_post["id"]
-        unless thread_id
-          log(:error, "Heartbeat '#{name}': failed to get post ID from Mattermost")
-          return
-        end
-
-        session = create_heartbeat_session(definition, state)
-        run_session(session, thread_id, state)
+        run_heartbeat_session(definition, state, thread_id)
       rescue StandardError => error
-        msg = error.message
-        log(:error, "Heartbeat '#{name}' error: #{msg}")
-        log(:error, error.backtrace&.first(5)&.join("\n"))
-        @mutex.synchronize { state.last_error = msg }
+        log_heartbeat_error(name, error)
+        @mutex.synchronize { state.last_error = error.message }
       ensure
         finalize_heartbeat(state)
       end
 
-      def create_header_post(definition)
-        @deps.mattermost.create_post(
-          channel_id: definition.channel_id,
-          message: "\u{1FAC0} **#{definition.description}**"
-        )
+      def log_heartbeat_error(name, error)
+        log(:error, "Heartbeat '#{name}' error: #{error.message}")
+        log(:error, error.backtrace&.first(5)&.join("\n"))
       end
 
-      def create_heartbeat_session(definition, state)
+      def post_heartbeat_header(channel_id, description)
+        post = @deps.mattermost.create_post(channel_id: channel_id, message: "\u{1FAC0} **#{description}**")
+        post&.dig("id")
+      end
+
+      def run_heartbeat_session(definition, state, thread_id)
+        session = build_heartbeat_session(definition, state)
+        response = build_heartbeat_response(thread_id, definition.channel_id)
+        setup_heartbeat_callbacks(session, response) { @heartbeat_completed = true }
+        session.start
+        session.send_message(definition.prompt)
+        await_heartbeat_completion(session, definition.timeout)
+        log(:info, "Heartbeat '#{definition.name}' completed (run ##{state.run_count + 1})")
+      end
+
+      def build_heartbeat_response(thread_id, channel_id)
+        @heartbeat_completed = false
+        response = StreamingResponse.new(thread_id: thread_id, mattermost: @deps.mattermost, channel_id: channel_id)
+        response.start_typing
+        response
+      end
+
+      def build_heartbeat_session(definition, state)
         persistent = definition.persistent
-        session_opts = {
-          permission_config: permission_config(definition),
-          working_dir: definition.working_dir
-        }
-
-        saved_session_id = state.session_id
-        if persistent && saved_session_id
-          session_opts[:session_id] = saved_session_id
-          session_opts[:mode] = :resume
-        end
-
+        session_opts = heartbeat_session_opts(definition)
+        apply_resume_opts(session_opts, state) if persistent
         session = ClaudeSession.new(**session_opts)
         @mutex.synchronize { state.session_id = session.session_id } if persistent
         session
       end
 
-      def permission_config(definition)
-        return nil if definition.permission_mode == :auto
-
-        config = @deps.config
-        {
-          "PLATFORM_URL" => config.mattermost_url,
-          "PLATFORM_TOKEN" => config.bot_token,
-          "PLATFORM_CHANNEL_ID" => definition.channel_id,
-          "PLATFORM_THREAD_ID" => "",
-          "PLATFORM_BOT_ID" => config.bot_id,
-          "ALLOWED_USERS" => config.allowed_users.join(",")
-        }
+      def heartbeat_session_opts(definition)
+        auto, channel_id, working_dir = definition.base_session_opts.values_at(:auto_permission, :channel_id, :working_dir)
+        { working_dir: working_dir, permission_config: auto ? nil : heartbeat_permission_env(channel_id) }
       end
 
-      def run_session(session, thread_id, state)
-        definition = state.definition
-        completed = false
-        response = StreamingResponse.new(
-          thread_id: thread_id, mattermost: @deps.mattermost, channel_id: definition.channel_id
-        )
-        response.start_typing
+      def apply_resume_opts(opts, state)
+        saved_session_id = state.session_id
+        return unless saved_session_id
 
-        setup_heartbeat_callbacks(session, response) { completed = true }
-        session.start
-        session.send_message(definition.prompt)
+        opts[:session_id] = saved_session_id
+        opts[:mode] = :resume
+      end
 
-        wait_for_completion(session, definition, completed) { completed }
-        log(:info, "Heartbeat '#{definition.name}' completed (run ##{state.run_count + 1})")
+      def heartbeat_permission_env(channel_id)
+        @deps.config.permission_env(channel_id: channel_id)
       end
 
       def setup_heartbeat_callbacks(session, response)
@@ -222,12 +222,11 @@ module Earl
         session.on_tool_use { |tool_use| response.on_tool_use(tool_use) }
       end
 
-      def wait_for_completion(session, definition, _completed)
-        timeout = definition.timeout
-        deadline = Time.now + timeout
-        until yield
-          if Time.now >= deadline
-            log(:warn, "Heartbeat '#{definition.name}' timed out after #{timeout}s")
+      def await_heartbeat_completion(session, timeout)
+        start_time = monotonic_now
+        until @heartbeat_completed
+          if monotonic_now - start_time >= timeout
+            log(:warn, "Heartbeat timed out after #{timeout}s")
             session.kill
             return
           end
@@ -235,22 +234,16 @@ module Earl
         end
       end
 
+      def monotonic_now
+        Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      end
+
       def finalize_heartbeat(state)
         definition = state.definition
-        now = Time.now
-        @mutex.synchronize do
-          state.running = false
-          state.last_completed_at = now
-          state.run_count += 1
-          state.run_thread = nil
-
-          if definition.once
-            state.next_run_at = nil
-            disable_heartbeat(definition.name)
-          else
-            state.next_run_at = compute_next_run(definition, now)
-          end
-        end
+        is_once = definition.once
+        next_run = is_once ? nil : compute_next_run(definition, Time.now)
+        @mutex.synchronize { state.mark_completed(next_run) }
+        disable_heartbeat(definition.name) if is_once
       end
 
       def compute_next_run(definition, from)
@@ -272,20 +265,36 @@ module Earl
         path = @control.heartbeat_config_path
         return unless File.exist?(path)
 
-        File.open(path, "r+") do |lockfile|
-          lockfile.flock(File::LOCK_EX)
-
-          data = YAML.safe_load_file(path)
-          return unless data.is_a?(Hash) && data.dig("heartbeats", name).is_a?(Hash)
-
-          data["heartbeats"][name]["enabled"] = false
-          tmp_path = "#{path}.tmp.#{Process.pid}"
-          File.write(tmp_path, YAML.dump(data))
-          File.rename(tmp_path, path)
-          log(:info, "One-off heartbeat '#{name}' disabled in YAML")
-        end
+        update_yaml_entry(path, name)
       rescue StandardError => error
         log(:warn, "Failed to disable heartbeat '#{name}': #{error.message}")
+      end
+
+      def update_yaml_entry(path, name)
+        File.open(path, "r+") do |lockfile|
+          lockfile.flock(File::LOCK_EX)
+          yaml_data = YAML.safe_load_file(path)
+          return unless disable_entry(yaml_data, name)
+
+          write_yaml_atomically(path, yaml_data)
+          log(:info, "One-off heartbeat '#{name}' disabled in YAML")
+        end
+      end
+
+      def disable_entry(yaml_data, name)
+        return false unless yaml_data.is_a?(Hash)
+
+        entry = yaml_data.dig("heartbeats", name)
+        return false unless entry.is_a?(Hash)
+
+        entry["enabled"] = false
+        true
+      end
+
+      def write_yaml_atomically(path, data)
+        tmp_path = "#{path}.tmp.#{Process.pid}"
+        File.write(tmp_path, YAML.dump(data))
+        File.rename(tmp_path, path)
       end
     end
 

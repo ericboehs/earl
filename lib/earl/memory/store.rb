@@ -46,7 +46,8 @@ module Earl
       private
 
       def collect_entries(days)
-        date_files_descending(days).flat_map { |path| entries_from_file(path) }
+        paths = date_files_descending(days)
+        paths.flat_map { |path| entries_from_file(path) }
       end
 
       def entries_from_file(path)
@@ -57,19 +58,19 @@ module Earl
       end
 
       def grep_files(pattern, limit)
-        results = []
-        search_files.each do |path|
-          results.concat(matches_in_file(path, pattern))
-          break if results.size >= limit
+        search_files.each_with_object([]) do |path, matches|
+          file_matches = matches_in_file(path, pattern)
+          matches.concat(file_matches)
+          break matches if matches.size >= limit
         rescue Errno::ENOENT
           next
-        end
-        results.first(limit)
+        end.first(limit)
       end
 
       def matches_in_file(path, pattern)
+        basename = File.basename(path)
         File.readlines(path).filter_map do |line|
-          { file: File.basename(path), line: line.strip } if pattern.match?(line)
+          { file: basename, line: line.strip } if pattern.match?(line)
         end
       end
 

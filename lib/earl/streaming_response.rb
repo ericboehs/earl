@@ -135,15 +135,17 @@ module Earl
       private
 
       def finalize(stats_line)
-        @post_state.debounce_timer&.join(1)
+        ps = @post_state
+        ps.debounce_timer&.join(1)
         stop_typing
-        return if @post_state.full_text.empty? && !posted?
+        post_id = ps.reply_post_id
+        return if ps.full_text.empty? && !post_id
 
         final_text = build_final_text(stats_line)
 
         if only_text_segments?
-          @post_state.full_text = final_text
-          update_post if posted?
+          ps.full_text = final_text
+          update_post if post_id
         else
           remove_last_text_from_streamed_post
           create_notification_post(final_text)
@@ -195,7 +197,8 @@ module Earl
     end
 
     def format_tool_use(tool_use)
-      format_tool_display(tool_use[:name], tool_use[:input])
+      name, input = tool_use.values_at(:name, :input)
+      format_tool_display(name, input)
     end
 
     def tool_segment?(segment)

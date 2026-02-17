@@ -21,8 +21,6 @@ module Earl
       errored: /(?:Error:|error:|FAILED|panic:|Traceback|fatal:)/
     }.freeze
 
-    SHELL_PROMPT_PATTERN = /[❯#%]\s*\z|\$\s+\z/
-
     INTERACTIVE_STATES = { asking_question: :question, requesting_permission: :permission }.freeze
 
     def initialize(mattermost:, tmux_store:, tmux_adapter: Tmux)
@@ -96,16 +94,20 @@ module Earl
       state = OutputAnalyzer.detect(output, name, @poll_state)
       return unless @poll_state.transition(name, state)
 
-      alert_for_state(state, name, output, info)
+      dispatch_state_alert(state, name: name, output: output, info: info)
     end
 
-    def alert_for_state(state, name, output, info)
-      case state
-      when :asking_question then @deps.question_forwarder.forward(name, output, info)
-      when :requesting_permission then @deps.permission_forwarder.forward(name, output, info)
-      when :errored then post_alert(info, error_message(name, output))
-      when :completed then post_alert(info, completed_message(name))
-      when :stalled then post_alert(info, stalled_message(name))
+    def dispatch_state_alert(state, **context)
+      name, output, info = context.values_at(:name, :output, :info)
+      forwarder = { asking_question: @deps.question_forwarder,
+                    requesting_permission: @deps.permission_forwarder }[state]
+      if forwarder
+        forwarder.forward(name, output, info)
+      else
+        msg = { errored: error_message(name, output),
+                completed: completed_message(name),
+                stalled: stalled_message(name) }[state]
+        post_alert(info, msg) if msg
       end
     end
 
@@ -152,6 +154,8 @@ module Earl
 
     # Stateless output analysis that detects tmux session state from captured text.
     module OutputAnalyzer
+      SHELL_PROMPT_PATTERN = /[❯#%]\s*\z|\$\s+\z/
+
       module_function
 
       def detect(output, name, poll_state)
@@ -233,12 +237,16 @@ module Earl
 
       # Returns true if state changed (and records the new state), false otherwise.
       def transition(name, state)
-        entry = ensure_tracking(name)
+        tracking = ensure_tracking(name)
+        last_state = tracking.last_state
         interaction_type = INTERACTIVE_STATES[state]
-        changed = entry.last_state != state || no_pending_for?(name, interaction_type)
+        should_retrigger = interaction_type && @mutex.synchronize {
+          @pending_interactions.none? { |_, interaction| interaction[:session_name] == name && interaction[:type] == interaction_type }
+        }
+        changed = last_state != state || should_retrigger
         return false unless changed
 
-        entry.last_state = state
+        tracking.last_state = state
         true
       end
 
@@ -257,14 +265,6 @@ module Earl
 
       def ensure_tracking(name)
         @tracking[name] ||= TrackingEntry.new(last_state: nil, output_hash: nil, stall_count: 0)
-      end
-
-      def no_pending_for?(name, interaction_type)
-        return false unless interaction_type
-
-        @mutex.synchronize do
-          @pending_interactions.none? { |_, interaction| interaction[:session_name] == name && interaction[:type] == interaction_type }
-        end
       end
     end
 

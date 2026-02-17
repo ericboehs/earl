@@ -75,7 +75,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
     mock_session.define_singleton_method(:total_cost) { 0.05 }
     mock_session.define_singleton_method(:stats) { stats }
 
@@ -140,7 +140,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
 
     mock_manager = build_mock_manager(mock_session)
     runner.instance_variable_get(:@services).session_manager = mock_manager
@@ -201,7 +201,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
     mock_session.define_singleton_method(:total_cost) { 0.0 }
     mock_session.define_singleton_method(:stats) { stats }
 
@@ -239,7 +239,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
 
     mock_manager = build_mock_manager(mock_session)
     runner.instance_variable_get(:@services).session_manager = mock_manager
@@ -371,7 +371,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
     mock_session.define_singleton_method(:total_cost) { 0.0 }
     mock_session.define_singleton_method(:stats) { stats }
 
@@ -463,7 +463,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
 
     mock_manager = build_mock_manager(mock_session)
     runner.instance_variable_get(:@services).session_manager = mock_manager
@@ -487,7 +487,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
 
     mock_manager = build_mock_manager(mock_session)
     runner.instance_variable_get(:@services).session_manager = mock_manager
@@ -567,7 +567,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
     mock_session.define_singleton_method(:stats) { stats }
 
     mock_manager = build_mock_manager(mock_session)
@@ -608,7 +608,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
     mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
     mock_session.define_singleton_method(:stats) { stats }
 
     mock_manager = build_mock_manager(mock_session)
@@ -726,7 +726,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     mock_session.define_singleton_method(:on_system) { |&_block| }
     mock_session.define_singleton_method(:on_complete) { |&_block| }
     mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
-    mock_session.define_singleton_method(:send_message) { |_text| }
+    mock_session.define_singleton_method(:send_message) { |_text| true }
 
     mock_manager = build_mock_manager(mock_session)
     runner.instance_variable_get(:@services).session_manager = mock_manager

@@ -93,7 +93,7 @@ module Earl
       def handle_status(arguments)
         target = arguments["target"]
         output = @tmux.capture_pane(target, lines: 200)
-        status_label = Reactions::PANE_STATUS_LABELS.fetch(detect_pane_status(target, output: output), "Idle")
+        status_label = Reactions::PANE_STATUS_LABELS.fetch(classify_pane_output(output), "Idle")
         text_content("**`#{target}` status: #{status_label}**\n```\n#{output}\n```")
       rescue Tmux::NotFound
         text_content("Error: session/pane '#{target}' not found")
@@ -172,31 +172,37 @@ module Earl
         private
 
         def format_pane(pane)
-          target = pane[:target]
-          project = File.basename(pane[:path])
+          target, path = pane.values_at(:target, :path)
+          project = File.basename(path)
           status = detect_pane_status(target)
           label = Reactions::PANE_STATUS_LABELS.fetch(status, "Idle")
           "- `#{target}` — #{project} (#{label})"
         end
 
-        def detect_pane_status(target, output: nil)
-          output ||= @tmux.capture_pane(target, lines: 20)
-          return :permission if output.include?("Do you want to proceed?")
-          return :active if output.include?("esc to interrupt")
-
-          :idle
+        def detect_pane_status(target)
+          output = @tmux.capture_pane(target, lines: 20)
+          classify_pane_output(output)
         rescue Tmux::Error => error
           log(:debug, "detect_pane_status failed for #{target}: #{error.message}")
           :idle
         end
 
+        def classify_pane_output(output)
+          return :permission if output.include?("Do you want to proceed?")
+          return :active if output.include?("esc to interrupt")
+
+          :idle
+        end
+
         def kill_tmux_session(target)
-          @tmux.kill_session(target)
+          msg = begin
+            @tmux.kill_session(target)
+            "Killed tmux session `#{target}`."
+          rescue Tmux::NotFound
+            "Error: session '#{target}' not found (cleaned up store)"
+          end
           @tmux_store.delete(target)
-          text_content("Killed tmux session `#{target}`.")
-        rescue Tmux::NotFound
-          @tmux_store.delete(target)
-          text_content("Error: session '#{target}' not found (cleaned up store)")
+          text_content(msg)
         end
       end
 
@@ -237,10 +243,7 @@ module Earl
         end
 
         def create_spawned_session(request)
-          name = request.name
-          prompt = request.prompt
-          working_dir = request.working_dir
-          session = request.session
+          name, prompt, working_dir, session = request.deconstruct
           command = "claude #{Shellwords.shellescape(prompt)}"
 
           if session
@@ -249,15 +252,18 @@ module Earl
             @tmux.create_session(name: name, command: command, working_dir: working_dir)
           end
 
+          persist_session_info(name, working_dir, prompt)
+          mode = session ? "window in `#{session}`" : "session"
+          text_content("Spawned tmux #{mode} `#{name}`.\n- Prompt: #{prompt}\n- Dir: #{working_dir || Dir.pwd}")
+        end
+
+        def persist_session_info(name, working_dir, prompt)
           info = TmuxSessionStore::TmuxSessionInfo.new(
             name: name, channel_id: @config.platform_channel_id,
             thread_id: @config.platform_thread_id,
             working_dir: working_dir, prompt: prompt, created_at: Time.now.iso8601
           )
           @tmux_store.save(info)
-
-          mode = session ? "window in `#{session}`" : "session"
-          text_content("Spawned tmux #{mode} `#{name}`.\n- Prompt: #{prompt}\n- Dir: #{working_dir || Dir.pwd}")
         end
 
         def request_spawn_confirmation(request)
@@ -271,15 +277,24 @@ module Earl
         end
 
         def post_confirmation_request(request)
-          working_dir = request.working_dir
-          session = request.session
+          message = build_confirmation_message(request)
+          post_to_channel(message)
+        rescue IOError, JSON::ParserError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
+          log(:error, "Failed to post spawn confirmation: #{error.message}")
+          nil
+        end
+
+        def build_confirmation_message(request)
+          name, prompt, working_dir, session = request.deconstruct
           dir_line = working_dir ? "\n- **Dir:** #{working_dir}" : ""
           session_line = session ? "\n- **Session:** #{session} (new window)" : ""
-          message = ":rocket: **Spawn Request**\n" \
-                    "Claude wants to spawn #{session ? 'window' : 'session'} `#{request.name}`\n" \
-                    "- **Prompt:** #{request.prompt}#{dir_line}#{session_line}\n" \
-                    "React: :+1: approve | :-1: deny"
+          ":rocket: **Spawn Request**\n" \
+            "Claude wants to spawn #{session ? 'window' : 'session'} `#{name}`\n" \
+            "- **Prompt:** #{prompt}#{dir_line}#{session_line}\n" \
+            "React: :+1: approve | :-1: deny"
+        end
 
+        def post_to_channel(message)
           response = @api.post("/posts", {
             channel_id: @config.platform_channel_id,
             message: message,
@@ -289,9 +304,6 @@ module Earl
           return unless response.is_a?(Net::HTTPSuccess)
 
           JSON.parse(response.body)["id"]
-        rescue IOError, JSON::ParserError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
-          log(:error, "Failed to post spawn confirmation: #{error.message}")
-          nil
         end
 
         def add_reaction_options(post_id)
@@ -335,43 +347,64 @@ module Earl
         end
 
         def poll_confirmation(ws, post_id, deadline)
-          reaction_queue = Queue.new
+          queue = setup_reaction_listener(ws, post_id)
+          await_reaction(queue, deadline)
+        end
 
+        def setup_reaction_listener(ws, post_id)
+          queue = Queue.new
           ws.on(:message) do |msg|
-            data = msg.data
-            next unless data && !data.empty?
-
-            begin
-              event = JSON.parse(data)
-              if event["event"] == "reaction_added"
-                reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
-                reaction_queue.push(reaction_data) if reaction_data["post_id"] == post_id
-              end
-            rescue JSON::ParserError
-              log(:debug, "Spawn confirmation: skipped unparsable WebSocket message")
-            end
+            reaction_data = parse_reaction_event(msg)
+            next unless reaction_data
+            matches_post = reaction_data["post_id"] == post_id
+            queue.push(reaction_data) if matches_post
           end
+          queue
+        end
 
+        def parse_reaction_event(msg)
+          raw = msg.data
+          return unless raw && !raw.empty?
+
+          parsed = JSON.parse(raw)
+          event_name, nested_data = parsed.values_at("event", "data")
+          return unless event_name == "reaction_added"
+
+          reaction_json = nested_data&.dig("reaction") || "{}"
+          JSON.parse(reaction_json)
+        rescue JSON::ParserError
+          log(:debug, "Spawn confirmation: skipped unparsable WebSocket message")
+          nil
+        end
+
+        def await_reaction(queue, deadline)
           loop do
             remaining = deadline - Time.now
             return :denied if remaining <= 0
 
-            reaction = begin
-              reaction_queue.pop(true)
-            rescue ThreadError
-              sleep 0.5
-              nil
-            end
-
+            reaction = dequeue_reaction(queue)
             next unless reaction
-            user_id = reaction["user_id"]
-            next if user_id == @config.platform_bot_id
-            next unless allowed_reactor?(user_id)
 
-            emoji = reaction["emoji_name"]
-            return :approved if Reactions::APPROVE_EMOJIS.include?(emoji)
-            return :denied if Reactions::DENY_EMOJIS.include?(emoji)
+            result = classify_reaction(reaction)
+            return result if result
           end
+        end
+
+        def dequeue_reaction(queue)
+          queue.pop(true)
+        rescue ThreadError
+          sleep 0.5
+          nil
+        end
+
+        def classify_reaction(reaction)
+          user_id = reaction["user_id"]
+          return if user_id == @config.platform_bot_id
+          return unless allowed_reactor?(user_id)
+
+          emoji = reaction["emoji_name"]
+          return :approved if Reactions::APPROVE_EMOJIS.include?(emoji)
+          :denied if Reactions::DENY_EMOJIS.include?(emoji)
         end
 
         def allowed_reactor?(user_id)

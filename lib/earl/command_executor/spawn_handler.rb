@@ -73,8 +73,13 @@ module Earl
         name = req.name
         command = "claude #{Shellwords.shellescape(req.prompt)}"
         @deps.tmux.create_session(name: name, command: command, working_dir: req.working_dir)
-        save_tmux_session_info(ctx, req)
+        persist_spawn_info(req.to_session_info(ctx))
         reply(ctx, spawn_success_message(req))
+      end
+
+      def persist_spawn_info(info)
+        store = @deps.tmux_store
+        store&.save(info)
       end
 
       def spawn_success_message(req)
@@ -83,13 +88,6 @@ module Earl
           "- **Prompt:** #{req.prompt}\n" \
           "- **Dir:** #{req.working_dir || Dir.pwd}\n" \
           "Use `!session #{name}` to check output."
-      end
-
-      def save_tmux_session_info(ctx, req)
-        store = @deps.tmux_store
-        return unless store
-
-        store.save(req.to_session_info(ctx))
       end
 
       def parse_spawn_flags(str)

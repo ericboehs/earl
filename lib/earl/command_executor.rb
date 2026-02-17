@@ -22,7 +22,11 @@ module Earl
     include HeartbeatDisplay
 
     # Bundles dispatch context so thread_id + channel_id don't travel as separate args.
-    CommandContext = Data.define(:thread_id, :channel_id, :arg, :args)
+    CommandContext = Data.define(:thread_id, :channel_id, :arg, :args) do
+      def post_params(message)
+        { channel_id: channel_id, message: message, root_id: thread_id }
+      end
+    end
 
     # Groups injected dependencies to keep ivar count low.
     Deps = Struct.new(:session_manager, :mattermost, :config, :heartbeat_scheduler,
@@ -72,10 +76,11 @@ module Earl
     USAGE_SCRIPT = File.expand_path("../../bin/claude-usage", __dir__)
     CONTEXT_SCRIPT = File.expand_path("../../bin/claude-context", __dir__)
 
-    def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil, tmux_store: nil, tmux_adapter: Tmux)
+    def initialize(session_manager:, mattermost:, config:, **extras)
+      heartbeat_scheduler, tmux_store, tmux_adapter = extras.values_at(:heartbeat_scheduler, :tmux_store, :tmux_adapter)
       @deps = Deps.new(
         session_manager: session_manager, mattermost: mattermost, config: config,
-        heartbeat_scheduler: heartbeat_scheduler, tmux_store: tmux_store, tmux: tmux_adapter
+        heartbeat_scheduler: heartbeat_scheduler, tmux_store: tmux_store, tmux: tmux_adapter || Tmux
       )
       @working_dirs = {} # thread_id -> path
     end
@@ -84,16 +89,12 @@ module Earl
     # runner can route them through the normal message pipeline.
     # Returns nil for all other commands (handled inline).
     def execute(command, thread_id:, channel_id:)
-      name = command.name
-      slash = PASSTHROUGH_COMMANDS[name]
+      cmd_name = command.name
+      slash = PASSTHROUGH_COMMANDS[cmd_name]
       return { passthrough: slash } if slash
 
-      args = command.args
-      ctx = CommandContext.new(
-        thread_id: thread_id, channel_id: channel_id,
-        arg: args.first, args: args
-      )
-      dispatch_command(name, ctx)
+      ctx = build_context(command, thread_id, channel_id)
+      dispatch_command(cmd_name, ctx)
       nil
     end
 
@@ -106,6 +107,11 @@ module Earl
     def dispatch_command(name, ctx)
       handler = DISPATCH[name]
       send(handler, ctx) if handler
+    end
+
+    def build_context(command, thread_id, channel_id)
+      cmd_args = command.args
+      CommandContext.new(thread_id: thread_id, channel_id: channel_id, arg: cmd_args.first, args: cmd_args)
     end
 
     def handle_help(ctx)
@@ -179,7 +185,7 @@ module Earl
     end
 
     def reply(ctx, message)
-      @deps.mattermost.create_post(channel_id: ctx.channel_id, message: message, root_id: ctx.thread_id)
+      @deps.mattermost.create_post(**ctx.post_params(message))
     end
 
     def cleanup_and_reply(ctx, message)

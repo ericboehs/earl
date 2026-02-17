@@ -21,6 +21,15 @@ module Earl
     # that won't appear in session names, commands, or paths.
     FIELD_SEP = "|||"
 
+    # Bundles polling config for wait_for_text.
+    WaitConfig = Data.define(:timeout, :interval, :lines)
+
+    # Default polling options for wait_for_text.
+    WAIT_DEFAULTS = { timeout: 15, interval: 0.5, lines: 200 }.freeze
+
+    # Bundles tmux window creation params.
+    WindowSpec = Data.define(:session, :name, :command, :working_dir)
+
     module_function
 
     def available?
@@ -31,18 +40,10 @@ module Earl
     def list_sessions
       fmt = %w[session_name session_attached session_created].map { |field| "\#{#{field}}" }.join(FIELD_SEP)
       output = execute("tmux", "list-sessions", "-F", fmt)
-      output.each_line.map do |line|
-        parts = line.strip.split(FIELD_SEP, 3)
-        next if parts.size < 3
-
-        {
-          name: parts[0],
-          attached: parts[1] != "0",
-          created_at: Time.at(parts[2].to_i).strftime("%c")
-        }
-      end.compact
+      output.each_line.filter_map { |line| parse_session_line(line) }
     rescue Error => error
-      return [] if error.message.include?("no server running") || error.message.include?("no sessions")
+      msg = error.message
+      return [] if msg.include?("no server running") || msg.include?("no sessions")
 
       raise
     end
@@ -70,29 +71,17 @@ module Earl
     # Lists all panes across all sessions and windows with session/window context.
     # Returns an array of hashes with :target (e.g. "code:1.0"), :session, :window,
     # :pane_index, :command, :path, :pid, and :tty.
-    def list_all_panes
-      fields = %w[session_name window_index pane_index pane_current_command
-                   pane_current_path pane_pid pane_tty]
-      fmt = fields.map { |field| "\#{#{field}}" }.join(FIELD_SEP)
-      output = execute("tmux", "list-panes", "-a", "-F", fmt)
-      output.each_line.map do |line|
-        parts = line.strip.split(FIELD_SEP, fields.size)
-        next if parts.size < fields.size
+    ALL_PANE_FIELDS = %w[session_name window_index pane_index pane_current_command
+                         pane_current_path pane_pid pane_tty].freeze
 
-        session, window, pane_idx = parts[0], parts[1], parts[2]
-        {
-          target: "#{session}:#{window}.#{pane_idx}",
-          session: session,
-          window: window.to_i,
-          pane_index: pane_idx.to_i,
-          command: parts[3],
-          path: parts[4],
-          pid: parts[5].to_i,
-          tty: parts[6]
-        }
-      end.compact
+    def list_all_panes
+      field_count = ALL_PANE_FIELDS.size
+      fmt = ALL_PANE_FIELDS.map { |field| "\#{#{field}}" }.join(FIELD_SEP)
+      output = execute("tmux", "list-panes", "-a", "-F", fmt)
+      output.each_line.filter_map { |line| parse_pane_line(line, field_count) }
     rescue Error => error
-      return [] if error.message.include?("no server running") || error.message.include?("no sessions")
+      msg = error.message
+      return [] if msg.include?("no server running") || msg.include?("no sessions")
 
       raise
     end
@@ -143,7 +132,11 @@ module Earl
       execute(*args)
     end
 
-    def create_window(session:, name: nil, command: nil, working_dir: nil)
+    def create_window(**options)
+      session = options.fetch(:session)
+      name = options[:name]
+      command = options[:command]
+      working_dir = options[:working_dir]
       args = [ "tmux", "new-window", "-t", session ]
       args.push("-n", name) if name
       args.push("-c", working_dir) if working_dir
@@ -186,18 +179,10 @@ module Earl
 
     # Polls capture_pane output until pattern matches or timeout. Inspired by
     # OpenClaw's wait-for-text.sh pattern. Returns matched output or nil on timeout.
-    def wait_for_text(target, pattern, timeout: 15, interval: 0.5, lines: 200)
+    def wait_for_text(target, pattern, **options)
+      config = WaitConfig.new(**WAIT_DEFAULTS.merge(options))
       regex = pattern.is_a?(Regexp) ? pattern : Regexp.new(pattern)
-      deadline = Time.now + timeout
-
-      while Time.now < deadline
-        output = capture_pane(target, lines: lines)
-        return output if output.match?(regex)
-
-        sleep interval
-      end
-
-      nil
+      poll_until_match(target, regex, config)
     end
 
     class << self
@@ -208,6 +193,49 @@ module Earl
         raise Error, "tmux command failed: #{cmd.join(' ')}: #{output.strip}" unless status.success?
 
         output
+      end
+
+      def parse_session_line(line)
+        parts = line.strip.split(FIELD_SEP, 3)
+        return if parts.size < 3
+
+        {
+          name: parts[0],
+          attached: parts[1] != "0",
+          created_at: Time.at(parts[2].to_i).strftime("%c")
+        }
+      end
+
+      def parse_pane_line(line, field_count)
+        parts = line.strip.split(FIELD_SEP, field_count)
+        return if parts.size < field_count
+
+        session, window, pane_idx = parts[0], parts[1], parts[2]
+        {
+          target: "#{session}:#{window}.#{pane_idx}",
+          session: session,
+          window: window.to_i,
+          pane_index: pane_idx.to_i,
+          command: parts[3],
+          path: parts[4],
+          pid: parts[5].to_i,
+          tty: parts[6]
+        }
+      end
+
+      def poll_until_match(target, regex, config)
+        remaining = config.timeout
+        interval = config.interval
+        lines = config.lines
+
+        loop do
+          output = capture_pane(target, lines: lines)
+          return output if output.match?(regex)
+          return nil if remaining <= 0
+
+          sleep interval
+          remaining -= interval
+        end
       end
     end
   end

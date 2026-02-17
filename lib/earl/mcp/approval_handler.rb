@@ -54,12 +54,11 @@ module Earl
       end
 
       def call(_name, arguments)
-        request = ToolRequest.new(
-          tool_name: arguments["tool_name"] || "unknown",
-          input: arguments["input"] || {}
-        )
+        tool_name = arguments["tool_name"] || "unknown"
+        input = arguments["input"] || {}
+        request = ToolRequest.new(tool_name: tool_name, input: input)
         result = handle(request)
-        { content: [ { type: "text", text: JSON.generate(result) } ] }
+        format_handler_result(result)
       end
 
       # --- Core permission flow (internal implementation) ---
@@ -88,6 +87,10 @@ module Earl
 
       def deny_result(reason = "Denied")
         { behavior: "deny", message: reason }
+      end
+
+      def format_handler_result(result)
+        { content: [ { type: "text", text: JSON.generate(result) } ] }
       end
 
       def post_permission_request(request)
@@ -136,6 +139,9 @@ module Earl
 
       # WebSocket-based reaction polling for permission decisions.
       module ReactionPolling
+        # Bundles poll_for_reaction parameters into a single context object.
+        PollContext = Data.define(:ws, :post_id, :request, :deadline)
+
         private
 
         def wait_for_reaction(post_id, request)
@@ -148,7 +154,8 @@ module Earl
             return deny_result("WebSocket connection failed")
           end
 
-          result = poll_for_reaction(ws, post_id, request, deadline)
+          context = PollContext.new(ws: ws, post_id: post_id, request: request, deadline: deadline)
+          result = poll_for_reaction(context)
 
           result || deny_result("Timed out waiting for approval")
         ensure
@@ -170,10 +177,11 @@ module Earl
           nil
         end
 
-        def poll_for_reaction(ws, post_id, request, deadline)
+        def poll_for_reaction(context)
           reaction_queue = Queue.new
+          target_post_id = context.post_id
 
-          ws&.on(:message) do |msg|
+          context.ws&.on(:message) do |msg|
             data = msg.data
             next unless data && !data.empty?
 
@@ -181,33 +189,37 @@ module Earl
               event = JSON.parse(data)
               if event["event"] == "reaction_added"
                 reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
-                if reaction_data["post_id"] == post_id
-                  reaction_queue.push(reaction_data)
-                end
+                reaction_queue.push(reaction_data) if reaction_data["post_id"] == target_post_id
               end
             rescue JSON::ParserError
               log(:debug, "MCP approval: skipped unparsable WebSocket message")
             end
           end
 
+          poll_reaction_loop(context, reaction_queue)
+        end
+
+        def poll_reaction_loop(context, reaction_queue)
           loop do
-            remaining = deadline - Time.now
+            remaining = context.deadline - Time.now
             return nil if remaining <= 0
 
-            reaction = begin
-              reaction_queue.pop(true)
-            rescue ThreadError
-              sleep 0.5
-              nil
-            end
-
+            reaction = dequeue_reaction(reaction_queue)
             next unless reaction
+
             user_id = reaction["user_id"]
             next if user_id == @config.platform_bot_id
             next unless allowed_reactor?(user_id)
 
-            return process_reaction(reaction["emoji_name"], request)
+            return process_reaction(reaction["emoji_name"], context.request)
           end
+        end
+
+        def dequeue_reaction(reaction_queue)
+          reaction_queue.pop(true)
+        rescue ThreadError
+          sleep 0.5
+          nil
         end
 
         def allowed_reactor?(user_id)

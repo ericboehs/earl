@@ -75,19 +75,8 @@ module Earl
       return [] unless response.is_a?(Net::HTTPSuccess)
 
       data = JSON.parse(response.body)
-      posts = data["posts"] || {}
-      order = data["order"] || []
-
-      order.reverse.filter_map do |post_id|
-        post = posts[post_id]
-        next unless post
-
-        {
-          sender: post.dig("props", "from_bot") == "true" ? "EARL" : "user",
-          message: post["message"] || "",
-          is_bot: post["user_id"] == config.bot_id
-        }
-      end
+      posts, order = data.values_at("posts", "order")
+      build_thread_posts(posts || {}, order || [])
     rescue JSON::ParserError => error
       log(:warn, "Failed to parse thread posts: #{error.message}")
       []
@@ -95,21 +84,37 @@ module Earl
 
     private
 
+    def build_thread_posts(posts, order)
+      bot_id = config.bot_id
+      order.reverse.filter_map do |id|
+        format_thread_post(posts[id], bot_id) if posts.key?(id)
+      end
+    end
+
+    def format_thread_post(post, bot_id)
+      from_bot = post.dig("props", "from_bot") == "true"
+      message = post["message"] || ""
+      user_id = post["user_id"]
+      { sender: from_bot ? "EARL" : "user", message: message, is_bot: user_id == bot_id }
+    end
+
     # WebSocket lifecycle methods extracted to reduce class method count.
     module WebSocketHandling
       private
 
       def setup_websocket_handlers
-        ws_ref = self
-        websocket_handler_map(ws_ref).each { |event, handler| @connection.ws.on(event, &handler) }
+        websocket_handler_map.each { |event, handler| @connection.ws.on(event, &handler) }
       end
 
-      def websocket_handler_map(ws_ref)
+      def websocket_handler_map
+        msg_handler = method(:handle_websocket_message)
+        close_handler = method(:handle_websocket_close)
+        auth = method(:auth_payload)
         {
-          open: -> { send(JSON.generate(ws_ref.send(:auth_payload))) },
-          message: ->(msg) { ws_ref.send(:handle_websocket_message, msg) },
+          open: -> { send(JSON.generate(auth.call)) },
+          message: ->(msg) { msg_handler.call(msg) },
           error: ->(error) { Earl.logger.error "WebSocket error: #{error.message}" },
-          close: ->(event) { ws_ref.send(:handle_websocket_close, event) }
+          close: ->(event) { close_handler.call(event) }
         }
       end
 
@@ -226,11 +231,19 @@ module Earl
     include EventDispatching
 
     def parse_post_response(response)
-      return {} unless response.is_a?(Net::HTTPSuccess)
+      return {} unless successful?(response)
 
-      JSON.parse(response.body)
-    rescue JSON::ParserError => parse_error
-      log(:warn, "Failed to parse API response: #{parse_error.message}")
+      safe_json_parse(response.body)
+    end
+
+    def successful?(response)
+      response.is_a?(Net::HTTPSuccess)
+    end
+
+    def safe_json_parse(body)
+      JSON.parse(body)
+    rescue JSON::ParserError => error
+      log(:warn, "Failed to parse API response: #{error.message}")
       {}
     end
   end

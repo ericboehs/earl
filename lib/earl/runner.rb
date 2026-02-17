@@ -159,13 +159,13 @@ module Earl
         text = msg.text
         effective_channel = msg.channel_id || @services.config.channel_id
         existing_session, session = prepare_session(thread_id, effective_channel, msg.sender_name)
-        response = prepare_response(session, thread_id, effective_channel)
+        prepare_response(session, thread_id, effective_channel)
         sent = session.send_message(existing_session ? text : build_contextual_message(thread_id, text))
         @services.session_manager.touch(thread_id) if sent
       rescue StandardError => error
         log_processing_error(thread_id, error)
       ensure
-        cleanup_failed_send(response, thread_id) unless sent
+        cleanup_failed_send(thread_id) unless sent
       end
 
       def prepare_session(thread_id, channel_id, sender_name)
@@ -250,27 +250,26 @@ module Earl
       private
 
       def prepare_response(session, thread_id, channel_id)
-        response = create_streaming_response(thread_id, channel_id)
+        response = StreamingResponse.new(thread_id: thread_id, mattermost: @services.mattermost, channel_id: channel_id)
+        @responses.active_responses[thread_id] = response
+        response.start_typing
         setup_callbacks(session, response, thread_id)
         response
       end
 
-      def create_streaming_response(thread_id, channel_id)
-        response = StreamingResponse.new(thread_id: thread_id, mattermost: @services.mattermost, channel_id: channel_id)
-        @responses.active_responses[thread_id] = response
-        response.start_typing
-        response
-      end
-
       def setup_callbacks(session, response, thread_id)
-        session.on_text { |text| response.on_text(text) }
-        session.on_system { |event| response.on_text(event[:message]) }
-        session.on_complete { |_| handle_response_complete(session, response, thread_id) }
-        channel_id = response.channel_id
+        resp_channel_id = response.channel_id
+        wire_text_callbacks(session, response)
+        session.on_complete { |_| handle_response_complete(thread_id) }
         session.on_tool_use do |tool_use|
           response.on_tool_use(tool_use)
-          handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: channel_id)
+          handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: resp_channel_id)
         end
+      end
+
+      def wire_text_callbacks(session, response)
+        session.on_text { |text| response.on_text(text) }
+        session.on_system { |event| response.on_text(event[:message]) }
       end
 
       def handle_tool_use(thread_id:, tool_use:, channel_id:)
@@ -281,13 +280,15 @@ module Earl
         @responses.question_threads[tool_use_id] = thread_id if tool_use_id
       end
 
-      def handle_response_complete(session, response, thread_id)
+      def handle_response_complete(thread_id)
+        manager = @services.session_manager
+        session = manager.get(thread_id)
+        response = @responses.active_responses.delete(thread_id)
         stats = session.stats
         response.on_complete(stats_line: build_stats_line(stats.total_input_tokens, stats.total_output_tokens,
                                                           stats.context_percent))
-        @responses.active_responses.delete(thread_id)
         log_session_stats(stats, thread_id)
-        @services.session_manager.save_stats(thread_id)
+        manager.save_stats(thread_id)
         process_next_queued(thread_id)
       end
 
@@ -316,9 +317,9 @@ module Earl
         @app_state.message_queue.dequeue(thread_id)
       end
 
-      def cleanup_failed_send(response, thread_id)
+      def cleanup_failed_send(thread_id)
+        response = @responses.active_responses.delete(thread_id)
         response&.stop_typing
-        @responses.active_responses.delete(thread_id)
         @app_state.message_queue.release(thread_id)
       end
     end
