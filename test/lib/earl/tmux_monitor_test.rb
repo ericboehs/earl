@@ -10,11 +10,10 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     @store_path = File.join(@tmp_dir, "tmux_sessions.json")
     @tmux_store = Earl::TmuxSessionStore.new(path: @store_path)
     @mattermost = build_mock_mattermost
-    @config = build_mock_config
     @tmux_adapter = build_mock_tmux_adapter
 
     @monitor = Earl::TmuxMonitor.new(
-      mattermost: @mattermost, tmux_store: @tmux_store, config: @config,
+      mattermost: @mattermost, tmux_store: @tmux_store,
       tmux_adapter: @tmux_adapter
     )
   end
@@ -327,7 +326,7 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     call_poll_sessions
 
     # Pending interactions for dead session should be cleaned up
-    pending = @monitor.instance_variable_get(:@pending_interactions)
+    pending = poll_state.pending_interactions
     assert_nil pending["post-old"]
     # Unrelated session's pending interaction should remain
     assert_not_nil pending["post-other"]
@@ -459,7 +458,8 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
   test "start creates a background thread" do
     @monitor.start
     sleep 0.05
-    assert @monitor.instance_variable_get(:@thread)&.alive?
+    thread_ctl = @monitor.instance_variable_get(:@thread_ctl)
+    assert thread_ctl.alive?
   ensure
     @monitor.stop
   end
@@ -468,22 +468,23 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     @monitor.start
     sleep 0.05
     @monitor.stop
-    assert_nil @monitor.instance_variable_get(:@thread)
+    thread_ctl = @monitor.instance_variable_get(:@thread_ctl)
+    assert_not thread_ctl.alive?
   end
 
   test "stop handles nil thread gracefully" do
     # Should not raise when called without start
     assert_nothing_raised { @monitor.stop }
-    assert_nil @monitor.instance_variable_get(:@thread)
   end
 
   test "start is idempotent when thread is already running" do
     @monitor.start
     sleep 0.05
-    thread1 = @monitor.instance_variable_get(:@thread)
 
+    # Capture internal thread reference for comparison
+    thread1 = @monitor.instance_variable_get(:@thread_ctl).instance_variable_get(:@thread)
     @monitor.start
-    thread2 = @monitor.instance_variable_get(:@thread)
+    thread2 = @monitor.instance_variable_get(:@thread_ctl).instance_variable_get(:@thread)
 
     assert_same thread1, thread2
   ensure
@@ -508,22 +509,30 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
 
   private
 
+  # -- Helpers: access internal state ------------------------------------------
+
+  def poll_state
+    @monitor.instance_variable_get(:@poll_state)
+  end
+
   # -- Helpers: call private methods via send ----------------------------------
 
   def call_detect_state(output, name = "test-session")
-    @monitor.send(:detect_state, output, name)
+    Earl::TmuxMonitor::OutputAnalyzer.detect(output, name, poll_state)
   end
 
   def call_state_changed?(name, state)
-    @monitor.send(:state_changed?, name, state)
+    poll_state.transition(name, state)
   end
 
   def set_last_state(name, state)
-    @monitor.instance_variable_get(:@last_states)[name] = state
+    ps = poll_state
+    ps.send(:ensure_tracking, name)
+    ps.instance_variable_get(:@tracking)[name][:last_state] = state
   end
 
   def call_parse_question(output)
-    @monitor.send(:parse_question, output)
+    @monitor.parse_question(output)
   end
 
   def call_poll_sessions
@@ -535,13 +544,13 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
   def seed_pending_interaction(post_id, type:, options: nil)
     interaction = { session_name: "test-session", type: type }
     interaction[:options] = options if options
-    @monitor.instance_variable_get(:@pending_interactions)[post_id] = interaction
+    poll_state.pending_interactions[post_id] = interaction
   end
 
   def add_pending_interaction(post_id, session_name:, type:, options: nil)
     interaction = { session_name: session_name, type: type }
     interaction[:options] = options if options
-    @monitor.instance_variable_get(:@pending_interactions)[post_id] = interaction
+    poll_state.pending_interactions[post_id] = interaction
   end
 
   # -- Helpers: Configure send_keys to raise -----------------------------------
@@ -552,7 +561,6 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
 
   # -- Helpers: Mock tmux adapter (process-local, no global state) -------------
 
-  # :reek:TooManyInstanceVariables
   def build_mock_tmux_adapter
     @tmux_send_keys_calls = []
     MockTmuxAdapter.new(@tmux_send_keys_calls)
@@ -610,14 +618,6 @@ class Earl::TmuxMonitorTest < ActiveSupport::TestCase
     end
 
     mattermost
-  end
-
-  # -- Helpers: Mock config ----------------------------------------------------
-
-  def build_mock_config
-    config = Object.new
-    config.define_singleton_method(:channel_id) { "channel-1" }
-    config
   end
 
   # -- Helpers: Session info ---------------------------------------------------

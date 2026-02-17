@@ -31,7 +31,6 @@ module Earl
 
     private
 
-    # :reek:DuplicateMethodCall
     def load_definitions
       return [] unless File.exist?(@path)
 
@@ -41,7 +40,6 @@ module Earl
       data["heartbeats"].filter_map { |name, config| build_definition(name, config) }
     end
 
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
     def build_definition(name, config)
       return nil unless config.is_a?(Hash)
       return nil unless valid_schedule?(config)

@@ -28,7 +28,7 @@ module Earl
         heartbeat_scheduler: @heartbeat_scheduler, tmux_store: @tmux_store
       )
       @question_handler = QuestionHandler.new(mattermost: @mattermost)
-      @tmux_monitor = TmuxMonitor.new(mattermost: @mattermost, tmux_store: @tmux_store, config: @config)
+      @tmux_monitor = TmuxMonitor.new(mattermost: @mattermost, tmux_store: @tmux_store)
       @app_state = AppState.new(shutting_down: false, message_queue: MessageQueue.new)
       @question_threads = {} # tool_use_id -> thread_id
       @active_responses = {} # thread_id -> StreamingResponse
@@ -38,16 +38,11 @@ module Earl
       configure_channels
     end
 
-    # :reek:TooManyStatements
     def start
-      setup_signal_handlers
-      setup_message_handler
-      setup_reaction_handler
+      setup_handlers
       @session_manager.resume_all
       @tmux_store.cleanup!
-      start_idle_checker
-      @heartbeat_scheduler.start
-      @tmux_monitor.start
+      start_background_services
       @mattermost.connect
       log_startup
       sleep 0.5 until @app_state.shutting_down
@@ -63,6 +58,18 @@ module Earl
     def log_startup
       log(:info, "EARL is running. Listening for messages in channel #{@config.channel_id[0..7]}...")
       log(:info, "Allowed users: #{@config.allowed_users.join(', ')}")
+    end
+
+    def start_background_services
+      start_idle_checker
+      @heartbeat_scheduler.start
+      @tmux_monitor.start
+    end
+
+    def setup_handlers
+      setup_signal_handlers
+      setup_message_handler
+      setup_reaction_handler
     end
 
     def setup_signal_handlers
@@ -152,16 +159,18 @@ module Earl
       true
     end
 
-    # :reek:FeatureEnvy
     def allowed_reactor?(user_id)
       allowed = @config.allowed_users
       return true if allowed.empty?
 
-      user_data = @mattermost.get_user(user_id: user_id)
-      username = user_data["username"]
+      username = lookup_username(user_id)
       return false unless username
 
       allowed.include?(username)
+    end
+
+    def lookup_username(user_id)
+      @mattermost.get_user(user_id: user_id)["username"]
     end
 
     def enqueue_message(thread_id:, text:, channel_id: nil, sender_name: nil)
@@ -173,96 +182,106 @@ module Earl
       end
     end
 
-    # :reek:TooManyStatements
     def process_message(thread_id:, text:, channel_id: nil, sender_name: nil)
       effective_channel = channel_id || @config.channel_id
-      working_dir = resolve_working_dir(thread_id, effective_channel)
-
-      existing_session = @session_manager.get(thread_id)
-      session = @session_manager.get_or_create(
-        thread_id, channel_id: effective_channel, working_dir: working_dir, username: sender_name
-      )
-      response = StreamingResponse.new(
-        thread_id: thread_id, mattermost: @mattermost, channel_id: effective_channel
-      )
-      @active_responses[thread_id] = response
-      response.start_typing
-
-      setup_callbacks(session, response, thread_id)
-      message_text = existing_session ? text : build_contextual_message(thread_id, text)
-      sent = session.send_message(message_text)
+      existing_session, session = prepare_session(thread_id, effective_channel, sender_name)
+      response = prepare_response(session, thread_id, effective_channel)
+      sent = session.send_message(existing_session ? text : build_contextual_message(thread_id, text))
       @session_manager.touch(thread_id) if sent
     rescue StandardError => error
-      log(:error, "Error processing message for thread #{thread_id[0..7]}: #{error.message}")
-      log(:error, error.backtrace&.first(5)&.join("\n"))
+      log_processing_error(thread_id, error)
     ensure
       cleanup_failed_send(response, thread_id) unless sent
+    end
+
+    def prepare_session(thread_id, channel_id, sender_name)
+      working_dir = resolve_working_dir(thread_id, channel_id)
+      existing = @session_manager.get(thread_id)
+      session = @session_manager.get_or_create(
+        thread_id, channel_id: channel_id, working_dir: working_dir, username: sender_name
+      )
+      [ existing, session ]
+    end
+
+    def log_processing_error(thread_id, error)
+      log(:error, "Error processing message for thread #{thread_id[0..7]}: #{error.message}")
+      log(:error, error.backtrace&.first(5)&.join("\n"))
     end
 
     def resolve_working_dir(thread_id, channel_id)
       @command_executor.working_dir_for(thread_id) || @config.channels[channel_id] || Dir.pwd
     end
 
-    # When a Claude session is first created for a thread that already has messages
-    # (e.g., from !commands and EARL replies), prepend the thread transcript so
-    # Claude has context. Returns the original text if no prior messages exist.
-    # :reek:FeatureEnvy :reek:TooManyStatements :reek:DuplicateMethodCall
-    def build_contextual_message(thread_id, text)
-      posts = @mattermost.get_thread_posts(thread_id)
-      # Exclude the current message (last post) since it's what we're sending
-      prior_posts = posts.reject { |post| post[:message] == text }.last(20)
-      return text if prior_posts.empty?
-
-      transcript = prior_posts.map do |post|
-        role = post[:is_bot] ? "EARL" : "User"
-        "#{role}: #{post[:message]}"
-      end.join("\n\n")
-
-      "Here is the conversation so far in this Mattermost thread:\n\n#{transcript}\n\n---\n\nUser's latest message: #{text}"
+    def create_streaming_response(thread_id, channel_id)
+      response = StreamingResponse.new(thread_id: thread_id, mattermost: @mattermost, channel_id: channel_id)
+      @active_responses[thread_id] = response
+      response.start_typing
+      response
     end
 
-    # :reek:FeatureEnvy :reek:TooManyStatements
+    def prepare_response(session, thread_id, channel_id)
+      response = create_streaming_response(thread_id, channel_id)
+      setup_callbacks(session, response, thread_id)
+      response
+    end
+
+    def build_contextual_message(thread_id, text)
+      ThreadContextBuilder.new(mattermost: @mattermost).build(thread_id, text)
+    end
+
     def setup_callbacks(session, response, thread_id)
-      session.on_text { |text| response.on_text(text) }
-      session.on_system { |event| response.on_text(event[:message]) }
-      session.on_complete { |_| handle_response_complete(session, response, thread_id) }
+      wire_stream_callbacks(session, response)
+      wire_completion_callback(session, response, thread_id)
+      channel_id = response.channel_id
       session.on_tool_use do |tool_use|
         response.on_tool_use(tool_use)
-        handle_tool_use(thread_id, tool_use, response.channel_id)
+        handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: channel_id)
       end
     end
 
-    # :reek:FeatureEnvy
-    def handle_tool_use(thread_id, tool_use, channel_id)
+    def wire_stream_callbacks(session, response)
+      session.on_text { |text| response.on_text(text) }
+      session.on_system { |event| response.on_text(event[:message]) }
+    end
+
+    def wire_completion_callback(session, response, thread_id)
+      session.on_complete { |_| handle_response_complete(session, response, thread_id) }
+    end
+
+    def handle_tool_use(thread_id:, tool_use:, channel_id:)
       result = @question_handler.handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: channel_id)
-      tool_use_id = result[:tool_use_id] if result.is_a?(Hash)
+      return unless result.is_a?(Hash)
+
+      tool_use_id = result[:tool_use_id]
       @question_threads[tool_use_id] = thread_id if tool_use_id
     end
 
     def handle_response_complete(session, response, thread_id)
-      stats_line = build_stats_line(session)
-      response.on_complete(stats_line: stats_line)
+      stats = session.stats
+      response.on_complete(stats_line: build_stats_line(stats.total_input_tokens, stats.total_output_tokens,
+                                                        stats.context_percent))
       @active_responses.delete(thread_id)
-      log_session_stats(session, thread_id)
+      log_session_stats(stats, thread_id)
       @session_manager.save_stats(thread_id)
       process_next_queued(thread_id)
     end
 
-    # :reek:FeatureEnvy
-    def build_stats_line(session)
-      stats = session.stats
-      total = stats.total_input_tokens + stats.total_output_tokens
-      return nil unless total.positive?
+    def build_stats_line(input_tokens, output_tokens, context_pct)
+      total_tokens = input_tokens + output_tokens
+      return nil unless total_tokens.positive?
 
+      format_stats_tokens(total_tokens, context_pct)
+    end
+
+    def format_stats_tokens(total, context_pct)
       line = "#{format_number(total)} tokens"
-      pct = stats.context_percent
-      line += format(" · %.0f%% context", pct) if pct
+      line += format(" · %.0f%% context", context_pct) if context_pct
       line
     end
 
-    # :reek:FeatureEnvy
-    def log_session_stats(session, thread_id)
-      log(:info, session.stats.format_summary("Thread #{thread_id[0..7]} complete"))
+    def log_session_stats(stats, thread_id)
+      summary = stats.format_summary("Thread #{thread_id[0..7]} complete")
+      log(:info, summary)
     end
 
     def process_next_queued(thread_id)
@@ -307,18 +326,21 @@ module Earl
         end
       end
 
-      # :reek:FeatureEnvy
       def stop_if_idle(thread_id, persisted)
         return if persisted.is_paused
 
-        last_activity = persisted.last_activity_at
-        return unless last_activity
-
-        idle_seconds = Time.now - Time.parse(last_activity)
+        idle_seconds = seconds_since_activity(persisted.last_activity_at)
+        return unless idle_seconds
         return unless idle_seconds > IDLE_TIMEOUT
 
         log(:info, "Stopping idle session for thread #{thread_id[0..7]} (idle #{(idle_seconds / 60).round}min)")
         @session_manager.stop_session(thread_id)
+      end
+
+      def seconds_since_activity(last_activity_at)
+        return nil unless last_activity_at
+
+        Time.now - Time.parse(last_activity_at)
       end
     end
 

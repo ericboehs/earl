@@ -5,7 +5,6 @@ module Earl
   # and posts results to Mattermost channels without waiting for user messages.
   # Auto-reloads config when the YAML file changes. One-off tasks (once: true)
   # are disabled in YAML after execution.
-  # :reek:TooManyInstanceVariables :reek:TooManyMethods
   class HeartbeatScheduler
     include Logging
 
@@ -18,7 +17,6 @@ module Earl
       keyword_init: true
     )
 
-    # :reek:TooManyStatements
     def initialize(config:, session_manager:, mattermost:)
       @config = config
       @session_manager = session_manager
@@ -44,7 +42,6 @@ module Earl
       @scheduler_thread = Thread.new { scheduler_loop }
     end
 
-    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def stop
       @stop_requested = true
       @scheduler_thread&.join(5)
@@ -104,19 +101,16 @@ module Earl
       end
     end
 
-    # :reek:DuplicateMethodCall
     def should_run?(state, now)
       !state.running && state.next_run_at && now >= state.next_run_at
     end
 
-    # :reek:FeatureEnvy
     def dispatch_heartbeat(state, now)
       state.running = true
       state.last_run_at = now
       state.run_thread = Thread.new { execute_heartbeat(state) }
     end
 
-    # :reek:TooManyStatements :reek:DuplicateMethodCall
     def execute_heartbeat(state)
       definition = state.definition
       log(:info, "Heartbeat '#{definition.name}' starting")
@@ -140,7 +134,6 @@ module Earl
       finalize_heartbeat(state)
     end
 
-    # :reek:FeatureEnvy
     def create_header_post(definition)
       @mattermost.create_post(
         channel_id: definition.channel_id,
@@ -148,7 +141,6 @@ module Earl
       )
     end
 
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
     def create_heartbeat_session(definition, state)
       session_opts = {
         permission_config: permission_config(definition),
@@ -180,7 +172,6 @@ module Earl
       }
     end
 
-    # :reek:LongParameterList :reek:TooManyStatements :reek:FeatureEnvy
     def run_session(session, definition, thread_id, state)
       completed = false
       response = StreamingResponse.new(
@@ -202,7 +193,6 @@ module Earl
       log(:info, "Heartbeat '#{definition.name}' completed (run ##{state.run_count + 1})")
     end
 
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
     def wait_for_completion(session, definition, _completed)
       deadline = Time.now + definition.timeout
       until yield
@@ -215,7 +205,6 @@ module Earl
       end
     end
 
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
     def finalize_heartbeat(state)
       @mutex.synchronize do
         state.running = false
@@ -232,7 +221,6 @@ module Earl
       end
     end
 
-    # :reek:DuplicateMethodCall :reek:FeatureEnvy
     def compute_next_run(definition, from)
       if definition.run_at
         target = Time.at(definition.run_at)
@@ -244,7 +232,6 @@ module Earl
       end
     end
 
-    # :reek:TooManyStatements
     def disable_heartbeat(name)
       path = @heartbeat_config_path
       return unless File.exist?(path)
@@ -276,7 +263,6 @@ module Earl
       reload_definitions
     end
 
-    # :reek:TooManyStatements :reek:DuplicateMethodCall
     def reload_definitions
       new_defs = @heartbeat_config.definitions
       now = Time.now
@@ -328,7 +314,6 @@ module Earl
     module StatusFormatting
       private
 
-      # :reek:FeatureEnvy :reek:DuplicateMethodCall
       def build_status(state)
         {
           name: state.definition.name,

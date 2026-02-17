@@ -91,7 +91,6 @@ module Earl
         @session_store&.load&.dig(thread_id)
       end
 
-      # :reek:TooManyStatements
       def save_stats(thread_id)
         @mutex.synchronize do
           session = @sessions[thread_id]
@@ -176,7 +175,8 @@ module Earl
     def build_permission_config(thread_id, channel_id)
       return nil unless @config
 
-      build_permission_env(@config, channel_id: channel_id, thread_id: thread_id)
+      effective_channel = channel_id || @config.channel_id
+      build_permission_env(@config, channel_id: effective_channel, thread_id: thread_id)
     end
 
     def build_persisted(session, channel_id: nil, working_dir: nil, paused: :active)

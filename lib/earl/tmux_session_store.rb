@@ -3,7 +3,6 @@
 module Earl
   # Tracks EARL-spawned tmux sessions with metadata for monitoring and control.
   # Persists to ~/.config/earl/tmux_sessions.json with thread-safe atomic writes.
-  # :reek:MissingSafeMethod
   class TmuxSessionStore
     include Logging
 
@@ -45,7 +44,6 @@ module Earl
     # Removes entries for tmux sessions that no longer exist.
     # Shell calls happen outside the mutex to avoid blocking other operations
     # if tmux is slow or hung.
-    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def cleanup!
       names = @mutex.synchronize { ensure_cache.keys }
       dead = names.reject { |name| Tmux.session_exists?(name) }
@@ -66,7 +64,6 @@ module Earl
       @cache
     end
 
-    # :reek:TooManyStatements :reek:DuplicateMethodCall
     def read_store
       return {} unless File.exist?(@path)
 
@@ -94,7 +91,6 @@ module Earl
       log(:warn, "Failed to back up corrupted store: #{error.message}")
     end
 
-    # :reek:TooManyStatements
     def write_store(data)
       dir = File.dirname(@path)
       FileUtils.mkdir_p(dir) unless Dir.exist?(dir)

@@ -24,7 +24,6 @@ module Earl
     Options = Struct.new(:permission_config, :resume, :working_dir, :username, keyword_init: true)
 
     # Tracks usage statistics, timing, and cost across the session.
-    # rubocop:disable Metrics/BlockLength
     Stats = Struct.new(
       :total_cost, :total_input_tokens, :total_output_tokens,
       :turn_input_tokens, :turn_output_tokens,
@@ -81,7 +80,6 @@ module Earl
         parts.join(" | ")
       end
     end
-    # rubocop:enable Metrics/BlockLength
 
     def initialize(session_id: SecureRandom.uuid, permission_config: nil, mode: :new, working_dir: nil, username: nil)
       @session_id = session_id
@@ -131,7 +129,6 @@ module Earl
       spawn_io_threads(stdout, stderr)
     end
 
-    # :reek:TooManyStatements
     def send_message(text)
       unless alive?
         log(:warn, "Cannot send message to dead session #{short_id} — process not running")
@@ -237,7 +234,6 @@ module Earl
         @mcp_config_path ||= write_mcp_config
       end
 
-      # :reek:TooManyStatements
       def write_mcp_config
         config = {
           mcpServers: {
@@ -362,7 +358,6 @@ module Earl
         extract_model_usage(event["modelUsage"])
       end
 
-      # :reek:FeatureEnvy
       def extract_usage(usage)
         return unless usage.is_a?(Hash)
 
@@ -372,7 +367,6 @@ module Earl
         @stats.cache_creation_tokens = usage["cache_creation_input_tokens"] || 0
       end
 
-      # :reek:FeatureEnvy
       def extract_model_usage(model_usage)
         return unless model_usage.is_a?(Hash)
 

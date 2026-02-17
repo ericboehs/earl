@@ -66,7 +66,6 @@ module Earl
 
     # Fetches all posts in a thread, ordered oldest-first.
     # Returns an array of hashes with :sender, :message, :is_bot.
-    # :reek:TooManyStatements
     def get_thread_posts(thread_id)
       response = @api.get("/posts/#{thread_id}/thread")
       return [] unless response.is_a?(Net::HTTPSuccess)
@@ -101,7 +100,6 @@ module Earl
         websocket_handler_map(ws_ref).each { |event, handler| @ws.on(event, &handler) }
       end
 
-      # :reek:FeatureEnvy
       def websocket_handler_map(ws_ref)
         {
           open: -> { send(JSON.generate(ws_ref.send(:auth_payload))) },
@@ -217,7 +215,6 @@ module Earl
       }
     end
 
-    # :reek:FeatureEnvy
     def parse_post_response(response)
       return {} unless response.is_a?(Net::HTTPSuccess)
 

@@ -10,7 +10,6 @@ module Earl
       @fields = parse_expression(expression)
     end
 
-    # :reek:FeatureEnvy
     def matches?(time)
       minute, hour, dom, month, dow = @fields
       minute.include?(time.min) &&
@@ -40,7 +39,6 @@ module Earl
       Time.new(time.year, time.month, time.day, time.hour, time.min, 0) + 60
     end
 
-    # :reek:DuplicateMethodCall :reek:FeatureEnvy
     def parse_expression(expression)
       parts = expression.strip.split(/\s+/)
       unless parts.size == 5
@@ -61,7 +59,6 @@ module Earl
       values.select { |val| range.include?(val) }.uniq.sort
     end
 
-    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def parse_part(part, range)
       case part
       when "*"

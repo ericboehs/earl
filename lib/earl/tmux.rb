@@ -28,7 +28,6 @@ module Earl
       status.success?
     end
 
-    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def list_sessions
       fmt = %w[session_name session_attached session_created].map { |field| "\#{#{field}}" }.join(FIELD_SEP)
       output = execute("tmux", "list-sessions", "-F", fmt)
@@ -48,7 +47,6 @@ module Earl
       raise
     end
 
-    # :reek:TooManyStatements
     def list_panes(session)
       fmt = %w[pane_index pane_current_command pane_current_path pane_pid].map { |field| "\#{#{field}}" }.join(FIELD_SEP)
       output = execute("tmux", "list-panes", "-t", session, "-F", fmt)
@@ -72,7 +70,6 @@ module Earl
     # Lists all panes across all sessions and windows with session/window context.
     # Returns an array of hashes with :target (e.g. "code:1.0"), :session, :window,
     # :pane_index, :command, :path, :pid, and :tty.
-    # :reek:TooManyStatements :reek:DuplicateMethodCall
     def list_all_panes
       fields = %w[session_name window_index pane_index pane_current_command
                    pane_current_path pane_pid pane_tty]
@@ -164,7 +161,6 @@ module Earl
     # Returns an array of command basenames for child processes of the given PID.
     # Used to detect what's actually running inside a pane when pane_current_command
     # reports an unhelpful value (e.g. Claude reports its version string "2.1.42").
-    # :reek:DuplicateMethodCall :reek:TooManyStatements
     def pane_child_commands(pid)
       pid_str = pid.to_s
       output, _status = Open3.capture2e("ps", "-o", "comm=", "-p", pid_str)
@@ -182,7 +178,6 @@ module Earl
 
     # Polls capture_pane output until pattern matches or timeout. Inspired by
     # OpenClaw's wait-for-text.sh pattern. Returns matched output or nil on timeout.
-    # :reek:LongParameterList :reek:DuplicateMethodCall
     def wait_for_text(target, pattern, timeout: 15, interval: 0.5, lines: 200)
       regex = pattern.is_a?(Regexp) ? pattern : Regexp.new(pattern)
       deadline = Time.now + timeout

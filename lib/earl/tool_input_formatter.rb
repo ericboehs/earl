@@ -20,19 +20,21 @@ module Earl
       end
     end
 
-    # :reek:UtilityFunction :reek:ControlParameter :reek:TooManyStatements
+    private
+
+    TOOL_DETAIL_KEYS = {
+      "Bash" => "command", "Read" => "file_path", "Edit" => "file_path",
+      "Write" => "file_path", "WebFetch" => "url", "WebSearch" => "query",
+      "Grep" => "pattern", "Glob" => "pattern"
+    }.freeze
+
     def extract_tool_detail_from(tool_name, input)
-      input ||= {}
-      case tool_name
-      when "Bash" then input["command"]
-      when "Read", "Edit", "Write" then input["file_path"]
-      when "WebFetch" then input["url"]
-      when "WebSearch" then input["query"]
-      when "Grep", "Glob" then input["pattern"]
-      else
-        compact = input.compact
-        compact.empty? ? nil : JSON.generate(compact)
-      end
+      safe_input = input || {}
+      key = TOOL_DETAIL_KEYS[tool_name]
+      return safe_input[key] if key
+
+      compact = safe_input.compact
+      compact.empty? ? nil : JSON.generate(compact)
     end
   end
 end

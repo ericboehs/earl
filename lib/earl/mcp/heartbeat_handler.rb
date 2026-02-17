@@ -9,7 +9,6 @@ module Earl
     # and list heartbeat schedules. Writes changes to the heartbeats YAML file;
     # the HeartbeatScheduler auto-reloads when it detects file changes.
     # Conforms to the Server handler interface: tool_definitions, handles?, call.
-    # :reek:TooManyMethods :reek:RepeatedConditional
     class HeartbeatHandler
       TOOL_NAMES = %w[manage_heartbeat].freeze
       CONFIG_PATH = File.expand_path("~/.config/earl/heartbeats.yml")
@@ -27,12 +26,10 @@ module Earl
         [ manage_heartbeat_definition ]
       end
 
-      # :reek:UtilityFunction
       def handles?(name)
         TOOL_NAMES.include?(name)
       end
 
-      # :reek:ControlParameter
       def call(name, arguments)
         return unless name == "manage_heartbeat"
 
@@ -56,7 +53,6 @@ module Earl
         text_content("**Heartbeats (#{heartbeats.size}):**\n\n#{lines.join("\n\n")}")
       end
 
-      # :reek:DuplicateMethodCall
       def handle_create(arguments)
         name = arguments["name"]
         return text_content("Error: name is required") unless name && !name.empty?
@@ -70,7 +66,6 @@ module Earl
         text_content("Created heartbeat '#{name}'. Scheduler will pick it up within 30 seconds.")
       end
 
-      # :reek:DuplicateMethodCall
       def handle_update(arguments)
         name = arguments["name"]
         return text_content("Error: name is required") unless name && !name.empty?
@@ -84,7 +79,6 @@ module Earl
         text_content("Updated heartbeat '#{name}'. Scheduler will pick up changes within 30 seconds.")
       end
 
-      # :reek:DuplicateMethodCall
       def handle_delete(arguments)
         name = arguments["name"]
         return text_content("Error: name is required") unless name && !name.empty?
@@ -118,7 +112,6 @@ module Earl
 
       # --- Entry building ---
 
-      # :reek:DuplicateMethodCall :reek:FeatureEnvy :reek:TooManyStatements
       def build_entry(arguments)
         entry = {}
         entry["description"] = arguments["description"] if arguments["description"]
@@ -140,7 +133,6 @@ module Earl
         entry
       end
 
-      # :reek:DuplicateMethodCall
       def build_schedule(arguments)
         schedule = {}
         schedule["cron"] = arguments["cron"] if arguments["cron"]
@@ -149,7 +141,6 @@ module Earl
         schedule
       end
 
-      # :reek:DuplicateMethodCall :reek:TooManyStatements
       def merge_entry(entry, arguments)
         MUTABLE_FIELDS.each do |field|
           next unless arguments.key?(field)
@@ -172,7 +163,6 @@ module Earl
 
       # --- Formatting ---
 
-      # :reek:FeatureEnvy :reek:DuplicateMethodCall
       def format_heartbeat(name, config)
         schedule = config["schedule"] || {}
         schedule_str = format_schedule(schedule)
@@ -181,7 +171,6 @@ module Earl
         "- **#{name}** (#{enabled}#{once_badge}, #{schedule_str})\n  #{config['description'] || name}"
       end
 
-      # :reek:DuplicateMethodCall :reek:UtilityFunction
       def format_schedule(schedule)
         if schedule["cron"]
           "cron: `#{schedule['cron']}`"
@@ -202,7 +191,6 @@ module Earl
 
       # --- Tool definition ---
 
-      # :reek:UtilityFunction
       def manage_heartbeat_definition
         {
           name: "manage_heartbeat",

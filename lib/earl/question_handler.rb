@@ -18,7 +18,6 @@ module Earl
       @mutex = Mutex.new
     end
 
-    # :reek:TooManyStatements
     def handle_tool_use(thread_id:, tool_use:, channel_id: nil)
       return nil unless tool_use[:name] == "AskUserQuestion"
 
@@ -71,7 +70,6 @@ module Earl
 
     private
 
-    # :reek:FeatureEnvy
     def post_current_question(state)
       question = state.questions[state.current_index]
       options = question["options"] || []

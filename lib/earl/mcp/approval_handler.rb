@@ -59,7 +59,6 @@ module Earl
 
       # --- Core permission flow (internal implementation) ---
 
-      # :reek:TooManyStatements
       def handle(tool_name:, input:)
         if @mutex.synchronize { @allowed_tools.include?(tool_name) }
           log(:info, "Auto-allowing #{tool_name} (previously approved)")
@@ -122,7 +121,6 @@ module Earl
         end
       end
 
-      # :reek:TooManyStatements
       def wait_for_reaction(post_id, tool_name, input)
         timeout_sec = @config.permission_timeout_ms / 1000.0
         deadline = Time.now + timeout_sec
@@ -137,10 +135,13 @@ module Earl
 
         result || deny_result("Timed out waiting for approval")
       ensure
-        ws&.close rescue nil # rubocop:disable Style/RescueModifier
+        begin
+          ws&.close
+        rescue StandardError
+          nil
+        end
       end
 
-      # :reek:TooManyStatements
       def connect_websocket
         ws = WebSocket::Client::Simple.connect(@config.websocket_url)
         token = @config.platform_token

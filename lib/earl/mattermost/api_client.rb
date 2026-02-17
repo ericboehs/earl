@@ -44,7 +44,6 @@ module Earl
         response
       end
 
-      # :reek:FeatureEnvy
       def build_request(method_class, uri, body)
         req = method_class.new(uri)
         req["Authorization"] = "Bearer #{@config.bot_token}"
@@ -58,7 +57,6 @@ module Earl
       MAX_RETRIES = 2
       RETRY_DELAY = 1
 
-      # :reek:FeatureEnvy
       def send_request(uri, req)
         attempts = 0
         begin

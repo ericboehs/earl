@@ -41,7 +41,6 @@ module Earl
     USAGE_SCRIPT = File.expand_path("../../bin/claude-usage", __dir__)
     CONTEXT_SCRIPT = File.expand_path("../../bin/claude-context", __dir__)
 
-    # :reek:LongParameterList
     def initialize(session_manager:, mattermost:, config:, heartbeat_scheduler: nil, tmux_store: nil, tmux_adapter: Tmux)
       @session_manager = session_manager
       @mattermost = mattermost
@@ -55,7 +54,6 @@ module Earl
     # Returns { passthrough: "/command" } for passthrough commands so the
     # runner can route them through the normal message pipeline.
     # Returns nil for all other commands (handled inline).
-    # :reek:TooManyStatements :reek:FeatureEnvy
     def execute(command, thread_id:, channel_id:)
       name = command.name
       slash = PASSTHROUGH_COMMANDS[name]
@@ -72,8 +70,7 @@ module Earl
 
     private
 
-    # :reek:TooManyStatements :reek:ControlParameter :reek:LongParameterList :reek:DuplicateMethodCall
-    def dispatch_command(name, thread_id, channel_id, args) # rubocop:disable Metrics/MethodLength
+    def dispatch_command(name, thread_id, channel_id, args)
       arg = args.first
       case name
       when :help then handle_help(thread_id, channel_id)
@@ -117,7 +114,6 @@ module Earl
       end
     end
 
-    # :reek:FeatureEnvy
     def format_stats(stats)
       total_in = stats.total_input_tokens
       total_out = stats.total_output_tokens
@@ -128,7 +124,6 @@ module Earl
       lines.join("\n")
     end
 
-    # :reek:FeatureEnvy
     def append_optional_stats(lines, stats)
       pct = stats.context_percent
       lines << "| **Context used** | #{format('%.1f%%', pct)} of #{format_number(stats.context_window)} |" if pct
@@ -140,7 +135,6 @@ module Earl
       lines << "| **Last speed** | #{format('%.0f', tps)} tok/s |" if tps
     end
 
-    # :reek:FeatureEnvy
     def format_persisted_stats(persisted)
       total_in = persisted.total_input_tokens || 0
       total_out = persisted.total_output_tokens || 0
@@ -210,7 +204,6 @@ module Earl
       post_reply(channel_id, thread_id, format_heartbeats(statuses))
     end
 
-    # :reek:TooManyStatements
     def handle_usage(thread_id, channel_id)
       post_reply(channel_id, thread_id, ":hourglass: Fetching usage data (takes ~15s)...")
 
@@ -225,7 +218,6 @@ module Earl
       end
     end
 
-    # :reek:UtilityFunction
     def fetch_usage_data
       output, status = Open3.capture2(USAGE_SCRIPT, "--json", err: File::NULL)
       return nil unless status.success?
@@ -235,7 +227,6 @@ module Earl
       nil
     end
 
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
     def format_usage(data)
       lines = [ "#### :bar_chart: Claude Pro Usage" ]
 
@@ -251,7 +242,6 @@ module Earl
       lines.join("\n")
     end
 
-    # :reek:TooManyStatements
     def handle_context(thread_id, channel_id)
       sid = @session_manager.claude_session_id_for(thread_id)
       unless sid
@@ -272,7 +262,6 @@ module Earl
       end
     end
 
-    # :reek:UtilityFunction
     def fetch_context_data(session_id)
       output, status = Open3.capture2(CONTEXT_SCRIPT, session_id, "--json", err: File::NULL)
       return nil unless status.success?
@@ -282,7 +271,6 @@ module Earl
       nil
     end
 
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall :reek:TooManyStatements
     def format_context(data)
       lines = [ "#### :brain: Context Window Usage" ]
       lines << "- **Model:** `#{data['model']}`"
@@ -304,7 +292,6 @@ module Earl
       lines.join("\n")
     end
 
-    # :reek:LongParameterList
     def format_context_category(lines, cats, key, label)
       cat = cats[key]
       tokens = cat&.fetch("tokens", nil)
@@ -315,7 +302,6 @@ module Earl
       lines << "- **#{label}:** #{tokens} tokens#{pct}"
     end
 
-    # :reek:FeatureEnvy
     def format_heartbeats(statuses)
       lines = [
         "#### 🫀 Heartbeat Status",
@@ -326,7 +312,6 @@ module Earl
       lines.join("\n")
     end
 
-    # :reek:FeatureEnvy
     def format_heartbeat_row(status)
       next_run = format_time(status[:next_run_at])
       last_run = format_time(status[:last_run_at])
@@ -361,7 +346,6 @@ module Earl
 
     # -- Tmux session handlers ------------------------------------------------
 
-    # :reek:TooManyStatements
     def handle_sessions(thread_id, channel_id)
       unless @tmux.available?
         post_reply(channel_id, thread_id, ":x: tmux is not installed.")
@@ -389,7 +373,6 @@ module Earl
       post_reply(channel_id, thread_id, lines.join("\n"))
     end
 
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
     def format_claude_pane_row(pane)
       target = pane[:target]
       project = File.basename(pane[:path])
@@ -407,7 +390,6 @@ module Earl
     # - :permission  — Claude is showing a "Do you want to proceed?" dialog
     # - :active      — Claude is processing ("esc to interrupt" visible)
     # - :idle        — waiting for user input
-    # :reek:FeatureEnvy
     def detect_pane_status(target)
       output = @tmux.capture_pane(target, lines: 20)
       return :permission if output.include?("Do you want to proceed?")
@@ -419,7 +401,6 @@ module Earl
       :idle
     end
 
-    # :reek:TooManyStatements
     def handle_session_show(thread_id, channel_id, name)
       with_tmux_session(thread_id, channel_id, name) do
         output = @tmux.capture_pane(name)
@@ -437,7 +418,6 @@ module Earl
       end
     end
 
-    # :reek:LongParameterList
     def handle_session_input(thread_id, channel_id, name, text)
       with_tmux_session(thread_id, channel_id, name) do
         @tmux.send_keys(name, text)
@@ -477,7 +457,6 @@ module Earl
       post_reply(channel_id, thread_id, ":x: Error killing session: #{error.message}")
     end
 
-    # :reek:TooManyStatements :reek:LongParameterList
     def handle_spawn(thread_id, channel_id, prompt, flags_str)
       if prompt.to_s.strip.empty?
         post_reply(channel_id, thread_id, ":x: Usage: `!spawn \"prompt\" [--name N] [--dir D]`")
@@ -509,7 +488,6 @@ module Earl
       post_reply(channel_id, thread_id, ":x: Failed to spawn session: #{error.message}")
     end
 
-    # :reek:TooManyStatements :reek:LongParameterList
     def spawn_tmux_session(name:, prompt:, working_dir:, channel_id:, thread_id:)
       command = "claude #{Shellwords.shellescape(prompt)}"
       @tmux.create_session(name: name, command: command, working_dir: working_dir)
@@ -524,7 +502,6 @@ module Earl
                  "Use `!session #{name}` to check output.")
     end
 
-    # :reek:LongParameterList
     def save_tmux_session_info(name:, channel_id:, thread_id:, working_dir:, prompt:)
       return unless @tmux_store
 
@@ -547,7 +524,6 @@ module Earl
       post_reply(channel_id, thread_id, ":x: Error: #{error.message}")
     end
 
-    # :reek:DuplicateMethodCall
     def parse_spawn_flags(str)
       {
         dir: str[/--dir\s+(\S+)/, 1],

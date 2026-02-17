@@ -1,23 +1,20 @@
 # frozen_string_literal: true
 
+require_relative "tmux_monitor/question_forwarder"
+require_relative "tmux_monitor/permission_forwarder"
+
 module Earl
   # Lightweight background poller that monitors EARL-spawned tmux sessions for
   # state changes (questions, permission prompts, errors, completion, stalls)
   # and posts alerts to Mattermost. Also handles forwarding user reactions
   # back to tmux sessions as keyboard input.
-  # :reek:TooManyConstants :reek:TooManyInstanceVariables :reek:TooManyMethods :reek:DataClump
   class TmuxMonitor
     include Logging
-
-    EMOJI_NUMBERS = QuestionHandler::EMOJI_NUMBERS
-    EMOJI_MAP = QuestionHandler::EMOJI_MAP
 
     DEFAULT_POLL_INTERVAL = 45 # seconds
     DEFAULT_STALL_THRESHOLD = 5 # consecutive unchanged polls
 
     # Pattern matchers for detecting session state from captured output.
-    # Order matters: more specific patterns are checked first.
-    # NOTE: :completed is handled separately via SHELL_PROMPT_PATTERN on last lines.
     STATE_PATTERNS = {
       asking_question: /\?\s*\n\s*(?:1[\.\)]\s|❯)/m,
       requesting_permission: /(?:Allow|Deny|approve|permission|Do you want to allow)/i,
@@ -26,309 +23,124 @@ module Earl
 
     SHELL_PROMPT_PATTERN = /[❯#%]\s*\z|\$\s+\z/
 
-    # :reek:TooManyStatements :reek:DataClump :reek:UnusedParameters
-    def initialize(mattermost:, tmux_store:, config: nil, tmux_adapter: Tmux)
-      @mattermost = mattermost
-      @tmux_store = tmux_store
-      @tmux = tmux_adapter
-      @poll_interval = Integer(ENV.fetch("EARL_TMUX_POLL_INTERVAL", DEFAULT_POLL_INTERVAL))
-      @stall_threshold = Integer(ENV.fetch("EARL_TMUX_STALL_THRESHOLD", DEFAULT_STALL_THRESHOLD))
+    INTERACTIVE_STATES = { asking_question: :question, requesting_permission: :permission }.freeze
 
-      @last_states = {}    # session_name -> state symbol
-      @output_hashes = {}  # session_name -> { hash:, count: }
-      @pending_interactions = {} # post_id -> { session_name:, type:, options: }
-      @mutex = Mutex.new
-      @thread = nil
-      @shutdown = false
+    def initialize(mattermost:, tmux_store:, tmux_adapter: Tmux)
+      @poll_state = PollState.new(stall_threshold: Integer(ENV.fetch("EARL_TMUX_STALL_THRESHOLD", DEFAULT_STALL_THRESHOLD)))
+      @deps = Dependencies.new(mattermost, tmux_store, tmux_adapter, @poll_state)
+      @poll_interval = Integer(ENV.fetch("EARL_TMUX_POLL_INTERVAL", DEFAULT_POLL_INTERVAL))
+      @thread_ctl = ThreadControl.new
     end
 
     def start
-      return if @thread&.alive?
+      return if @thread_ctl.alive?
 
-      @shutdown = false
-      @thread = Thread.new { poll_loop }
+      @thread_ctl.start { poll_loop }
       log(:info, "TmuxMonitor started (interval: #{@poll_interval}s)")
     end
 
     def stop
-      @shutdown = true
-      if @thread
-        @thread.join(5)
-        @thread.kill if @thread.alive?
-        @thread = nil
-      end
+      @thread_ctl.stop
       log(:info, "TmuxMonitor stopped")
     end
 
     # Called by Runner when a user reacts to a forwarded question/permission post.
     # Returns true if the reaction was handled, nil otherwise.
     def handle_reaction(post_id:, emoji_name:)
-      interaction = @mutex.synchronize { @pending_interactions[post_id] }
+      interaction = @poll_state.pending_interaction(post_id)
       return nil unless interaction
 
       case interaction[:type]
       when :question
-        handle_question_reaction(interaction, emoji_name, post_id)
+        @deps.question_forwarder.handle_reaction(interaction, emoji_name, post_id)
       when :permission
-        handle_permission_reaction(interaction, emoji_name, post_id)
+        @deps.permission_forwarder.handle_reaction(interaction, emoji_name, post_id)
       end
+    end
+
+    # Delegate parse_question to QuestionForwarder for external callers.
+    def parse_question(output)
+      @deps.question_forwarder.parse_question(output)
     end
 
     private
 
     def poll_loop
-      until @shutdown
+      loop do
         sleep @poll_interval
-        break if @shutdown
+        break if @thread_ctl.shutdown?
 
-        begin
-          poll_sessions
-        rescue StandardError => error
-          log(:error, "TmuxMonitor poll error: #{error.message}\n#{error.backtrace&.first(5)&.join("\n")}")
-        end
+        poll_sessions
+      rescue StandardError => error
+        log(:error, "TmuxMonitor poll error: #{error.message}\n#{error.backtrace&.first(5)&.join("\n")}")
       end
     end
 
-    # :reek:TooManyStatements
     def poll_sessions
-      sessions = @tmux_store.all
+      sessions = @deps.tmux_store.all
       cleanup_dead_sessions(sessions)
 
       sessions.each do |name, info|
-        next unless @tmux.session_exists?(name)
-
-        output = safe_capture(name)
-        next unless output
-
-        state = detect_state(output, name)
-        handle_state_change(name, state, output, info) if state_changed?(name, state)
+        poll_single_session(name, info)
       rescue StandardError => error
         log(:error, "TmuxMonitor: error polling session '#{name}': #{error.message}\n#{error.backtrace&.first(5)&.join("\n")}")
       end
     end
 
+    def poll_single_session(name, info)
+      return unless @deps.tmux.session_exists?(name)
+
+      output = safe_capture(name)
+      return unless output
+
+      state = OutputAnalyzer.detect(output, name, @poll_state)
+      return unless @poll_state.transition(name, state)
+
+      alert_for_state(state, name, output, info)
+    end
+
+    def alert_for_state(state, name, output, info)
+      case state
+      when :asking_question then @deps.question_forwarder.forward(name, output, info)
+      when :requesting_permission then @deps.permission_forwarder.forward(name, output, info)
+      when :errored then post_alert(info, error_message(name, output))
+      when :completed then post_alert(info, completed_message(name))
+      when :stalled then post_alert(info, stalled_message(name))
+      end
+    end
+
+    def error_message(name, output)
+      ":x: Session `#{name}` encountered an error:\n```\n#{output.lines.last(10)&.join}\n```"
+    end
+
+    def completed_message(name)
+      ":white_check_mark: Session `#{name}` appears to have completed (shell prompt detected)."
+    end
+
+    def stalled_message(name)
+      ":hourglass: Session `#{name}` appears stalled (output unchanged for #{@poll_state.stall_threshold} polls)."
+    end
+
     def cleanup_dead_sessions(sessions)
       sessions.each do |name, info|
-        next if @tmux.session_exists?(name)
+        next if @deps.tmux.session_exists?(name)
 
         log(:info, "TmuxMonitor: session '#{name}' no longer exists, cleaning up")
         post_alert(info, ":tombstone: Tmux session `#{name}` has ended.")
-        @tmux_store.delete(name)
-        @last_states.delete(name)
-        @output_hashes.delete(name)
-        cleanup_pending_interactions_for(name)
+        @deps.tmux_store.delete(name)
+        @poll_state.cleanup_session(name)
       end
     end
 
     def safe_capture(name)
-      @tmux.capture_pane(name, lines: 50)
+      @deps.tmux.capture_pane(name, lines: 50)
     rescue Tmux::Error => error
       log(:warn, "TmuxMonitor: failed to capture '#{name}': #{error.message}")
       nil
     end
 
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
-    def detect_state(output, name)
-      last_lines = output.lines.last(3)&.join || ""
-
-      # Check for shell prompt → completed (Claude exited back to shell)
-      return :completed if last_lines.match?(SHELL_PROMPT_PATTERN)
-
-      # Check pattern-based states against recent output only to avoid
-      # matching keywords that appear in discussion text further up.
-      recent = output.lines.last(15)&.join || ""
-      STATE_PATTERNS.each do |state, pattern|
-        return state if recent.match?(pattern)
-      end
-
-      # Stall detection: compare output hashes between polls
-      return :stalled if stalled?(name, output)
-
-      :running
-    end
-
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
-    def stalled?(name, output)
-      current_hash = output.hash
-      entry = @output_hashes[name]
-
-      if entry && entry[:hash] == current_hash
-        entry[:count] += 1
-        entry[:count] >= @stall_threshold
-      else
-        @output_hashes[name] = { hash: current_hash, count: 1 }
-        false
-      end
-    end
-
-    # :reek:FeatureEnvy :reek:DuplicateMethodCall
-    def state_changed?(name, state)
-      previous = @last_states[name]
-      return true if previous != state
-      # Re-trigger for interactive states only if no pending interaction exists
-      # for this session (prevents spam every poll cycle).
-      if %i[asking_question requesting_permission].include?(state)
-        return !pending_interaction_for?(name, state)
-      end
-
-      false
-    end
-
-    # Checks whether we already have an unhandled pending interaction for this
-    # session and interaction type, avoiding duplicate Mattermost posts.
-    # :reek:ControlParameter
-    def pending_interaction_for?(name, state)
-      type = state == :asking_question ? :question : :permission
-      @mutex.synchronize do
-        @pending_interactions.any? { |_, interaction| interaction[:session_name] == name && interaction[:type] == type }
-      end
-    end
-
-    # :reek:TooManyStatements :reek:LongParameterList
-    def handle_state_change(name, state, output, info)
-      @last_states[name] = state
-
-      case state
-      when :asking_question
-        forward_question(name, output, info)
-      when :requesting_permission
-        forward_permission(name, output, info)
-      when :errored
-        post_alert(info, ":x: Session `#{name}` encountered an error:\n```\n#{last_lines_of(output, 10)}\n```")
-      when :completed
-        post_alert(info, ":white_check_mark: Session `#{name}` appears to have completed (shell prompt detected).")
-      when :stalled
-        post_alert(info, ":hourglass: Session `#{name}` appears stalled (output unchanged for #{@stall_threshold} polls).")
-      end
-    end
-
-    # -- Question forwarding ---------------------------------------------------
-
-    # :reek:TooManyStatements :reek:DuplicateMethodCall
-    def forward_question(name, output, info)
-      parsed = parse_question(output)
-      return unless parsed
-
-      lines = [ ":question: **Tmux `#{name}`** is asking:" ]
-      lines << "```"
-      lines << parsed[:text]
-      lines << "```"
-      parsed[:options].each_with_index do |opt, idx|
-        emoji = EMOJI_NUMBERS[idx]
-        lines << ":#{emoji}: #{opt}" if emoji
-      end
-
-      post = post_alert(info, lines.join("\n"))
-      return unless post
-
-      post_id = post["id"]
-      return unless post_id
-
-      add_emoji_reactions(post_id, parsed[:options].size)
-      @mutex.synchronize do
-        @pending_interactions[post_id] = {
-          session_name: name, type: :question, options: parsed[:options]
-        }
-      end
-    end
-
-    # :reek:TooManyStatements
-    def parse_question(output)
-      # Look for a question mark followed by numbered options
-      lines = output.lines.map(&:strip).reject(&:empty?)
-      question_idx = lines.rindex { |line| line.include?("?") }
-      return nil unless question_idx
-
-      # Gather numbered options after the question
-      options = []
-      (question_idx + 1...lines.size).each do |idx|
-        line = lines[idx]
-        if line.match?(/\A\s*\d+[\.\)]\s/)
-          options << line.sub(/\A\s*\d+[\.\)]\s*/, "")
-        end
-      end
-
-      return nil if options.empty?
-
-      { text: lines[question_idx], options: options.first(4) }
-    end
-
-    # -- Permission forwarding -------------------------------------------------
-
-    # :reek:TooManyStatements
-    def forward_permission(name, output, info)
-      context = last_lines_of(output, 15)
-
-      lines = [
-        ":lock: **Tmux `#{name}`** is requesting permission:",
-        "```",
-        context,
-        "```",
-        ":white_check_mark: Approve  |  :x: Deny"
-      ]
-
-      post = post_alert(info, lines.join("\n"))
-      return unless post
-
-      post_id = post["id"]
-      return unless post_id
-
-      @mattermost.add_reaction(post_id: post_id, emoji_name: "white_check_mark")
-      @mattermost.add_reaction(post_id: post_id, emoji_name: "x")
-
-      @mutex.synchronize do
-        @pending_interactions[post_id] = { session_name: name, type: :permission }
-      end
-    end
-
-    # -- Reaction handlers -----------------------------------------------------
-
-    # :reek:TooManyStatements
-    def handle_question_reaction(interaction, emoji_name, post_id)
-      answer_index = EMOJI_MAP[emoji_name]
-      return nil unless answer_index
-
-      options = interaction[:options]
-      return nil unless answer_index < options.size
-
-      # Send the option number (1-indexed) to tmux
-      @tmux.send_keys(interaction[:session_name], (answer_index + 1).to_s)
-      @mutex.synchronize { @pending_interactions.delete(post_id) }
-      true
-    rescue Tmux::Error => error
-      log(:error, "TmuxMonitor: failed to send question answer: #{error.message}")
-      nil
-    end
-
-    # :reek:TooManyStatements :reek:ControlParameter
-    def handle_permission_reaction(interaction, emoji_name, post_id)
-      answer = case emoji_name
-      when "white_check_mark" then "y"
-      when "x" then "n"
-      end
-      return nil unless answer
-
-      @tmux.send_keys(interaction[:session_name], answer)
-      @mutex.synchronize { @pending_interactions.delete(post_id) }
-      true
-    rescue Tmux::Error => error
-      log(:error, "TmuxMonitor: failed to send permission answer: #{error.message}")
-      nil
-    end
-
-    # -- Helpers ---------------------------------------------------------------
-
-    # :reek:DuplicateMethodCall
-    def add_emoji_reactions(post_id, count)
-      [ count, EMOJI_NUMBERS.size ].min.times do |idx|
-        @mattermost.add_reaction(post_id: post_id, emoji_name: EMOJI_NUMBERS[idx])
-      rescue StandardError => error
-        log(:warn, "TmuxMonitor: failed to add reaction :#{EMOJI_NUMBERS[idx]}: (#{error.class}): #{error.message}")
-      end
-    end
-
     def post_alert(info, message)
-      @mattermost.create_post(
+      @deps.mattermost.create_post(
         channel_id: info.channel_id,
         message: message,
         root_id: info.thread_id
@@ -338,14 +150,152 @@ module Earl
       nil
     end
 
-    def last_lines_of(output, count)
-      output.lines.last(count)&.join || ""
+    # Stateless output analysis that detects tmux session state from captured text.
+    module OutputAnalyzer
+      module_function
+
+      def detect(output, name, poll_state)
+        all_lines = output.lines
+        return :completed if completed?(all_lines)
+
+        state_from_patterns(all_lines) || stall_or_running(name, output, poll_state)
+      end
+
+      def completed?(all_lines)
+        (all_lines.last(3)&.join || "").match?(SHELL_PROMPT_PATTERN)
+      end
+
+      def state_from_patterns(all_lines)
+        recent = all_lines.last(15)&.join || ""
+        STATE_PATTERNS.each do |state, pattern|
+          return state if recent.match?(pattern)
+        end
+        nil
+      end
+
+      def stall_or_running(name, output, poll_state)
+        poll_state.stalled?(name, output) ? :stalled : :running
+      end
     end
 
-    # Removes pending interactions for a session that no longer exists.
-    def cleanup_pending_interactions_for(name)
-      @mutex.synchronize do
-        @pending_interactions.delete_if { |_, interaction| interaction[:session_name] == name }
+    # Bundles external service dependencies and forwarder collaborators.
+    Forwarders = Struct.new(:question, :permission, keyword_init: true)
+
+    # Holds external service references and forwarder pair.
+    class Dependencies
+      attr_reader :mattermost, :tmux_store, :tmux
+
+      def initialize(mattermost, tmux_store, tmux_adapter, poll_state)
+        @mattermost = mattermost
+        @tmux_store = tmux_store
+        @tmux = tmux_adapter
+        shared = { mattermost: mattermost, tmux: tmux_adapter,
+                   pending_interactions: poll_state.pending_interactions, mutex: poll_state.mutex }
+        @forwarders = Forwarders.new(
+          question: QuestionForwarder.new(**shared),
+          permission: PermissionForwarder.new(**shared)
+        )
+      end
+
+      def question_forwarder = @forwarders.question
+      def permission_forwarder = @forwarders.permission
+    end
+
+    # Encapsulates mutable poll tracking state: last-seen states, output hashes
+    # for stall detection, and pending user interactions.
+    class PollState
+      attr_reader :pending_interactions, :mutex, :stall_threshold
+
+      def initialize(stall_threshold: DEFAULT_STALL_THRESHOLD)
+        @tracking = {}
+        @pending_interactions = {}
+        @mutex = Mutex.new
+        @stall_threshold = stall_threshold
+      end
+
+      def pending_interaction(post_id)
+        @mutex.synchronize { @pending_interactions[post_id] }
+      end
+
+      # Returns true if state changed (and records the new state), false otherwise.
+      def transition(name, state)
+        previous = @tracking.dig(name, :last_state)
+        interaction_type = INTERACTIVE_STATES[state]
+        changed = previous != state || no_pending_for?(name, interaction_type)
+        return false unless changed
+
+        ensure_tracking(name)
+        @tracking[name][:last_state] = state
+        true
+      end
+
+      def stalled?(name, output)
+        ensure_tracking(name)
+        update_stall_count(@tracking[name], output.hash)
+      end
+
+      def cleanup_session(name)
+        @tracking.delete(name)
+        @mutex.synchronize do
+          @pending_interactions.delete_if { |_, interaction| interaction[:session_name] == name }
+        end
+      end
+
+      private
+
+      def ensure_tracking(name)
+        @tracking[name] ||= { last_state: nil, output_hash: nil, stall_count: 0 }
+      end
+
+      def update_stall_count(entry, current_hash)
+        return reset_stall(entry, current_hash) unless entry[:output_hash] == current_hash
+
+        new_count = entry[:stall_count] + 1
+        entry[:stall_count] = new_count
+        new_count >= @stall_threshold
+      end
+
+      def reset_stall(entry, current_hash)
+        entry.merge!(output_hash: current_hash, stall_count: 1)
+        false
+      end
+
+      def no_pending_for?(name, interaction_type)
+        return false unless interaction_type
+
+        @mutex.synchronize do
+          @pending_interactions.none? { |_, interaction| interaction[:session_name] == name && interaction[:type] == interaction_type }
+        end
+      end
+    end
+
+    # Simple background thread lifecycle wrapper.
+    class ThreadControl
+      def initialize
+        @thread = nil
+        @shutdown = false
+      end
+
+      def alive?
+        @thread&.alive?
+      end
+
+      def shutdown?
+        @shutdown
+      end
+
+      def start(&block)
+        @shutdown = false
+        @thread = Thread.new(&block)
+      end
+
+      def stop
+        @shutdown = true
+        return unless @thread
+
+        @thread.join(5)
+        @thread.kill if @thread.alive?
+        @thread = nil
       end
     end
   end

@@ -3,7 +3,8 @@
 module Earl
   # Shared formatting helpers for numbers and display.
   module Formatting
-    # :reek:UtilityFunction
+    private
+
     def format_number(num)
       return "0" unless num
 

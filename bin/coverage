@@ -93,7 +93,6 @@ if missed_lines.to_i.positive? || overall_missed_branches&.to_i&.positive?
     puts ''
   end
 
-  # rubocop:disable Metrics/BlockLength
   files_to_show.each do |row|
     file_name = row.css('.t-file__name a').first&.text&.strip
     line_coverage = row.css('.t-file__coverage').first&.text&.strip
@@ -113,11 +112,11 @@ if missed_lines.to_i.positive? || overall_missed_branches&.to_i&.positive?
       if file_section.any?
         # Get the actual counts from SimpleCov's summary
         line_summary = file_section.css('.t-line-summary')
-        if line_summary.any? # rubocop:disable Metrics/BlockNesting
+        if line_summary.any?
           summary_text = line_summary.text
           # Extract numbers from text like "13 relevant lines. 12 lines covered and 1 lines missed."
-          total_file_lines = Regexp.last_match(1).to_i if summary_text.match(/(\d+)\s+relevant\s+lines/) # rubocop:disable Metrics/BlockNesting
-          covered_file_lines = Regexp.last_match(1).to_i if summary_text.match(/(\d+)\s+lines\s+covered/) # rubocop:disable Metrics/BlockNesting
+          total_file_lines = Regexp.last_match(1).to_i if summary_text.match(/(\d+)\s+relevant\s+lines/)
+          covered_file_lines = Regexp.last_match(1).to_i if summary_text.match(/(\d+)\s+lines\s+covered/)
         end
 
         # Find missed lines and branches
@@ -125,9 +124,9 @@ if missed_lines.to_i.positive? || overall_missed_branches&.to_i&.positive?
           line_number = line_item.attr('data-linenumber')
           line_class = line_item.attr('class')
 
-          if line_class&.include?('missed') && !line_class.include?('missed-branch') # rubocop:disable Metrics/BlockNesting
+          if line_class&.include?('missed') && !line_class.include?('missed-branch')
             missed_lines << line_number
-          elsif line_class&.include?('missed-branch') # rubocop:disable Metrics/BlockNesting
+          elsif line_class&.include?('missed-branch')
             missed_branches << line_number
           end
         end
@@ -135,26 +134,24 @@ if missed_lines.to_i.positive? || overall_missed_branches&.to_i&.positive?
     end
 
     # Format the line ranges more clearly
-    # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
     def format_line_ranges(lines)
       return '' if lines.empty?
 
       ranges = []
-      current_range = [lines.first.to_i]
+      current_range = [ lines.first.to_i ]
 
       lines.map(&:to_i).sort[1..]&.each do |line|
         if line == current_range.last + 1
           current_range << line
         else
           ranges << format_range(current_range)
-          current_range = [line]
+          current_range = [ line ]
         end
       end
       ranges << format_range(current_range)
 
       "L#{ranges.join(', L')}"
     end
-    # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
 
     def format_range(range)
       if range.length == 1
@@ -195,7 +192,6 @@ if missed_lines.to_i.positive? || overall_missed_branches&.to_i&.positive?
 
     puts ''
   end
-  # rubocop:enable Metrics/BlockLength
 end
 
 # Write to GitHub Actions job summary if available

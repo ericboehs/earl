@@ -179,7 +179,6 @@ module Earl
       schedule_update
     end
 
-    # :reek:FeatureEnvy
     def format_tool_use(tool_use)
       format_tool_display(tool_use[:name], tool_use[:input])
     end
