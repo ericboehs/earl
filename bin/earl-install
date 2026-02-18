@@ -37,6 +37,7 @@ EARL_ALLOWED_USERS=your-username
 # EARL_CLAUDE_HOME=/custom/path
 # EARL_DEBUG=1
 ENVTEMPLATE
+  chmod 600 "$ENV_FILE"
   echo ""
   echo "  Created $ENV_FILE — please fill in your secrets, then re-run this script."
   echo ""
@@ -52,7 +53,13 @@ sed -e "s|__EARL_DIR__|$EARL_DIR|g" -e "s|__HOME__|$HOME|g" \
 # 5. Load the agent
 echo "  Loading agent..."
 launchctl bootout "gui/$(id -u)/com.boehs.earl" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENTS_DIR/$PLIST_NAME"
+if ! launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENTS_DIR/$PLIST_NAME" 2>&1; then
+  echo "" >&2
+  echo "ERROR: Failed to load launchd agent." >&2
+  echo "  Try: launchctl bootout gui/$(id -u)/com.boehs.earl" >&2
+  echo "  Then re-run: bin/earl-install" >&2
+  exit 1
+fi
 
 echo ""
 echo "==> EARL installed and running!"

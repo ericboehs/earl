@@ -75,7 +75,7 @@ Claude subprocesses spawned by EARL use `~/.config/earl/claude-home/` as HOME in
 
 ```
 bin/earl                          # Entry point
-bin/earl-launchd                  # Wrapper script for launchd (sets PATH, loads env)
+bin/earl-launchd                  # Wrapper script for launchd (sets PATH, loads env, extracts credentials)
 bin/earl-install                  # One-time setup: dirs, config, plist, launchctl load
 bin/earl-permission-server        # MCP permission server (spawned by Claude CLI as subprocess)
 bin/claude-context                # Context window usage helper (spawned by !context command)

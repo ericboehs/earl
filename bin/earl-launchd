@@ -3,26 +3,34 @@ set -euo pipefail
 
 EARL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-export PATH="$HOME/.local/share/mise/installs/ruby/4.0.1/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# launchd provides a minimal PATH; use mise shims so the active Ruby version is resolved dynamically
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export LANG="en_US.UTF-8"
 export LC_ALL="en_US.UTF-8"
 
-# Load EARL environment variables
-if [ -f "$HOME/.config/earl/env" ]; then
-  set -a
-  # shellcheck source=/dev/null
-  source "$HOME/.config/earl/env"
-  set +a
+# Load EARL environment variables (required for Mattermost credentials)
+ENV_FILE="$HOME/.config/earl/env"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "FATAL: Environment file not found: $ENV_FILE" >&2
+  echo "  Run 'bin/earl-install' to create it, then fill in your secrets." >&2
+  exit 1
 fi
+set -a
+# shellcheck source=/dev/null
+source "$ENV_FILE"
+set +a
 
 CLAUDE_HOME="${EARL_CLAUDE_HOME:-$HOME/.config/earl/claude-home}"
+mkdir -p "$CLAUDE_HOME/.claude"
 
 # Extract Claude credentials from macOS Keychain into isolated HOME
 CREDS=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || true)
 if [ -n "$CREDS" ]; then
-  mkdir -p "$CLAUDE_HOME/.claude"
   echo "$CREDS" > "$CLAUDE_HOME/.claude/.credentials.json"
   chmod 600 "$CLAUDE_HOME/.claude/.credentials.json"
+else
+  echo "WARNING: Could not extract Claude credentials from macOS Keychain." >&2
+  echo "  Claude sessions may fail to authenticate." >&2
 fi
 
 # Seed .claude.json from host if not yet initialized
