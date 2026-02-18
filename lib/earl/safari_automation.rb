@@ -14,6 +14,7 @@ module Earl
   # Each DOM method returns a status string from the inner JS and raises
   # SafariAutomation::Error if the expected elements are not found.
   module SafariAutomation
+    # Raised when Safari/osascript automation fails (element not found, process error).
     class Error < StandardError; end
 
     module_function
@@ -126,13 +127,9 @@ module Earl
     # Each step is a separate execute_js call for reliable error detection.
     def select_repository(repo)
       click_select_repositories_radio
-      sleep 0.5
       open_repository_dialog
-      sleep 0.5
       filter_and_select_repo(repo)
-      sleep 1
       close_repository_dialog
-      sleep 1
       verify_repository_selected!(repo)
     end
 
@@ -151,6 +148,7 @@ module Earl
         );
       JS
       check_result!(output, "'Only select repositories' radio button")
+      sleep 0.5
     end
 
     def open_repository_dialog
@@ -171,6 +169,7 @@ module Earl
         );
       JS
       check_result!(output, "'Select repositories' button")
+      sleep 0.5
     end
 
     def filter_and_select_repo(repo)
@@ -239,6 +238,7 @@ module Earl
           {in: tab}
         );
       JS
+      sleep 1
     end
 
     # GitHub's permissions UI: click "Add permissions" to expand a [role=option] list,
@@ -246,18 +246,12 @@ module Earl
     # "Access:Read-only" button (aria-haspopup=true) and select "Read and write".
     def set_permissions(permissions)
       permissions.each do |perm_name, level|
-        set_single_permission(perm_name, level)
+        display_name = perm_name.tr("_", " ")
+        expand_add_permissions
+        add_permission_option(display_name)
+        set_permission_level(display_name) if level == "write"
         sleep 1
       end
-    end
-
-    def set_single_permission(perm_name, level)
-      display_name = perm_name.tr("_", " ")
-      expand_add_permissions
-      sleep 0.5
-      add_permission_option(display_name)
-      sleep 0.5
-      set_permission_level(display_name) if level == "write"
     end
 
     def expand_add_permissions
@@ -279,6 +273,7 @@ module Earl
         );
       JS
       check_result!(output, "'Add permissions' button")
+      sleep 0.5
     end
 
     def add_permission_option(display_name)
@@ -302,6 +297,7 @@ module Earl
         );
       JS
       check_result!(output, "permission '#{display_name}' in Add permissions list")
+      sleep 0.5
     end
 
     def set_permission_level(display_name)

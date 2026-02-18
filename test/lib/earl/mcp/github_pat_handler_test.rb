@@ -142,7 +142,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   # --- permission normalization ---
 
   test "create normalizes permission access levels to lowercase" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.extract_token_result = "github_pat_test"
 
     args = valid_create_args.merge("permissions" => { "contents" => "Write" })
@@ -155,7 +155,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   # --- expiration validation ---
 
   test "create returns error when expiration_days is zero" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
 
     args = valid_create_args.merge("expiration_days" => 0)
     result = @handler.call("manage_github_pats", args)
@@ -164,7 +164,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create returns error when expiration_days is negative" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
 
     args = valid_create_args.merge("expiration_days" => -30)
     result = @handler.call("manage_github_pats", args)
@@ -173,7 +173,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create returns error when expiration_days is non-numeric string" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
 
     args = valid_create_args.merge("expiration_days" => "abc")
     result = @handler.call("manage_github_pats", args)
@@ -184,7 +184,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   # --- create approval flow ---
 
   test "create returns denied when confirmation is rejected" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :denied }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :denied }
 
     result = @handler.call("manage_github_pats", valid_create_args)
     text = result[:content].first[:text]
@@ -192,7 +192,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create returns error when confirmation fails" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :error }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :error }
 
     result = @handler.call("manage_github_pats", valid_create_args)
     text = result[:content].first[:text]
@@ -200,7 +200,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create calls safari automation on approval and returns token" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.extract_token_result = "github_pat_ABC123_secret"
 
     result = @handler.call("manage_github_pats", valid_create_args)
@@ -212,7 +212,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create returns error when token extraction fails" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.extract_token_result = ""
 
     result = @handler.call("manage_github_pats", valid_create_args)
@@ -221,7 +221,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create returns error when token extraction returns nil" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.define_singleton_method(:extract_token) { nil }
 
     result = @handler.call("manage_github_pats", valid_create_args)
@@ -230,7 +230,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create returns error when safari automation raises" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.raise_on_navigate = true
 
     result = @handler.call("manage_github_pats", valid_create_args)
@@ -239,7 +239,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create uses default 365 day expiration" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.extract_token_result = "github_pat_test"
 
     @handler.call("manage_github_pats", valid_create_args)
@@ -247,7 +247,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create uses custom expiration when provided" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.extract_token_result = "github_pat_test"
 
     args = valid_create_args.merge("expiration_days" => 30)
@@ -256,7 +256,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create navigates to correct GitHub URL" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.extract_token_result = "github_pat_test"
 
     @handler.call("manage_github_pats", valid_create_args)
@@ -264,7 +264,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create sets all requested permissions" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.extract_token_result = "github_pat_test"
 
     args = valid_create_args.merge("permissions" => { "contents" => "write", "issues" => "read" })
@@ -273,7 +273,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   end
 
   test "create calls safari methods in correct order" do
-    @handler.define_singleton_method(:request_create_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
     @safari.extract_token_result = "github_pat_test"
 
     @handler.call("manage_github_pats", valid_create_args)
@@ -286,20 +286,21 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
 
   test "post_confirmation_request posts to correct channel and thread" do
     handler = build_handler_with_api(post_success: true)
-    post_id = handler.send(:post_confirmation_request, "my-token", "owner/repo", { "contents" => "write" }, 365)
+    post_id = handler.send(:post_confirmation_request, sample_pat_request)
     assert_equal "pat-post-1", post_id
   end
 
   test "post_confirmation_request returns nil when API fails" do
     handler = build_handler_with_api(post_success: false)
-    post_id = handler.send(:post_confirmation_request, "my-token", "owner/repo", { "contents" => "write" }, 365)
+    post_id = handler.send(:post_confirmation_request, sample_pat_request)
     assert_nil post_id
   end
 
   test "post_confirmation_request includes PAT details in message" do
     posts = []
     handler = build_handler_with_api(post_success: true, posts: posts)
-    handler.send(:post_confirmation_request, "my-token", "owner/repo", { "contents" => "write" }, 30)
+    request = sample_pat_request(expiration: 30)
+    handler.send(:post_confirmation_request, request)
     message = posts.first[:body][:message]
     assert_includes message, "my-token"
     assert_includes message, "owner/repo"
@@ -436,10 +437,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
 
   test "request_create_confirmation returns error when post fails" do
     handler = build_handler_with_api(post_success: false)
-    result = handler.send(
-      :request_create_confirmation,
-      name: "test", repo: "owner/repo", permissions: { "contents" => "write" }, expiration: 365
-    )
+    result = handler.send(:request_create_confirmation, sample_pat_request)
     assert_equal :error, result
   end
 
@@ -452,10 +450,7 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
     deletes = []
     api.define_singleton_method(:delete) { |path| deletes << path }
 
-    handler.send(
-      :request_create_confirmation,
-      name: "test", repo: "owner/repo", permissions: { "contents" => "write" }, expiration: 365
-    )
+    handler.send(:request_create_confirmation, sample_pat_request)
     assert_equal [ "/posts/pat-post-1" ], deletes
   end
 
@@ -515,6 +510,13 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
       "repo" => "owner/repo",
       "permissions" => { "contents" => "write" }
     }
+  end
+
+  def sample_pat_request(expiration: 365)
+    Earl::Mcp::GithubPatHandler::PatRequest.new(
+      name: "my-token", repo: "owner/repo",
+      permissions: { "contents" => "write" }, expiration: expiration
+    )
   end
 
   class MockSafariAdapter
