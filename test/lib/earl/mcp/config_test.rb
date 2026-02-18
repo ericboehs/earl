@@ -47,10 +47,10 @@ class Earl::Mcp::ConfigTest < ActiveSupport::TestCase
     assert_equal 5000, config.permission_timeout_ms
   end
 
-  test "defaults timeout to 120000" do
+  test "defaults timeout to 86400000" do
     ENV.delete("PERMISSION_TIMEOUT_MS")
     config = Earl::Mcp::Config.new
-    assert_equal 120_000, config.permission_timeout_ms
+    assert_equal 86_400_000, config.permission_timeout_ms
   end
 
   test "api_url builds full API path" do
