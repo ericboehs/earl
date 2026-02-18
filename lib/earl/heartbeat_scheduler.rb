@@ -175,16 +175,16 @@ module Earl
 
       def run_heartbeat_session(definition, state, thread_id)
         session = build_heartbeat_session(definition, state)
+        completed = false
         response = build_heartbeat_response(thread_id, definition.channel_id)
-        setup_heartbeat_callbacks(session, response) { @heartbeat_completed = true }
+        setup_heartbeat_callbacks(session, response) { completed = true }
         session.start
         session.send_message(definition.prompt)
-        await_heartbeat_completion(session, definition.timeout)
+        await_heartbeat_completion(session, definition.timeout) { completed }
         log(:info, "Heartbeat '#{definition.name}' completed (run ##{state.run_count + 1})")
       end
 
       def build_heartbeat_response(thread_id, channel_id)
-        @heartbeat_completed = false
         response = StreamingResponse.new(thread_id: thread_id, mattermost: @deps.mattermost, channel_id: channel_id)
         response.start_typing
         response
@@ -224,7 +224,7 @@ module Earl
 
       def await_heartbeat_completion(session, timeout)
         start_time = monotonic_now
-        until @heartbeat_completed
+        until yield
           if monotonic_now - start_time >= timeout
             log(:warn, "Heartbeat timed out after #{timeout}s")
             session.kill

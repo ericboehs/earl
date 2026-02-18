@@ -141,4 +141,34 @@ class Earl::ConfigTest < ActiveSupport::TestCase
     channels = config.channels
     assert_equal Dir.pwd, channels["ch-1"]
   end
+
+  # --- permission_env tests ---
+
+  test "permission_env returns hash with all platform keys" do
+    ENV["EARL_SKIP_PERMISSIONS"] = "false"
+    config = Earl::Config.new
+
+    env = config.permission_env(channel_id: "ch-test")
+    assert_equal "https://mattermost.example.com", env["PLATFORM_URL"]
+    assert_equal "test-token-123", env["PLATFORM_TOKEN"]
+    assert_equal "ch-test", env["PLATFORM_CHANNEL_ID"]
+    assert_equal "", env["PLATFORM_THREAD_ID"]
+    assert_equal "bot-id-456", env["PLATFORM_BOT_ID"]
+    assert_equal "alice,bob,charlie", env["ALLOWED_USERS"]
+  end
+
+  test "permission_env includes thread_id when provided" do
+    ENV["EARL_SKIP_PERMISSIONS"] = "false"
+    config = Earl::Config.new
+
+    env = config.permission_env(channel_id: "ch-test", thread_id: "thread-abc")
+    assert_equal "thread-abc", env["PLATFORM_THREAD_ID"]
+  end
+
+  test "permission_env returns nil when skip_permissions is true" do
+    ENV["EARL_SKIP_PERMISSIONS"] = "true"
+    config = Earl::Config.new
+
+    assert_nil config.permission_env(channel_id: "ch-test")
+  end
 end

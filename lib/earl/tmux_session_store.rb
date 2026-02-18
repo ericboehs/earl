@@ -123,6 +123,9 @@ module Earl
       tmp_path = "#{@path}.tmp.#{Process.pid}"
       File.write(tmp_path, JSON.pretty_generate(serialized))
       File.rename(tmp_path, @path)
+    rescue StandardError
+      FileUtils.rm_f(tmp_path) if tmp_path
+      raise
     end
   end
 end

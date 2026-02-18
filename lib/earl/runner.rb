@@ -295,11 +295,18 @@ module Earl
         manager = @services.session_manager
         session = manager.get(thread_id)
         response = @responses.active_responses.delete(thread_id)
-        stats = session.stats
-        response.on_complete(stats_line: build_stats_line(stats.total_input_tokens, stats.total_output_tokens,
-                                                          stats.context_percent))
-        log_session_stats(stats, thread_id)
-        manager.save_stats(thread_id)
+
+        if session && response
+          stats = session.stats
+          response.on_complete(stats_line: build_stats_line(stats.total_input_tokens, stats.total_output_tokens,
+                                                            stats.context_percent))
+          log_session_stats(stats, thread_id)
+          manager.save_stats(thread_id)
+        else
+          log(:warn, "Completion for thread #{thread_id[0..7]} with missing session or response (likely killed)")
+          response&.stop_typing
+        end
+
         process_next_queued(thread_id)
       end
 

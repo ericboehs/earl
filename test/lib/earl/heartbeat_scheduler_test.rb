@@ -292,11 +292,11 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
     session = Object.new
     session.define_singleton_method(:kill) { }
 
-    scheduler.instance_variable_set(:@heartbeat_completed, false)
-    Thread.new { sleep 0.1; scheduler.instance_variable_set(:@heartbeat_completed, true) }
+    completed = false
+    Thread.new { sleep 0.1; completed = true }
 
-    scheduler.send(:await_heartbeat_completion, session, 10)
-    assert scheduler.instance_variable_get(:@heartbeat_completed)
+    scheduler.send(:await_heartbeat_completion, session, 10) { completed }
+    assert completed
   end
 
   test "await_heartbeat_completion kills session on timeout" do
@@ -306,8 +306,7 @@ class Earl::HeartbeatSchedulerTest < ActiveSupport::TestCase
     session = Object.new
     session.define_singleton_method(:kill) { killed = true }
 
-    scheduler.instance_variable_set(:@heartbeat_completed, false)
-    scheduler.send(:await_heartbeat_completion, session, 1)
+    scheduler.send(:await_heartbeat_completion, session, 1) { false }
     assert killed
   end
 
