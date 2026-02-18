@@ -247,31 +247,27 @@ module Earl
 
         def poll_confirmation(ws, post_id, deadline)
           reaction_queue = Queue.new
-          subscribe_reactions(ws, post_id, reaction_queue)
-          poll_reaction_loop(post_id, deadline, reaction_queue)
-        end
-
-        def subscribe_reactions(ws, post_id, reaction_queue)
           target_post_id = post_id
+
           ws.on(:message) do |msg|
             data = msg.data
             next unless data && !data.empty?
 
-            reaction = parse_reaction_event(data)
-            reaction_queue.push(reaction) if reaction && reaction["post_id"] == target_post_id
+            begin
+              event = JSON.parse(data)
+              if event["event"] == "reaction_added"
+                reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
+                reaction_queue.push(reaction_data) if reaction_data["post_id"] == target_post_id
+              end
+            rescue JSON::ParserError
+              log(:debug, "PAT confirmation: skipped unparsable WebSocket message")
+            end
           end
+
+          poll_reaction_loop(deadline, reaction_queue)
         end
 
-        def parse_reaction_event(data)
-          event = JSON.parse(data)
-          return unless event["event"] == "reaction_added"
-
-          JSON.parse(event.dig("data", "reaction") || "{}")
-        rescue JSON::ParserError
-          nil
-        end
-
-        def poll_reaction_loop(_post_id, deadline, reaction_queue)
+        def poll_reaction_loop(deadline, reaction_queue)
           loop do
             remaining = deadline - Time.now
             return :denied if remaining <= 0
