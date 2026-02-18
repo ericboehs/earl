@@ -63,6 +63,14 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
     assert_includes text, "name is required"
   end
 
+  test "create returns error when name is non-string" do
+    result = @handler.call("manage_github_pats", {
+      "action" => "create", "name" => 123
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "name is required"
+  end
+
   test "create returns error when name is blank" do
     result = @handler.call("manage_github_pats", {
       "action" => "create", "name" => "  "
@@ -74,6 +82,14 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
   test "create returns error when repo is missing" do
     result = @handler.call("manage_github_pats", {
       "action" => "create", "name" => "my-token"
+    })
+    text = result[:content].first[:text]
+    assert_includes text, "repo is required"
+  end
+
+  test "create returns error when repo is non-string" do
+    result = @handler.call("manage_github_pats", {
+      "action" => "create", "name" => "my-token", "repo" => 42
     })
     text = result[:content].first[:text]
     assert_includes text, "repo is required"
@@ -409,6 +425,22 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
     assert_equal :approved, result
   end
 
+  test "poll_confirmation ignores unrecognized emoji and continues polling" do
+    handler = build_handler_with_api(post_success: true)
+    mock_ws = build_mock_websocket
+
+    Thread.new do
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "heart", user_id: "user-42")
+      sleep 0.05
+      emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "user-42")
+    end
+
+    deadline = Time.now + 5
+    result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+    assert_equal :approved, result
+  end
+
   test "poll_confirmation ignores reactions from unauthorized users" do
     handler = build_handler_with_api(post_success: true, allowed_users: %w[alice])
     mock_ws = build_mock_websocket
@@ -427,6 +459,16 @@ class Earl::Mcp::GithubPatHandlerTest < ActiveSupport::TestCase
 
   test "allowed_reactor? returns true when allowed_users is empty" do
     assert @handler.send(:allowed_reactor?, "any-user-id")
+  end
+
+  test "allowed_reactor? returns false when user lookup fails" do
+    config = build_mock_config(allowed_users: %w[alice])
+    api = Object.new
+    api.define_singleton_method(:get) { |_| raise IOError, "connection reset" }
+    handler = Earl::Mcp::GithubPatHandler.new(
+      config: config, api_client: api, safari_adapter: @safari
+    )
+    assert_not handler.send(:allowed_reactor?, "user-123")
   end
 
   test "wait_for_confirmation returns error when websocket connection fails" do

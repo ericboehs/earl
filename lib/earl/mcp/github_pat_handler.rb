@@ -64,11 +64,12 @@ module Earl
       end
 
       def build_pat_request(arguments)
-        name = validate_present(arguments["name"], "name is required for create")
-        return name if error_response?(name)
+        name = arguments["name"]
+        return text_content("Error: name is required for create") unless name.is_a?(String) && !name.strip.empty?
 
-        repo = validate_repo(arguments["repo"])
-        return repo if error_response?(repo)
+        repo = arguments["repo"]
+        return text_content("Error: repo is required for create (e.g. 'owner/repo')") unless repo.is_a?(String) && !repo.strip.empty?
+        return text_content("Error: repo must be in 'owner/repo' format") unless repo.match?(%r{\A[\w.-]+/[\w.-]+\z})
 
         permissions = validate_and_normalize_permissions(arguments["permissions"])
         return permissions if error_response?(permissions)
@@ -89,19 +90,6 @@ module Earl
       end
 
       # --- validation ---
-
-      def validate_present(value, message)
-        return text_content("Error: #{message}") unless value && !value.strip.empty?
-
-        value
-      end
-
-      def validate_repo(repo)
-        return text_content("Error: repo is required for create (e.g. 'owner/repo')") unless repo && !repo.strip.empty?
-        return text_content("Error: repo must be in 'owner/repo' format") unless repo.match?(%r{\A[\w.-]+/[\w.-]+\z})
-
-        repo
-      end
 
       def validate_and_normalize_permissions(permissions)
         return text_content("Error: permissions is required (e.g. {\"contents\": \"write\"})") unless permissions.is_a?(Hash) && !permissions.empty?
@@ -186,7 +174,11 @@ module Earl
             message: message,
             root_id: @config.platform_thread_id
           })
-          return unless http_success?(response)
+          unless http_success?(response)
+            status = response.is_a?(Net::HTTPResponse) ? response.code : "unknown"
+            log(:error, "PAT confirmation post failed (HTTP #{status})")
+            return
+          end
 
           JSON.parse(response.body)["id"]
         rescue IOError, JSON::ParserError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
@@ -229,7 +221,7 @@ module Earl
         ensure
           begin
             ws&.close
-          rescue IOError, Errno::ECONNRESET => error
+          rescue IOError, SocketError, Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EPIPE => error
             log(:debug, "Failed to close PAT confirmation WebSocket: #{error.message}")
           end
         end
@@ -307,12 +299,15 @@ module Earl
 
           user = JSON.parse(response.body)
           allowed.include?(user["username"])
+        rescue IOError, JSON::ParserError, SocketError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
+          log(:warn, "Failed to verify reactor #{user_id}: #{error.message}")
+          false
         end
 
         def delete_confirmation_post(post_id)
           @api.delete("/posts/#{post_id}")
-        rescue StandardError => error
-          log(:warn, "Failed to delete PAT confirmation: #{error.message}")
+        rescue IOError, SocketError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EPIPE => error
+          log(:warn, "Failed to delete PAT confirmation post #{post_id}: #{error.message}")
         end
       end
 

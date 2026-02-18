@@ -11,8 +11,8 @@ module Earl
   # (Ruby heredoc -> JXA string -> inner JS string). Numeric values are
   # interpolated directly since they need no quoting.
   #
-  # Each DOM method returns a status string from the inner JS and raises
-  # SafariAutomation::Error if the expected elements are not found.
+  # Most DOM methods return an 'OK'/'NOT_FOUND:...' status string from inner JS
+  # and raise SafariAutomation::Error if the expected element is not found.
   module SafariAutomation
     # Raised when Safari/osascript automation fails (element not found, process error).
     class Error < StandardError; end
@@ -48,9 +48,9 @@ module Earl
       check_result!(output, "token name input field")
     end
 
-    # GitHub's expiration UI: a button opens a [role=menuitemradio] menu with presets
-    # (7, 30, 60, 90 days, Custom, No expiration). For custom days, select "Custom"
-    # to reveal a hidden date input, then set the date.
+    # GitHub's expiration UI: a button opens a [role=menuitemradio] menu with preset
+    # durations and a "Custom" option. We always select "Custom" to reveal a hidden
+    # date input, then set the computed date.
     def set_expiration(days)
       select_custom_expiration
       sleep 0.5
@@ -224,7 +224,7 @@ module Earl
     end
 
     def close_repository_dialog
-      execute_js <<~JS
+      output = execute_js <<~JS
         var safari = Application("Safari");
         var tab = safari.windows[0].currentTab;
         safari.doJavaScript(
@@ -233,11 +233,12 @@ module Earl
           "  if (!dialog) return 'OK';" +
           "  var closeBtn = dialog.querySelector('button[aria-label=Close]');" +
           "  if (closeBtn) { closeBtn.click(); return 'OK'; }" +
-          "  return 'OK';" +
+          "  return 'NOT_FOUND:dialog_close_button';" +
           "})()",
           {in: tab}
         );
       JS
+      check_result!(output, "repository dialog close button")
       sleep 1
     end
 
@@ -301,15 +302,19 @@ module Earl
     end
 
     def set_permission_level(display_name)
-      # Click the "Access:Read-only" button for this permission to open the level menu
+      # Click the "Access:Read-only" button scoped to this permission's container
       output = execute_js <<~JS
         var safari = Application("Safari");
         var tab = safari.windows[0].currentTab;
+        var permName = #{display_name.to_json};
+        var escPerm = permName.replace(/\\\\/g, "\\\\\\\\").replace(/'/g, "\\\\'");
         safari.doJavaScript(
           "(function() {" +
           "  var btns = document.querySelectorAll('button[aria-haspopup=true]');" +
-          "  for (var i = 0; i < btns.length; i++) {" +
-          "    if (btns[i].textContent.indexOf('Read-only') !== -1) {" +
+          "  for (var i = btns.length - 1; i >= 0; i--) {" +
+          "    if (btns[i].textContent.indexOf('Read-only') === -1) continue;" +
+          "    var row = btns[i].closest('li, [class*=Box-row]') || btns[i].parentElement.parentElement;" +
+          "    if (row && row.textContent.toLowerCase().indexOf('" + escPerm.toLowerCase() + "') !== -1) {" +
           "      btns[i].click(); return 'OK';" +
           "    }" +
           "  }" +
@@ -341,9 +346,8 @@ module Earl
       check_result!(output, "'Read and write' option for '#{display_name}'")
     end
 
-    # Submits the PAT creation form. The form uses Turbo to load a confirmation
-    # dialog into turbo-frame#fg_pat_confirmation_dialog. We click the form's
-    # submit button, then poll until the confirmation frame is populated.
+    # Submits the PAT creation form. After clicking submit, GitHub asynchronously
+    # loads a confirmation dialog (`#confirm-fg-pat`). We poll until it appears.
     def click_generate
       output = execute_js <<~JS
         var safari = Application("Safari");
@@ -409,7 +413,7 @@ module Earl
           var tab = safari.windows[0].currentTab;
           safari.doJavaScript(
             "(function() {" +
-            "  var token = document.querySelector('#new-access-token, [id*=token-value], code, .token-code, input[readonly][value^=github_pat_]');" +
+            "  var token = document.querySelector('#new-access-token, [id*=token-value], .token-code, input[readonly][value^=github_pat_]');" +
             "  if (token) return token.value || token.textContent || '';" +
             "  var all = document.body.innerText;" +
             "  var match = all.match(/github_pat_[A-Za-z0-9_]+/);" +
@@ -421,7 +425,7 @@ module Earl
         token = output.strip
         return token unless token.empty?
       end
-      ""
+      raise Error, "Token not found on page after 10 attempts"
     end
 
     def execute_js(script)
