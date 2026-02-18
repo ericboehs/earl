@@ -19,7 +19,7 @@ module Earl
           bot_id: required_env("PLATFORM_BOT_ID")
         )
         @allowed_users = ENV.fetch("ALLOWED_USERS", "").split(",").map(&:strip)
-        @permission_timeout_ms = ENV.fetch("PERMISSION_TIMEOUT_MS", "120000").to_i
+        @permission_timeout_ms = ENV.fetch("PERMISSION_TIMEOUT_MS", "86400000").to_i
       end
 
       def platform_url = @platform.url
