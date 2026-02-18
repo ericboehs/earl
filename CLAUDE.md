@@ -153,6 +153,11 @@ This project uses **vanilla RuboCop and Reek** with minimal global configuration
 - Add per-class or per-method exclusions to `.rubocop.yml` or `.reek.yml`
 - Raise thresholds or disable detectors to work around warnings
 
+Global Reek overrides (in `.reek.yml`):
+- `UtilityFunction: public_methods_only: true` — private helpers may operate on other objects
+- `TooManyStatements: max_statements: 10` — raised from default 5
+- `TooManyMethods: max_methods: 20` — raised from default 15
+
 If a linter flags something, refactor the code to satisfy it. Common Reek fixes:
 - **FeatureEnvy**: Extract accessed fields into locals, use `values_at`, or move logic onto the data object
 - **TooManyStatements**: Extract helper methods to stay under 10 statements
