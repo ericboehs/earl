@@ -16,7 +16,7 @@ Reference implementation: `~/Code/anneschuth/claude-threads/` (TypeScript/Bun).
 ruby bin/earl
 ```
 
-Requires env vars (see `.envrc`):
+Requires env vars (see `~/.config/earl/env` or `.envrc`):
 - `MATTERMOST_URL` — Mattermost server URL
 - `MATTERMOST_BOT_TOKEN` — Bot authentication token
 - `MATTERMOST_BOT_ID` — Bot user ID (to ignore own messages)
@@ -24,6 +24,7 @@ Requires env vars (see `.envrc`):
 - `EARL_CHANNELS` — Multi-channel config (comma-separated `channel_id:/working/dir` pairs, e.g. `chan1:/path1,chan2:/path2`)
 - `EARL_ALLOWED_USERS` — Comma-separated usernames allowed to interact
 - `EARL_SKIP_PERMISSIONS` — Set to `true` to use `--dangerously-skip-permissions` instead of MCP approval
+- `EARL_CLAUDE_HOME` — Custom HOME for Claude subprocesses (default: `~/.config/earl/claude-home`)
 
 Optional config files:
 - `~/.config/earl/heartbeats.yml` — Heartbeat schedule definitions
@@ -31,11 +32,53 @@ Optional config files:
 - `~/.config/earl/sessions.json` — Session persistence store
 - `~/.config/earl/allowed_tools/` — Per-thread tool approval lists
 - `~/.config/earl/tmux_sessions.json` — Tmux session metadata persistence
+- `~/.config/earl/claude-home/` — Isolated HOME directory for Claude subprocesses
+- `~/.config/earl/env` — Environment variables for launchd (secrets, config)
+- `~/.config/earl/logs/` — stdout/stderr logs when running via launchd
+
+## Running as a Service (launchd)
+
+EARL can run as a macOS launchd agent for automatic startup and crash recovery.
+
+**Prerequisite:** Claude CLI must be installed and authenticated (`claude` login) so credentials are stored in the macOS Keychain. The launchd wrapper extracts these on each startup.
+
+### Setup
+
+```bash
+bin/earl-install
+```
+
+On first run this creates `~/.config/earl/env` — fill in your secrets and re-run. On subsequent runs it:
+1. Copies default Claude config to `~/.config/earl/claude-home/`
+2. Installs the launchd plist to `~/Library/LaunchAgents/`
+3. Loads and starts the agent
+
+### Management
+
+```bash
+# Check status
+launchctl list | grep earl
+
+# View logs
+tail -f ~/.config/earl/logs/*.log
+
+# Restart
+launchctl kickstart -k gui/$(id -u)/com.boehs.earl
+
+# Stop
+launchctl bootout gui/$(id -u)/com.boehs.earl
+```
+
+### Claude HOME Isolation
+
+Claude subprocesses spawned by EARL use `~/.config/earl/claude-home/` as HOME instead of `~/.claude/`. This keeps EARL's permissions, hooks, and settings separate from the user's personal Claude config. Override with `EARL_CLAUDE_HOME` env var.
 
 ## Architecture
 
 ```
 bin/earl                          # Entry point
+bin/earl-launchd                  # Wrapper script for launchd (sets PATH, loads env, extracts credentials)
+bin/earl-install                  # One-time setup: dirs, config, plist, launchctl load
 bin/earl-permission-server        # MCP permission server (spawned by Claude CLI as subprocess)
 bin/claude-context                # Context window usage helper (spawned by !context command)
 bin/claude-usage                  # Claude Pro usage helper (spawned by !usage command)

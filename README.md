@@ -1,130 +1,99 @@
-# Rails Starter Template
+# EARL
 
-A Rails 8.1.0 application template with modern tooling and best practices.
+**Eric's Automated Response Line** — a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in configured channels, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
+
+## Quick Start
+
+```bash
+# Configure environment
+cp .envrc.example .envrc  # or use ~/.config/earl/env
+# Fill in MATTERMOST_URL, MATTERMOST_BOT_TOKEN, etc.
+
+# Run directly
+ruby bin/earl
+
+# Or install as a macOS service
+bin/earl-install
+```
+
+## Running as a Service (launchd)
+
+EARL can run as a macOS launchd agent for automatic startup and crash recovery.
+
+**Prerequisite:** Claude CLI must be installed and authenticated so credentials are stored in the macOS Keychain.
+
+```bash
+bin/earl-install
+```
+
+On first run this creates `~/.config/earl/env` — fill in your secrets and re-run. On subsequent runs it copies default Claude config, installs the launchd plist, and starts the agent.
+
+```bash
+launchctl list | grep earl                          # Check status
+tail -f ~/.config/earl/logs/*.log                   # View logs
+launchctl kickstart -k gui/$(id -u)/com.boehs.earl  # Restart
+launchctl bootout gui/$(id -u)/com.boehs.earl       # Stop
+```
 
 ## Features
 
-- **User Authentication** - Secure session-based authentication system
-- **Modern Rails Stack** - Built with Rails 8.1.0, SQLite3, and modern asset pipeline
-- **Component-Based UI** - ViewComponent architecture for maintainable UI components
-- **Responsive Design** - Tailwind CSS with dark mode support
-- **Comprehensive Testing** - 99%+ test coverage with SimpleCov
+- **Streaming responses** — first text chunk creates a post, subsequent chunks update via debounced PUT
+- **Session persistence** — follow-up messages in the same thread reuse the same Claude context window; sessions survive restarts
+- **Permission approval** — tool use is gated by Mattermost emoji reactions (or skip with `EARL_SKIP_PERMISSIONS=true`)
+- **Memory** — persistent facts stored as markdown, injected into Claude sessions and manageable via MCP tools
+- **Heartbeats** — scheduled tasks (cron/interval/one-shot) that spawn Claude sessions on a schedule
+- **Tmux supervision** — Mattermost becomes a control plane for all running Claude sessions (EARL-managed and standalone)
+- **Claude HOME isolation** — EARL's Claude sessions use an isolated config directory, separate from the user's personal `~/.claude/`
 
-## Tech Stack
+## Configuration
 
-- **Rails 8.1.0** with modern asset pipeline (Propshaft)
-- **SQLite3** for all environments including production
-- **ImportMap** for JavaScript (no Node.js bundling required)
-- **Hotwire** (Turbo + Stimulus) for interactive features
-- **Tailwind CSS** via CDN for styling
-- **ViewComponent** for reusable UI components
-- **Solid Libraries** for database-backed cache, queue, and cable
+### Required Environment Variables
 
-## Getting Started
+| Variable | Description |
+|----------|-------------|
+| `MATTERMOST_URL` | Mattermost server URL |
+| `MATTERMOST_BOT_TOKEN` | Bot authentication token |
+| `MATTERMOST_BOT_ID` | Bot user ID (to ignore own messages) |
+| `EARL_CHANNEL_ID` | Default channel to listen in |
+| `EARL_ALLOWED_USERS` | Comma-separated usernames allowed to interact |
 
-### Prerequisites
+### Optional
 
-- Ruby 3.4.7
-- Rails 8.1.0+
-- SQLite3
+| Variable | Description |
+|----------|-------------|
+| `EARL_CHANNELS` | Multi-channel config (`channel_id:/working/dir` pairs) |
+| `EARL_SKIP_PERMISSIONS` | Set to `true` to skip permission prompts |
+| `EARL_CLAUDE_HOME` | Custom HOME for Claude subprocesses (default: `~/.config/earl/claude-home`) |
+| `EARL_DEBUG` | Enable debug logging |
 
-### Using This Template
+## Commands
 
-1. Click "Use this template" button on GitHub to create a new repository
-2. Clone your new repository
-3. Install dependencies:
-  ```bash
-  bin/setup
-  ```
+Users can send commands in Mattermost messages:
 
-4. Rename the application (this also regenerates credentials for security):
-  ```bash
-  bin/rename-app YourAppName
-  ```
-
-5. Set up your credentials:
-  ```bash
-  bin/rails credentials:edit
-  ```
-
-6. Customize for your project:
-  - Update `CLAUDE.md` with your project details
-  - Modify this README.md
-
-7. Start the development server:
-  ```bash
-  bin/rails server
-  ```
-
-8. Visit `http://localhost:3000`
+| Command | Description |
+|---------|-------------|
+| `!help` | Show available commands |
+| `!stats` | Show session statistics |
+| `!stop` | Stop current response |
+| `!kill` | Kill Claude session for this thread |
+| `!compact` | Compact the session context |
+| `!cd <path>` | Change working directory |
+| `!sessions` | List all Claude sessions (EARL + tmux) |
+| `!session <name> status/approve/deny` | Manage tmux sessions |
+| `!spawn "prompt"` | Spawn a new Claude session in tmux |
+| `!usage` | Show Claude Pro usage |
+| `!context` | Show context window usage |
+| `!heartbeats` | List scheduled heartbeats |
 
 ## Development
 
-### Code Quality
-
-Run the full CI pipeline (formatting, linting, security scan, tests):
-
 ```bash
-bin/ci
+bin/ci          # Full CI pipeline (rubocop + reek + tests + coverage)
+rubocop -A      # Auto-fix style violations
+bin/rails test  # Run test suite
 ```
 
-Auto-fix formatting issues:
-
-```bash
-bin/ci --fix
-```
-
-Watch CI status in real-time:
-
-```bash
-bin/watch-ci
-```
-
-### Testing
-
-Run tests:
-
-```bash
-bin/rails test
-```
-
-Generate coverage report:
-
-```bash
-bin/coverage
-```
-
-### Code Standards
-
-- **EditorConfig**: UTF-8, LF line endings, 2-space indentation
-- **RuboCop**: Rails Omakase configuration
-- **SimpleCov**: 95% minimum coverage requirement
-- **Conventional Commits**: Structured commit messages
-
-## Architecture
-
-### Database Setup
-
-Multi-database configuration with separate SQLite databases:
-- Primary database for application data
-- Cache database for Solid Cache
-- Queue database for Solid Queue
-- Cable database for Solid Cable
-
-### Component System
-
-The application uses ViewComponent for UI components:
-- `Auth::*` components for authentication flows
-- `AvatarComponent` for user avatars
-- `AlertComponent` for flash messages and errors
-- `UserPageComponent` for profile page layouts
-
-## Contributing
-
-1. Follow the existing code style and conventions
-2. Ensure tests pass: `bin/ci`
-3. Maintain test coverage above 95%
-4. Use conventional commit messages
+See [CLAUDE.md](CLAUDE.md) for detailed architecture documentation.
 
 ## License
 

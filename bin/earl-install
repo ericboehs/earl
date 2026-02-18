@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+EARL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CONFIG_DIR="$HOME/.config/earl"
+LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
+PLIST_NAME="com.boehs.earl.plist"
+
+echo "==> Installing EARL as a launchd agent..."
+
+# 1. Create log directory
+echo "  Creating $CONFIG_DIR/logs/"
+mkdir -p "$CONFIG_DIR/logs"
+
+# 2. Copy default Claude config (if not present)
+CLAUDE_HOME="$CONFIG_DIR/claude-home"
+if [ ! -d "$CLAUDE_HOME/.claude" ]; then
+  echo "  Copying default Claude config to $CLAUDE_HOME/"
+  mkdir -p "$CLAUDE_HOME"
+  cp -r "$EARL_DIR/config/earl-claude-home/.claude" "$CLAUDE_HOME/.claude"
+else
+  echo "  Claude config already exists at $CLAUDE_HOME/.claude (skipping)"
+fi
+
+# 3. Create env file template (if not present)
+ENV_FILE="$CONFIG_DIR/env"
+if [ ! -f "$ENV_FILE" ]; then
+  cat > "$ENV_FILE" <<'ENVTEMPLATE'
+# EARL environment variables — fill in and restart the agent
+MATTERMOST_URL=https://your-mattermost-server.example.com
+MATTERMOST_BOT_TOKEN=your-bot-token
+MATTERMOST_BOT_ID=your-bot-user-id
+EARL_CHANNEL_ID=your-channel-id
+EARL_ALLOWED_USERS=your-username
+# EARL_CHANNELS=chan1:/path1,chan2:/path2
+# EARL_SKIP_PERMISSIONS=true
+# EARL_CLAUDE_HOME=/custom/path
+# EARL_DEBUG=1
+ENVTEMPLATE
+  chmod 600 "$ENV_FILE"
+  echo ""
+  echo "  Created $ENV_FILE — please fill in your secrets, then re-run this script."
+  echo ""
+  exit 0
+fi
+
+# 4. Generate plist with resolved paths
+echo "  Installing launchd plist..."
+mkdir -p "$LAUNCH_AGENTS_DIR"
+sed -e "s|__EARL_DIR__|$EARL_DIR|g" -e "s|__HOME__|$HOME|g" \
+  "$EARL_DIR/config/$PLIST_NAME" > "$LAUNCH_AGENTS_DIR/$PLIST_NAME"
+
+# 5. Load the agent
+echo "  Loading agent..."
+launchctl bootout "gui/$(id -u)/com.boehs.earl" 2>/dev/null || true
+if ! launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENTS_DIR/$PLIST_NAME" 2>&1; then
+  echo "" >&2
+  echo "ERROR: Failed to load launchd agent." >&2
+  echo "  Try: launchctl bootout gui/$(id -u)/com.boehs.earl" >&2
+  echo "  Then re-run: bin/earl-install" >&2
+  exit 1
+fi
+
+echo ""
+echo "==> EARL installed and running!"
+echo ""
+echo "Useful commands:"
+echo "  launchctl list | grep earl          # Check status"
+echo "  tail -f ~/.config/earl/logs/*.log   # View logs"
+echo "  launchctl kickstart -k gui/$(id -u)/com.boehs.earl  # Restart"
+echo "  launchctl bootout gui/$(id -u)/com.boehs.earl       # Stop"

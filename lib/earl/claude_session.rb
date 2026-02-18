@@ -191,8 +191,12 @@ module Earl
       def open_process
         working_dir = @options.working_dir
         popen_opts = working_dir ? { chdir: working_dir } : {}
-        env = { "TMUX" => nil, "TMUX_PANE" => nil }
+        env = { "TMUX" => nil, "TMUX_PANE" => nil, "HOME" => claude_home_dir }
         Open3.popen3(env, *cli_args, **popen_opts)
+      end
+
+      def claude_home_dir
+        ENV.fetch("EARL_CLAUDE_HOME", File.join(Dir.home, ".config", "earl", "claude-home"))
       end
 
       def join_threads
