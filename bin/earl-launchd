@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+EARL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+export PATH="$HOME/.local/share/mise/installs/ruby/4.0.1/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Load EARL environment variables
+if [ -f "$HOME/.config/earl/env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$HOME/.config/earl/env"
+  set +a
+fi
+
+cd "$EARL_DIR"
+exec bundle exec ruby bin/earl

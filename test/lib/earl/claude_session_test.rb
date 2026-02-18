@@ -806,6 +806,28 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     assert_nil session.stats.context_percent
   end
 
+  test "claude_home_dir returns default path when EARL_CLAUDE_HOME not set" do
+    original = ENV.delete("EARL_CLAUDE_HOME")
+    session = Earl::ClaudeSession.new
+    expected = File.join(Dir.home, ".config", "earl", "claude-home")
+    assert_equal expected, session.send(:claude_home_dir)
+  ensure
+    ENV["EARL_CLAUDE_HOME"] = original if original
+  end
+
+  test "claude_home_dir respects EARL_CLAUDE_HOME env var" do
+    original = ENV["EARL_CLAUDE_HOME"]
+    ENV["EARL_CLAUDE_HOME"] = "/tmp/custom-claude-home"
+    session = Earl::ClaudeSession.new
+    assert_equal "/tmp/custom-claude-home", session.send(:claude_home_dir)
+  ensure
+    if original
+      ENV["EARL_CLAUDE_HOME"] = original
+    else
+      ENV.delete("EARL_CLAUDE_HOME")
+    end
+  end
+
   test "open_process uses no chdir when working_dir is nil" do
     session = Earl::ClaudeSession.new(working_dir: nil)
     args = session.send(:cli_args)
