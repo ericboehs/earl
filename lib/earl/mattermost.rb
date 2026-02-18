@@ -10,29 +10,33 @@ module Earl
     include Logging
     attr_reader :config
 
+    # Groups WebSocket connection state.
+    Connection = Struct.new(:ws, :channel_ids, keyword_init: true)
+
+    # Groups event callbacks.
+    Callbacks = Struct.new(:on_message, :on_reaction, keyword_init: true)
+
     def initialize(config)
       @config = config
       @api = ApiClient.new(config)
-      @on_message = nil
-      @on_reaction = nil
-      @channel_ids = Set.new([ config.channel_id ])
-      @ws = nil
+      @connection = Connection.new(ws: nil, channel_ids: Set.new([ config.channel_id ]))
+      @callbacks = Callbacks.new
     end
 
     def configure_channels(channel_ids)
-      @channel_ids = channel_ids
+      @connection.channel_ids = channel_ids
     end
 
     def on_message(&block)
-      @on_message = block
+      @callbacks.on_message = block
     end
 
     def on_reaction(&block)
-      @on_reaction = block
+      @callbacks.on_reaction = block
     end
 
     def connect
-      @ws = WebSocket::Client::Simple.connect(config.websocket_url)
+      @connection.ws = WebSocket::Client::Simple.connect(config.websocket_url)
       setup_websocket_handlers
     end
 
@@ -71,19 +75,8 @@ module Earl
       return [] unless response.is_a?(Net::HTTPSuccess)
 
       data = JSON.parse(response.body)
-      posts = data["posts"] || {}
-      order = data["order"] || []
-
-      order.reverse.filter_map do |post_id|
-        post = posts[post_id]
-        next unless post
-
-        {
-          sender: post.dig("props", "from_bot") == "true" ? "EARL" : "user",
-          message: post["message"] || "",
-          is_bot: post["user_id"] == config.bot_id
-        }
-      end
+      posts, order = data.values_at("posts", "order")
+      build_thread_posts(posts || {}, order || [])
     rescue JSON::ParserError => error
       log(:warn, "Failed to parse thread posts: #{error.message}")
       []
@@ -91,21 +84,37 @@ module Earl
 
     private
 
+    def build_thread_posts(posts, order)
+      bot_id = config.bot_id
+      order.reverse.filter_map do |id|
+        format_thread_post(posts[id], bot_id) if posts.key?(id)
+      end
+    end
+
+    def format_thread_post(post, bot_id)
+      from_bot = post.dig("props", "from_bot") == "true"
+      message = post["message"] || ""
+      user_id = post["user_id"]
+      { sender: from_bot ? "EARL" : "user", message: message, is_bot: user_id == bot_id }
+    end
+
     # WebSocket lifecycle methods extracted to reduce class method count.
     module WebSocketHandling
       private
 
       def setup_websocket_handlers
-        ws_ref = self
-        websocket_handler_map(ws_ref).each { |event, handler| @ws.on(event, &handler) }
+        websocket_handler_map.each { |event, handler| @connection.ws.on(event, &handler) }
       end
 
-      def websocket_handler_map(ws_ref)
+      def websocket_handler_map
+        msg_handler = method(:handle_websocket_message)
+        close_handler = method(:handle_websocket_close)
+        auth = method(:auth_payload)
         {
-          open: -> { send(JSON.generate(ws_ref.send(:auth_payload))) },
-          message: ->(msg) { ws_ref.send(:handle_websocket_message, msg) },
+          open: -> { send(JSON.generate(auth.call)) },
+          message: ->(msg) { msg_handler.call(msg) },
           error: ->(error) { Earl.logger.error "WebSocket error: #{error.message}" },
-          close: ->(event) { ws_ref.send(:handle_websocket_close, event) }
+          close: ->(event) { close_handler.call(event) }
         }
       end
 
@@ -141,7 +150,7 @@ module Earl
 
       def handle_ping
         log(:debug, "WS ping received, sending pong")
-        @ws.send(nil, type: :pong)
+        @connection.ws.send(nil, type: :pong)
       end
 
       def dispatch_event(event)
@@ -162,65 +171,79 @@ module Earl
       end
     end
 
+    # Event dispatching: routes posted and reaction events to callbacks.
+    module EventDispatching
+      private
+
+      def handle_posted_event(event)
+        post = parse_post_data(event)
+        deliver_message(event, post) if post
+      end
+
+      def handle_reaction_event(event)
+        reaction_data = event.dig("data", "reaction")
+        return unless reaction_data
+
+        reaction = JSON.parse(reaction_data)
+        user_id = reaction["user_id"]
+        return if user_id == config.bot_id
+
+        @callbacks.on_reaction&.call(
+          user_id: user_id,
+          post_id: reaction["post_id"],
+          emoji_name: reaction["emoji_name"]
+        )
+      rescue JSON::ParserError => error
+        log(:warn, "Failed to parse reaction data: #{error.message}")
+      end
+
+      def parse_post_data(event)
+        post_data = event.dig("data", "post")
+        return unless post_data
+
+        post = JSON.parse(post_data)
+        return if post["user_id"] == config.bot_id || !@connection.channel_ids.include?(post["channel_id"])
+
+        post
+      end
+
+      def deliver_message(event, post)
+        params = build_message_params(event, post)
+        log(:info, "Message from @#{params[:sender_name]} in thread #{params[:thread_id][0..7]}: #{params[:text][0..80]}")
+        @callbacks.on_message&.call(**params)
+      end
+
+      def build_message_params(event, post)
+        post_id = post["id"]
+        root_id = post["root_id"]
+        sender = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
+        {
+          sender_name: sender,
+          thread_id: root_id.to_s.empty? ? post_id : root_id,
+          text: post["message"] || "",
+          post_id: post_id,
+          channel_id: post["channel_id"]
+        }
+      end
+    end
+
     include WebSocketHandling
-
-    def handle_posted_event(event)
-      post = parse_post_data(event)
-      deliver_message(event, post) if post
-    end
-
-    def handle_reaction_event(event)
-      reaction_data = event.dig("data", "reaction")
-      return unless reaction_data
-
-      reaction = JSON.parse(reaction_data)
-      user_id = reaction["user_id"]
-      return if user_id == config.bot_id
-
-      @on_reaction&.call(
-        user_id: user_id,
-        post_id: reaction["post_id"],
-        emoji_name: reaction["emoji_name"]
-      )
-    rescue JSON::ParserError => error
-      log(:warn, "Failed to parse reaction data: #{error.message}")
-    end
-
-    def parse_post_data(event)
-      post_data = event.dig("data", "post")
-      return unless post_data
-
-      post = JSON.parse(post_data)
-      return if post["user_id"] == config.bot_id || !@channel_ids.include?(post["channel_id"])
-
-      post
-    end
-
-    def deliver_message(event, post)
-      params = build_message_params(event, post)
-      log(:info, "Message from @#{params[:sender_name]} in thread #{params[:thread_id][0..7]}: #{params[:text][0..80]}")
-      @on_message&.call(**params)
-    end
-
-    def build_message_params(event, post)
-      post_id = post["id"]
-      root_id = post["root_id"]
-      sender = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
-      {
-        sender_name: sender,
-        thread_id: root_id.to_s.empty? ? post_id : root_id,
-        text: post["message"] || "",
-        post_id: post_id,
-        channel_id: post["channel_id"]
-      }
-    end
+    include EventDispatching
 
     def parse_post_response(response)
-      return {} unless response.is_a?(Net::HTTPSuccess)
+      return {} unless successful?(response)
 
-      JSON.parse(response.body)
-    rescue JSON::ParserError => parse_error
-      log(:warn, "Failed to parse API response: #{parse_error.message}")
+      safe_json_parse(response.body)
+    end
+
+    def successful?(response)
+      response.is_a?(Net::HTTPSuccess)
+    end
+
+    def safe_json_parse(body)
+      JSON.parse(body)
+    rescue JSON::ParserError => error
+      log(:warn, "Failed to parse API response: #{error.message}")
       {}
     end
   end

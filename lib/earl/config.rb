@@ -42,14 +42,29 @@ module Earl
       @channels ||= parse_channels
     end
 
+    # Builds the env hash for the MCP permission server.
+    # Returns nil when permissions are globally skipped.
+    def permission_env(channel_id:, thread_id: "")
+      return nil if skip_permissions?
+
+      url, token, bot_id = credentials.to_h.values_at(:url, :bot_token, :bot_id)
+      {
+        "PLATFORM_URL" => url, "PLATFORM_TOKEN" => token,
+        "PLATFORM_CHANNEL_ID" => channel_id, "PLATFORM_THREAD_ID" => thread_id,
+        "PLATFORM_BOT_ID" => bot_id, "ALLOWED_USERS" => allowed_users.join(",")
+      }
+    end
+
     private
 
     def parse_channels
-      raw = ENV.fetch("EARL_CHANNELS", "")
       default_dir = Dir.pwd
-      return { channel_id => default_dir } if raw.empty?
+      return { channel_id => default_dir } unless ENV.key?("EARL_CHANNELS")
 
-      raw.split(",").each_with_object({}) do |entry, hash|
+      entries = ENV.fetch("EARL_CHANNELS").split(",")
+      return { channel_id => default_dir } if entries.empty?
+
+      entries.each_with_object({}) do |entry, hash|
         channel, path = entry.strip.split(":", 2)
         hash[channel] = path || default_dir
       end

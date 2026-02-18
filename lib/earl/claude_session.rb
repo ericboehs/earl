@@ -8,7 +8,7 @@ module Earl
     attr_reader :session_id
 
     def process_pid
-      @process_state.process&.pid
+      @runtime.process_state.process&.pid
     end
 
     # Tracks the Claude CLI subprocess and its I/O threads.
@@ -17,11 +17,18 @@ module Earl
         stdin.write(payload)
         stdin.flush
       end
+
+      def join_io_threads
+        reader_thread&.join(3)
+        stderr_thread&.join(1)
+      end
     end
     # Holds text-streaming, tool-use, and completion callback procs.
     Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_system, keyword_init: true)
     # Groups session launch options to keep instance variable count low.
-    Options = Struct.new(:permission_config, :resume, :working_dir, :username, keyword_init: true)
+    Options = Struct.new(:permission_config, :resume, :working_dir, :username, :mcp_config_path, keyword_init: true)
+    # Groups mutable runtime state: subprocess, callbacks, and mutex.
+    RuntimeState = Struct.new(:process_state, :callbacks, :mutex, keyword_init: true)
 
     # Tracks usage statistics, timing, and cost across the session.
     Stats = Struct.new(
@@ -66,18 +73,31 @@ module Earl
         self.complete_at = nil
       end
 
+      def begin_turn
+        reset_turn
+        self.message_sent_at = Time.now
+      end
+
       def format_summary(prefix)
-        parts = [ "#{prefix}:" ]
+        parts = [ "#{prefix}:", format_token_stats, *format_timing_stats ]
+        parts << "model=#{model_id}" if model_id
+        parts.join(" | ")
+      end
+
+      def format_token_stats
         total = total_input_tokens + total_output_tokens
-        parts << "#{total} tokens (turn: in:#{turn_input_tokens} out:#{turn_output_tokens})"
+        "#{total} tokens (turn: in:#{turn_input_tokens} out:#{turn_output_tokens})"
+      end
+
+      def format_timing_stats
+        parts = []
         pct = context_percent
         parts << format("%.0f%% context", pct) if pct
         ttft = time_to_first_token
         parts << format("TTFT: %.1fs", ttft) if ttft
         tps = tokens_per_second
         parts << format("%.0f tok/s", tps) if tps
-        parts << "model=#{model_id}" if model_id
-        parts.join(" | ")
+        parts
       end
     end
 
@@ -87,46 +107,34 @@ module Earl
         permission_config: permission_config, resume: mode == :resume,
         working_dir: working_dir, username: username
       )
-      @process_state = ProcessState.new
-      @callbacks = Callbacks.new
+      @runtime = RuntimeState.new(
+        process_state: ProcessState.new, callbacks: Callbacks.new, mutex: Mutex.new
+      )
       @stats = Stats.new(
         total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
         turn_input_tokens: 0, turn_output_tokens: 0,
         cache_read_tokens: 0, cache_creation_tokens: 0
       )
-      @mutex = Mutex.new
     end
 
     def stats
       @stats
     end
 
-    def total_cost
-      @stats.total_cost
-    end
-
     def on_text(&block)
-      @callbacks.on_text = block
+      @runtime.callbacks.on_text = block
     end
 
     def on_complete(&block)
-      @callbacks.on_complete = block
+      @runtime.callbacks.on_complete = block
     end
 
     def on_tool_use(&block)
-      @callbacks.on_tool_use = block
+      @runtime.callbacks.on_tool_use = block
     end
 
     def on_system(&block)
-      @callbacks.on_system = block
-    end
-
-    def start
-      stdin, stdout, stderr, wait_thread = open_process
-      @process_state = ProcessState.new(process: wait_thread, stdin: stdin, wait_thread: wait_thread)
-
-      log(:info, "Spawning Claude session #{@session_id} — resume with: claude --resume #{@session_id}")
-      spawn_io_threads(stdout, stderr)
+      @runtime.callbacks.on_system = block
     end
 
     def send_message(text)
@@ -135,11 +143,8 @@ module Earl
         return false
       end
 
-      payload = JSON.generate({ type: "user", message: { role: "user", content: text } }) + "\n"
-      @mutex.synchronize { @process_state.write(payload) }
-
-      @stats.reset_turn
-      @stats.message_sent_at = Time.now
+      write_to_stdin(text)
+      @stats.begin_turn
       log(:debug, "Sent message to Claude #{short_id}: #{text[0..60]}")
       true
     rescue IOError, Errno::EPIPE => error
@@ -147,62 +152,77 @@ module Earl
       false
     end
 
-    def alive?
-      @process_state.process&.alive?
-    end
-
-    def kill
-      return unless (process = @process_state.process)
-
-      log(:info, "Killing Claude session #{short_id} (pid=#{process.pid})")
-      terminate_process
-      close_stdin
-      join_threads
-    end
-
     private
+
+    def write_to_stdin(text)
+      payload = JSON.generate({ type: "user", message: { role: "user", content: text } }) + "\n"
+      @runtime.mutex.synchronize { @runtime.process_state.write(payload) }
+    end
 
     def short_id
       @session_id[0..7]
     end
 
-    def open_process
-      working_dir = @options.working_dir
-      popen_opts = working_dir ? { chdir: working_dir } : {}
-      # Clear TMUX vars to prevent Claude CLI from detecting a tmux session,
-      # which would change its UI behavior (e.g., window title manipulation).
-      env = { "TMUX" => nil, "TMUX_PANE" => nil }
-      Open3.popen3(env, *cli_args, **popen_opts)
-    end
+    # Process lifecycle management: start, kill, and signal handling.
+    module ProcessManagement
+      def start
+        stdin, stdout, stderr, wait_thread = open_process
+        @runtime.process_state = ProcessState.new(process: wait_thread, stdin: stdin, wait_thread: wait_thread)
 
-    def join_threads
-      @process_state.reader_thread&.join(3)
-      @process_state.stderr_thread&.join(1)
-    end
-
-    def terminate_process
-      pid = @process_state.process.pid
-      Process.kill("INT", pid)
-      sleep 0.1
-      escalate_signal(pid)
-    rescue Errno::ESRCH
-      # Process already gone
-    end
-
-    def escalate_signal(pid)
-      2.times do
-        return unless @process_state.process.alive?
-        sleep 1
+        log(:info, "Spawning Claude session #{@session_id} — resume with: claude --resume #{@session_id}")
+        spawn_io_threads(stdout, stderr)
       end
-      Process.kill("TERM", pid)
-    rescue Errno::ESRCH
-      # Process exited between alive? check and kill
-    end
 
-    def close_stdin
-      @process_state.stdin&.close
-    rescue IOError
-      # Already closed
+      def alive?
+        @runtime.process_state.process&.alive?
+      end
+
+      def kill
+        return unless (process = @runtime.process_state.process)
+
+        log(:info, "Killing Claude session #{short_id} (pid=#{process.pid})")
+        terminate_process
+        close_stdin
+        join_threads
+      end
+
+      private
+
+      def open_process
+        working_dir = @options.working_dir
+        popen_opts = working_dir ? { chdir: working_dir } : {}
+        env = { "TMUX" => nil, "TMUX_PANE" => nil }
+        Open3.popen3(env, *cli_args, **popen_opts)
+      end
+
+      def join_threads
+        @runtime.process_state.join_io_threads
+      end
+
+      def terminate_process
+        pid = @runtime.process_state.process.pid
+        Process.kill("INT", pid)
+        sleep 0.1
+        escalate_signal(pid)
+      rescue Errno::ESRCH
+        # Process already gone
+      end
+
+      def escalate_signal(pid)
+        2.times do
+          return unless @runtime.process_state.process.alive?
+          sleep 1
+        end
+        Process.kill("TERM", pid)
+      rescue Errno::ESRCH
+        # Process exited between alive? check and kill
+      end
+
+      def close_stdin
+        @runtime.process_state.stdin&.close
+      rescue IOError
+        # Already closed
+      end
     end
 
     # Builds the CLI argument list for spawning the Claude process.
@@ -231,7 +251,7 @@ module Earl
       end
 
       def mcp_config_path
-        @mcp_config_path ||= write_mcp_config
+        @options.mcp_config_path ||= write_mcp_config
       end
 
       def write_mcp_config
@@ -248,13 +268,11 @@ module Earl
         }
         path = File.join(Dir.tmpdir, "earl-mcp-#{@session_id}.json")
         json = JSON.generate(config)
-        # Create with restricted permissions (0o600) to protect bot token
         File.open(path, File::CREAT | File::EXCL | File::WRONLY, 0o600) do |file|
           file.write(json)
         end
         path
       rescue Errno::EEXIST
-        # File already exists from a prior session with this ID — overwrite securely
         write_file_securely(path, json)
         path
       end
@@ -264,15 +282,14 @@ module Earl
       end
     end
 
-    include CliArgBuilder
-
     # Event/IO processing methods extracted to reduce class method count.
     module EventProcessing
       private
 
       def spawn_io_threads(stdout, stderr)
-        @process_state.reader_thread = Thread.new { read_stdout(stdout) }
-        @process_state.stderr_thread = Thread.new { read_stderr(stderr) }
+        ps = @runtime.process_state
+        ps.reader_thread = Thread.new { read_stdout(stdout) }
+        ps.stderr_thread = Thread.new { read_stderr(stderr) }
       end
 
       def read_stdout(stdout)
@@ -317,7 +334,7 @@ module Earl
         subtype = event["subtype"]
         log(:debug, "Claude system: #{subtype}")
         message = event["message"]
-        @callbacks.on_system&.call(subtype: subtype, message: message) if message
+        @runtime.callbacks.on_system&.call(subtype: subtype, message: message) if message
       end
 
       def handle_assistant_event(event)
@@ -333,22 +350,25 @@ module Earl
         return if text.empty?
 
         @stats.first_token_at ||= Time.now
-        @callbacks.on_text&.call(text)
+        @runtime.callbacks.on_text&.call(text)
       end
 
       def emit_tool_use_blocks(content)
         content.each do |item|
-          next unless item["type"] == "tool_use"
-
-          @callbacks.on_tool_use&.call(id: item["id"], name: item["name"], input: item["input"])
+          emit_single_tool_use(item) if item["type"] == "tool_use"
         end
+      end
+
+      def emit_single_tool_use(item)
+        tool_id, tool_name, tool_input = item.values_at("id", "name", "input")
+        @runtime.callbacks.on_tool_use&.call(id: tool_id, name: tool_name, input: tool_input)
       end
 
       def handle_result_event(event)
         @stats.complete_at = Time.now
         update_stats_from_result(event)
         log(:info, format_result_log)
-        @callbacks.on_complete&.call(self)
+        @runtime.callbacks.on_complete&.call(self)
       end
 
       def update_stats_from_result(event)
@@ -361,20 +381,29 @@ module Earl
       def extract_usage(usage)
         return unless usage.is_a?(Hash)
 
-        @stats.turn_input_tokens = usage["input_tokens"] || 0
-        @stats.turn_output_tokens = usage["output_tokens"] || 0
-        @stats.cache_read_tokens = usage["cache_read_input_tokens"] || 0
-        @stats.cache_creation_tokens = usage["cache_creation_input_tokens"] || 0
+        input, output, cache_read, cache_create = usage.values_at(
+          "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"
+        )
+        @stats.turn_input_tokens = input || 0
+        @stats.turn_output_tokens = output || 0
+        @stats.cache_read_tokens = cache_read || 0
+        @stats.cache_creation_tokens = cache_create || 0
       end
 
       def extract_model_usage(model_usage)
         return unless model_usage.is_a?(Hash)
 
-        hash_entries = model_usage.select { |_, data| data.is_a?(Hash) }
-        return if hash_entries.empty?
+        apply_hash_entries(model_usage)
+      end
 
-        primary_id, primary_data = hash_entries.max_by { |_, data| data["contextWindow"] || 0 }
-        apply_model_stats(primary_id, primary_data, hash_entries)
+      def apply_hash_entries(model_usage)
+        entries = model_usage.select { |_, val| val.is_a?(Hash) }
+        apply_primary_model_stats(entries) unless entries.empty?
+      end
+
+      def apply_primary_model_stats(entries)
+        primary_id, primary_data = entries.max_by { |_, data| data["contextWindow"] || 0 }
+        apply_model_stats(primary_id, primary_data, entries)
       end
 
       def apply_model_stats(model_id, primary_data, entries)
@@ -390,13 +419,15 @@ module Earl
       end
 
       def format_result_log
-        parts = [ "Claude result:" ]
-        parts << format_token_counts
-        parts << format_context_usage
-        parts << format_timing
-        parts << format_cost
         model = @stats.model_id
-        parts << "model=#{model}" if model
+        parts = [
+          "Claude result:",
+          format_token_counts,
+          format_context_usage,
+          format_timing,
+          format_cost,
+          ("model=#{model}" if model)
+        ]
         parts.compact.join(" | ")
       end
 
@@ -428,6 +459,8 @@ module Earl
       end
     end
 
+    include ProcessManagement
+    include CliArgBuilder
     include EventProcessing
   end
 end

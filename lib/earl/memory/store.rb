@@ -46,57 +46,57 @@ module Earl
       private
 
       def collect_entries(days)
-        entries = []
-        date_files_descending(days).each do |path|
-          File.readlines(path).each do |line|
-            stripped = line.strip
-            next if stripped.empty? || stripped.start_with?("#")
+        paths = date_files_descending(days)
+        paths.flat_map { |path| entries_from_file(path) }
+      end
 
-            entries << stripped
-          end
+      def entries_from_file(path)
+        File.readlines(path).filter_map do |line|
+          stripped = line.strip
+          stripped unless stripped.empty? || stripped.start_with?("#")
         end
-        entries
       end
 
       def grep_files(pattern, limit)
-        results = []
-        search_files.each do |path|
-          File.readlines(path).each do |line|
-            next unless pattern.match?(line)
-
-            results << { file: File.basename(path), line: line.strip }
-            return results if results.size >= limit
-          end
+        search_files.each_with_object([]) do |path, matches|
+          file_matches = matches_in_file(path, pattern)
+          matches.concat(file_matches)
+          break matches if matches.size >= limit
         rescue Errno::ENOENT
           next
+        end.first(limit)
+      end
+
+      def matches_in_file(path, pattern)
+        basename = File.basename(path)
+        File.readlines(path).filter_map do |line|
+          { file: basename, line: line.strip } if pattern.match?(line)
         end
-        results
       end
 
       def read_file(name)
-        path = File.join(@dir, name)
-        return "" unless File.exist?(path)
+        path = file_at(name)
+        return "" unless path
 
         File.read(path)
       rescue Errno::ENOENT
         ""
       end
 
+      def file_at(name)
+        path = File.join(@dir, name)
+        path if File.exist?(path)
+      end
+
       def date_files_descending(days)
         today = Date.today
         (0...days).filter_map do |offset|
-          date_str = (today - offset).strftime("%Y-%m-%d")
-          path = File.join(@dir, "#{date_str}.md")
-          path if File.exist?(path)
+          file_at((today - offset).strftime("%Y-%m-%d.md"))
         end
       end
 
       def search_files
-        priority = %w[SOUL.md USER.md].filter_map do |name|
-          path = File.join(@dir, name)
-          path if File.exist?(path)
-        end
-
+        priority = %w[SOUL.md USER.md].filter_map { |name| file_at(name) }
         date_files = Dir.glob(File.join(@dir, "????-??-??.md")).sort.reverse
         priority + date_files
       end

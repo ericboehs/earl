@@ -8,6 +8,7 @@ module Earl
   class SessionStore
     include Logging
 
+    # Snapshot of a Claude session's metadata for disk persistence and resume.
     PersistedSession = Struct.new(:claude_session_id, :channel_id, :working_dir,
                                   :started_at, :last_activity_at, :is_paused,
                                   :message_count, :total_cost, :total_input_tokens,
@@ -59,7 +60,7 @@ module Earl
       return {} unless File.exist?(@path)
 
       raw = JSON.parse(File.read(@path))
-      raw.transform_values { |v| PersistedSession.new(**v.transform_keys(&:to_sym)) }
+      raw.transform_values { |attrs| PersistedSession.new(**attrs.transform_keys(&:to_sym)) }
     rescue JSON::ParserError, Errno::ENOENT => error
       log(:warn, "Failed to read session store: #{error.message}")
       {}

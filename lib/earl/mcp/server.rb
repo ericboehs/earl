@@ -48,7 +48,7 @@ module Earl
         when "tools/list"
           tools_list_response(id)
         when "tools/call"
-          tools_call_response(id, request["params"])
+          tools_call_response(id, request["params"] || {})
         else
           error_response(id, -32601, "Method not found: #{method}")
         end
@@ -77,27 +77,37 @@ module Earl
       end
 
       def tools_call_response(id, params)
-        tool_name = params&.dig("name") || params&.dig("arguments", "tool_name") || "unknown"
-        arguments = params&.dig("arguments") || {}
-
-        handler = @handlers.find { |candidate| candidate.handles?(tool_name) }
-        unless handler
-          return error_response(id, -32602, "No handler for tool: #{tool_name}")
-        end
+        tool_name, arguments = extract_tool_params(params)
+        handler = find_tool_handler(tool_name)
+        return error_response(id, -32602, "No handler for tool: #{tool_name}") unless handler
 
         log(:info, "MCP tool call: #{tool_name}")
         result = handler.call(tool_name, arguments)
-        log(:info, "MCP tool result for #{tool_name}: #{result.inspect[0..200]}")
+        log_tool_result(tool_name, result)
 
-        {
-          jsonrpc: "2.0",
-          id: id,
-          result: result
-        }
+        { jsonrpc: "2.0", id: id, result: result }
       rescue StandardError => error
-        log(:error, "MCP tool call error: #{error.class}: #{error.message}")
+        handle_tool_error(id, error)
+      end
+
+      def extract_tool_params(args)
+        tool_name = args.dig("name") || args.dig("arguments", "tool_name") || "unknown"
+        [ tool_name, args.dig("arguments") || {} ]
+      end
+
+      def find_tool_handler(tool_name)
+        @handlers.find { |candidate| candidate.handles?(tool_name) }
+      end
+
+      def log_tool_result(tool_name, result)
+        log(:info, "MCP tool result for #{tool_name}: #{result.inspect[0..200]}")
+      end
+
+      def handle_tool_error(id, error)
+        msg = error.message
+        log(:error, "MCP tool call error: #{error.class}: #{msg}")
         log(:error, error.backtrace&.first(3)&.join("\n"))
-        error_response(id, -32603, "Internal error: #{error.message}")
+        error_response(id, -32603, "Internal error: #{msg}")
       end
 
       def error_response(id, code, message)

@@ -103,7 +103,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
       total_input_tokens: 10_000,
       total_output_tokens: 3_000
     )
-    executor.instance_variable_get(:@session_manager)
+    executor.instance_variable_get(:@deps).session_manager
             .define_singleton_method(:persisted_session_for) { |_id| persisted }
 
     command = Earl::CommandParser::ParsedCommand.new(name: :stats, args: [])
@@ -505,7 +505,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     executor = build_executor(posted: posted, session: nil)
 
     # Override claude_session_id_for to simulate a persisted (closed) session
-    executor.instance_variable_get(:@session_manager)
+    executor.instance_variable_get(:@deps).session_manager
             .define_singleton_method(:claude_session_id_for) { |_id| "persisted-abc-123" }
 
     context_json = {

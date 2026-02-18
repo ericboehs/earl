@@ -38,7 +38,7 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
   test "get_or_create reuses alive session for same thread" do
     manager = Earl::SessionManager.new
     first = create_with_fake_session(manager, "thread-abc12345", alive: true)
-    second = manager.get_or_create("thread-abc12345")
+    second = manager.get_or_create("thread-abc12345", default_session_config)
 
     assert_same first, second
   end
@@ -221,7 +221,6 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
     manager = Earl::SessionManager.new(config: config, session_store: store)
 
     # First, create a session that's dead
-    dead_session = fake_session(alive: false)
     original_new = Earl::ClaudeSession.method(:new)
 
     call_count = 0
@@ -232,19 +231,21 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
       session.define_singleton_method(:alive?) { call_count > 1 } # first is dead, second is alive (resumed)
       session.define_singleton_method(:session_id) { args[:session_id] || "new-session" }
       session.define_singleton_method(:kill) { }
-      session.define_singleton_method(:total_cost) { 0.0 }
       mock_stats = Object.new
+      mock_stats.define_singleton_method(:total_cost) { 0.0 }
       mock_stats.define_singleton_method(:total_input_tokens) { 0 }
       mock_stats.define_singleton_method(:total_output_tokens) { 0 }
       session.define_singleton_method(:stats) { mock_stats }
       session
     end
 
+    sc = default_session_config
+
     # First get_or_create — creates a dead session
-    first = manager.get_or_create("thread-abc12345")
+    first = manager.get_or_create("thread-abc12345", sc)
 
     # Second get_or_create — session is dead, should resume from store
-    second = manager.get_or_create("thread-abc12345")
+    second = manager.get_or_create("thread-abc12345", sc)
 
     # The resumed session should have the original session_id
     assert_equal "sess-original", second.session_id
@@ -282,8 +283,8 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
         session.define_singleton_method(:alive?) { false }
         session.define_singleton_method(:session_id) { "sess-broken" }
         session.define_singleton_method(:kill) { }
-        session.define_singleton_method(:total_cost) { 0.0 }
         mock_stats = Object.new
+        mock_stats.define_singleton_method(:total_cost) { 0.0 }
         mock_stats.define_singleton_method(:total_input_tokens) { 0 }
         mock_stats.define_singleton_method(:total_output_tokens) { 0 }
         session.define_singleton_method(:stats) { mock_stats }
@@ -295,8 +296,8 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
         session.define_singleton_method(:alive?) { true }
         session.define_singleton_method(:session_id) { "sess-new" }
         session.define_singleton_method(:kill) { }
-        session.define_singleton_method(:total_cost) { 0.0 }
         mock_stats = Object.new
+        mock_stats.define_singleton_method(:total_cost) { 0.0 }
         mock_stats.define_singleton_method(:total_input_tokens) { 0 }
         mock_stats.define_singleton_method(:total_output_tokens) { 0 }
         session.define_singleton_method(:stats) { mock_stats }
@@ -304,7 +305,7 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
       end
     end
 
-    result = manager.get_or_create("thread-abc12345")
+    result = manager.get_or_create("thread-abc12345", default_session_config)
 
     # Should have fallen back to a new session
     assert_equal "sess-new", result.session_id
@@ -359,7 +360,7 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
 
     original_new = Earl::ClaudeSession.method(:new)
     Earl::ClaudeSession.define_singleton_method(:new) { |**_args| session }
-    manager.get_or_create("thread-abc12345")
+    manager.get_or_create("thread-abc12345", default_session_config)
     Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) }
 
     manager.stop_session("thread-abc12345")
@@ -379,7 +380,7 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
     session = fake_session
     original_new = Earl::ClaudeSession.method(:new)
     Earl::ClaudeSession.define_singleton_method(:new) { |**_args| session }
-    manager.get_or_create("thread-abc12345")
+    manager.get_or_create("thread-abc12345", default_session_config)
     Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) }
 
     saved.clear
@@ -477,15 +478,15 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
 
     # Create a session with stats
     session = fake_session
-    session.define_singleton_method(:total_cost) { 0.42 }
     mock_stats = Object.new
+    mock_stats.define_singleton_method(:total_cost) { 0.42 }
     mock_stats.define_singleton_method(:total_input_tokens) { 8000 }
     mock_stats.define_singleton_method(:total_output_tokens) { 3000 }
     session.define_singleton_method(:stats) { mock_stats }
 
     original_new = Earl::ClaudeSession.method(:new)
     Earl::ClaudeSession.define_singleton_method(:new) { |**_args| session }
-    manager.get_or_create("thread-abc12345")
+    manager.get_or_create("thread-abc12345", default_session_config)
     Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) }
 
     saved.clear
@@ -499,20 +500,19 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
 
   private
 
+  def default_session_config
+    Earl::SessionManager::SessionConfig.new(channel_id: nil, working_dir: nil, username: nil)
+  end
+
   def create_with_fake_session(manager, thread_id, alive: true, &on_kill)
-    # Temporarily replace the session creation in get_or_create
-    # by pre-populating and using the manager's internal map
     session = fake_session(alive: alive, &on_kill)
 
-    # Access internal state to inject our fake
     original_new = Earl::ClaudeSession.method(:new)
     Earl::ClaudeSession.define_singleton_method(:new) { |**_args| session }
 
-    result = manager.get_or_create(thread_id)
-
-    Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) }
-
-    result
+    manager.get_or_create(thread_id, default_session_config)
+  ensure
+    Earl::ClaudeSession.define_singleton_method(:new) { |**args| original_new.call(**args) } if original_new
   end
 
   def fake_session(alive: true, &on_kill)
@@ -521,8 +521,8 @@ class Earl::SessionManagerTest < ActiveSupport::TestCase
     session.define_singleton_method(:alive?) { alive }
     session.define_singleton_method(:kill) { on_kill&.call }
     session.define_singleton_method(:session_id) { "fake-session-id" }
-    session.define_singleton_method(:total_cost) { 0.0 }
     mock_stats = Object.new
+    mock_stats.define_singleton_method(:total_cost) { 0.0 }
     mock_stats.define_singleton_method(:total_input_tokens) { 0 }
     mock_stats.define_singleton_method(:total_output_tokens) { 0 }
     session.define_singleton_method(:stats) { mock_stats }

@@ -11,10 +11,10 @@ module Earl
       end
 
       def build
-        sections = build_sections
-        return nil if sections.empty?
+        body = build_sections.join("\n\n")
+        return nil if body.empty?
 
-        "<earl-memory>\n#{sections.join("\n\n")}\n</earl-memory>\n\n" \
+        "<earl-memory>\n#{body}\n</earl-memory>\n\n" \
           "You have persistent memory via save_memory and search_memory tools.\n" \
           "Save important facts you learn. Search when you need to recall something."
       end

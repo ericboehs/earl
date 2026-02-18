@@ -304,7 +304,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn allows dot and colon in window name when session param provided" do
     @tmux.session_exists_result = true
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |_| :approved }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "window.with:chars",
@@ -336,7 +336,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn creates session when confirmation is approved" do
     @tmux.session_exists_result = false
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |_| :approved }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -349,7 +349,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn creates window in existing session when session param provided" do
     @tmux.session_exists_result = true
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :approved }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |_| :approved }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "test-window",
@@ -365,7 +365,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn returns denied message when confirmation is rejected" do
     @tmux.session_exists_result = false
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :denied }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |_| :denied }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -378,7 +378,7 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "spawn returns error when confirmation fails" do
     @tmux.session_exists_result = false
-    @handler.define_singleton_method(:request_spawn_confirmation) { |**_| :error }
+    @handler.define_singleton_method(:request_spawn_confirmation) { |_| :error }
 
     result = @handler.call("manage_tmux_sessions", {
       "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -457,20 +457,23 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "post_confirmation_request posts to correct channel and thread" do
     handler = build_handler_with_api(post_success: true)
-    post_id = handler.send(:post_confirmation_request, "test-session", "fix tests", "/tmp", nil)
+    request = Earl::Mcp::TmuxHandler::SpawnRequest.new(name: "test-session", prompt: "fix tests", working_dir: "/tmp", session: nil)
+    post_id = handler.send(:post_confirmation_request, request)
     assert_equal "spawn-post-1", post_id
   end
 
   test "post_confirmation_request returns nil when API fails" do
     handler = build_handler_with_api(post_success: false)
-    post_id = handler.send(:post_confirmation_request, "test-session", "fix tests", "/tmp", nil)
+    request = Earl::Mcp::TmuxHandler::SpawnRequest.new(name: "test-session", prompt: "fix tests", working_dir: "/tmp", session: nil)
+    post_id = handler.send(:post_confirmation_request, request)
     assert_nil post_id
   end
 
   test "post_confirmation_request includes session info for window spawn" do
     posts = []
     handler = build_handler_with_api(post_success: true, posts: posts)
-    handler.send(:post_confirmation_request, "test-win", "fix tests", "/tmp", "code")
+    request = Earl::Mcp::TmuxHandler::SpawnRequest.new(name: "test-win", prompt: "fix tests", working_dir: "/tmp", session: "code")
+    handler.send(:post_confirmation_request, request)
     message = posts.first[:body][:message]
     assert_includes message, "code"
     assert_includes message, "new window"
@@ -605,7 +608,8 @@ class Earl::Mcp::TmuxHandlerTest < ActiveSupport::TestCase
 
   test "request_spawn_confirmation returns error when post fails" do
     handler = build_handler_with_api(post_success: false)
-    result = handler.send(:request_spawn_confirmation, name: "test", prompt: "hi", working_dir: "/tmp")
+    request = Earl::Mcp::TmuxHandler::SpawnRequest.new(name: "test", prompt: "hi", working_dir: "/tmp", session: nil)
+    result = handler.send(:request_spawn_confirmation, request)
     assert_equal :error, result
   end
 

@@ -63,7 +63,7 @@ module Earl
       end
 
       def spawn_name_taken?(ctx, name)
-        return false unless @tmux.session_exists?(name)
+        return false unless @deps.tmux.session_exists?(name)
 
         reply(ctx, ":x: Session `#{name}` already exists.")
         true
@@ -72,9 +72,14 @@ module Earl
       def spawn_tmux_session(ctx, req)
         name = req.name
         command = "claude #{Shellwords.shellescape(req.prompt)}"
-        @tmux.create_session(name: name, command: command, working_dir: req.working_dir)
-        save_tmux_session_info(ctx, req)
+        @deps.tmux.create_session(name: name, command: command, working_dir: req.working_dir)
+        persist_spawn_info(req.to_session_info(ctx))
         reply(ctx, spawn_success_message(req))
+      end
+
+      def persist_spawn_info(info)
+        store = @deps.tmux_store
+        store&.save(info)
       end
 
       def spawn_success_message(req)
@@ -83,12 +88,6 @@ module Earl
           "- **Prompt:** #{req.prompt}\n" \
           "- **Dir:** #{req.working_dir || Dir.pwd}\n" \
           "Use `!session #{name}` to check output."
-      end
-
-      def save_tmux_session_info(ctx, req)
-        return unless @tmux_store
-
-        @tmux_store.save(req.to_session_info(ctx))
       end
 
       def parse_spawn_flags(str)

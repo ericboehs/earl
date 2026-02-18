@@ -14,14 +14,13 @@ module Earl
       private
 
       def handle_sessions(ctx)
-        unless @tmux.available?
-          return reply(ctx, ":x: tmux is not installed.")
-        end
+        tmux = @deps.tmux
+        return reply(ctx, ":x: tmux is not installed.") unless tmux.available?
 
-        panes = @tmux.list_all_panes
+        panes = tmux.list_all_panes
         return reply(ctx, "No tmux sessions running.") if panes.empty?
 
-        claude_panes = panes.select { |pane| @tmux.claude_on_tty?(pane[:tty]) }
+        claude_panes = panes.select { |pane| tmux.claude_on_tty?(pane[:tty]) }
         if claude_panes.empty?
           return reply(ctx, "No Claude sessions found across #{panes.size} tmux panes.")
         end
@@ -52,7 +51,7 @@ module Earl
       end
 
       def detect_pane_status(target)
-        output = @tmux.capture_pane(target, lines: 20)
+        output = @deps.tmux.capture_pane(target, lines: 20)
         return :permission if output.include?("Do you want to proceed?")
         return :active if output.include?("esc to interrupt")
 
@@ -65,7 +64,7 @@ module Earl
       def handle_session_show(ctx)
         name = ctx.arg
         with_tmux_session(ctx) do
-          output = @tmux.capture_pane(name)
+          output = @deps.tmux.capture_pane(name)
           truncated = truncate_output(output)
           reply(ctx, "#### :computer: `#{name}` pane output\n```\n#{truncated}\n```")
         end
@@ -74,7 +73,7 @@ module Earl
       def handle_session_status(ctx)
         name = ctx.arg
         with_tmux_session(ctx) do
-          output = @tmux.capture_pane(name, lines: 200)
+          output = @deps.tmux.capture_pane(name, lines: 200)
           truncated = truncate_output(output, 3000)
           reply(ctx, "#### :mag: `#{name}` status\n```\n#{truncated}\n```\n_AI summary not yet implemented._")
         end
@@ -84,7 +83,7 @@ module Earl
         name = ctx.arg
         text = ctx.args[1]
         with_tmux_session(ctx) do
-          @tmux.send_keys(name, text)
+          @deps.tmux.send_keys(name, text)
           reply(ctx, ":keyboard: Sent to `#{name}`: `#{text}`")
         end
       end
@@ -92,7 +91,7 @@ module Earl
       def handle_session_nudge(ctx)
         name = ctx.arg
         with_tmux_session(ctx) do
-          @tmux.send_keys(name, "Are you stuck? What's your current status?")
+          @deps.tmux.send_keys(name, "Are you stuck? What's your current status?")
           reply(ctx, ":wave: Nudged `#{name}`.")
         end
       end
@@ -100,7 +99,7 @@ module Earl
       def handle_session_approve(ctx)
         name = ctx.arg
         with_tmux_session(ctx) do
-          @tmux.send_keys_raw(name, "Enter")
+          @deps.tmux.send_keys_raw(name, "Enter")
           reply(ctx, ":white_check_mark: Approved permission on `#{name}`.")
         end
       end
@@ -108,18 +107,19 @@ module Earl
       def handle_session_deny(ctx)
         name = ctx.arg
         with_tmux_session(ctx) do
-          @tmux.send_keys_raw(name, "Escape")
+          @deps.tmux.send_keys_raw(name, "Escape")
           reply(ctx, ":no_entry_sign: Denied permission on `#{name}`.")
         end
       end
 
       def handle_session_kill(ctx)
         name = ctx.arg
-        @tmux.kill_session(name)
-        @tmux_store&.delete(name)
+        store = @deps.tmux_store
+        @deps.tmux.kill_session(name)
+        store&.delete(name)
         reply(ctx, ":skull: Tmux session `#{name}` killed.")
       rescue Tmux::NotFound
-        @tmux_store&.delete(name)
+        store&.delete(name)
         reply(ctx, ":x: Session `#{name}` not found (cleaned up store).")
       rescue Tmux::Error => error
         reply(ctx, ":x: Error killing session: #{error.message}")

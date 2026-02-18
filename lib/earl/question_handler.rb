@@ -9,8 +9,18 @@ module Earl
     EMOJI_NUMBERS = %w[one two three four].freeze
     EMOJI_MAP = { "one" => 0, "two" => 1, "three" => 2, "four" => 3 }.freeze
 
+    # Tracks in-progress question flow: which tool_use triggered it, the list of
+    # questions, collected answers, and the Mattermost post/thread IDs.
     QuestionState = Struct.new(:tool_use_id, :questions, :answers, :current_index,
-                               :current_post_id, :thread_id, :channel_id, keyword_init: true)
+                               :current_post_id, :thread_id, :channel_id, keyword_init: true) do
+      def current_question
+        questions[current_index]
+      end
+
+      def all_questions_answered?
+        current_index >= questions.size
+      end
+    end
 
     def initialize(mattermost:)
       @mattermost = mattermost
@@ -19,20 +29,15 @@ module Earl
     end
 
     def handle_tool_use(thread_id:, tool_use:, channel_id: nil)
-      return nil unless tool_use[:name] == "AskUserQuestion"
+      name, input, tool_use_id = tool_use.values_at(:name, :input, :id)
+      return nil unless name == "AskUserQuestion"
 
-      input = tool_use[:input]
       questions = input["questions"] || []
       return nil if questions.empty?
 
-      tool_use_id = tool_use[:id]
       state = QuestionState.new(
-        tool_use_id: tool_use_id,
-        questions: questions,
-        answers: {},
-        current_index: 0,
-        thread_id: thread_id,
-        channel_id: channel_id
+        tool_use_id: tool_use_id, questions: questions, answers: {},
+        current_index: 0, thread_id: thread_id, channel_id: channel_id
       )
 
       unless post_current_question(state)
@@ -44,54 +49,79 @@ module Earl
     end
 
     def handle_reaction(post_id:, emoji_name:)
-      state = @mutex.synchronize { @pending_questions[post_id] }
+      state = fetch_pending(post_id)
       return nil unless state
 
-      answer_index = EMOJI_MAP[emoji_name]
-      return nil unless answer_index
+      selected = resolve_selected_option(state, emoji_name)
+      return nil unless selected
 
-      question = state.questions[state.current_index]
-      options = question["options"] || []
-      return nil unless answer_index < options.size
-
-      record_answer(state, question, options[answer_index])
-      @mutex.synchronize { @pending_questions.delete(post_id) }
-      delete_question_post(post_id)
-
-      state.current_index += 1
-
-      if state.current_index < state.questions.size
-        post_current_question(state)
-        nil
-      else
-        build_answer_json(state)
-      end
+      accept_answer(state, post_id, selected)
     end
 
     private
 
-    def post_current_question(state)
-      question = state.questions[state.current_index]
-      options = question["options"] || []
+    def fetch_pending(post_id)
+      @mutex.synchronize { @pending_questions[post_id] }
+    end
 
+    def release_pending(post_id)
+      @mutex.synchronize { @pending_questions.delete(post_id) }
+      delete_question_post(post_id)
+    end
+
+    def accept_answer(state, post_id, selected)
+      index = state.current_index
+      record_answer(state, state.questions[index], selected)
+      release_pending(post_id)
+      advance_question(state, index)
+    end
+
+    def advance_question(state, index)
+      next_index = index + 1
+      state.current_index = next_index
+      return build_answer_json(state) unless next_index < state.questions.size
+
+      post_current_question(state)
+      nil
+    end
+
+    def post_current_question(state)
+      question = state.current_question
+      message = build_question_message(question)
+
+      post_id = create_question_post(state.channel_id, state.thread_id, message)
+      register_question_post(state, post_id, (question["options"] || []).size)
+    end
+
+    def create_question_post(channel_id, thread_id, message)
+      result = @mattermost.create_post(channel_id: channel_id, message: message, root_id: thread_id)
+      result["id"]
+    end
+
+    def resolve_selected_option(state, emoji_name)
+      answer_index = EMOJI_MAP[emoji_name]
+      return nil unless answer_index
+
+      options = state.questions[state.current_index]["options"] || []
+      answer_index < options.size ? options[answer_index] : nil
+    end
+
+    def build_question_message(question)
+      options = question["options"] || []
       lines = [ ":question: **#{question['question']}**" ]
-      options.each_with_index do |opt, i|
-        emoji = EMOJI_NUMBERS[i]
+      options.each_with_index do |opt, index|
+        emoji = EMOJI_NUMBERS[index]
         label = opt["label"] || opt.to_s
         desc = opt["description"]
         lines << ":#{emoji}: #{label}#{desc ? " — #{desc}" : ''}"
       end
+      lines.join("\n")
+    end
 
-      result = @mattermost.create_post(
-        channel_id: state.channel_id,
-        message: lines.join("\n"),
-        root_id: state.thread_id
-      )
-
-      post_id = result["id"]
+    def register_question_post(state, post_id, option_count)
       if post_id
         state.current_post_id = post_id
-        add_emoji_options(post_id, options.size)
+        add_emoji_options(post_id, option_count)
         @mutex.synchronize { @pending_questions[post_id] = state }
         true
       else
@@ -100,8 +130,8 @@ module Earl
     end
 
     def add_emoji_options(post_id, count)
-      count.times do |i|
-        @mattermost.add_reaction(post_id: post_id, emoji_name: EMOJI_NUMBERS[i])
+      count.times do |index|
+        @mattermost.add_reaction(post_id: post_id, emoji_name: EMOJI_NUMBERS[index])
       end
     end
 
@@ -116,9 +146,10 @@ module Earl
     end
 
     def build_answer_json(state)
-      answers = state.questions.map.with_index do |q, i|
-        answer = state.answers[q["question"]]
-        "Question #{i + 1}: #{q['question']}\nAnswer: #{answer}"
+      answers = state.questions.map.with_index do |question, index|
+        q_text = question["question"]
+        answer = state.answers[q_text]
+        "Question #{index + 1}: #{q_text}\nAnswer: #{answer}"
       end.join("\n\n")
 
       { tool_use_id: state.tool_use_id, answer_text: answers }

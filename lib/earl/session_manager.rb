@@ -7,6 +7,15 @@ module Earl
     include Logging
     include PermissionConfig
 
+    # Bundles session creation parameters that travel together.
+    SessionConfig = Data.define(:channel_id, :working_dir, :username)
+
+    # Bundles thread identity with session config to eliminate data clump.
+    ThreadContext = Data.define(:thread_id, :short_id, :session_config)
+
+    # Bundles persistence parameters to reduce parameter list length.
+    PersistenceContext = Data.define(:channel_id, :working_dir, :paused)
+
     def initialize(config: nil, session_store: nil)
       @config = config
       @session_store = session_store
@@ -14,20 +23,17 @@ module Earl
       @mutex = Mutex.new
     end
 
-    def get_or_create(thread_id, channel_id: nil, working_dir: nil, username: nil)
-      short_id = thread_id[0..7]
+    def get_or_create(thread_id, session_config)
+      ctx = ThreadContext.new(thread_id: thread_id, short_id: thread_id[0..7],
+                              session_config: session_config)
       @mutex.synchronize do
         session = @sessions[thread_id]
-        return reuse_session(session, short_id) if session&.alive?
+        return reuse_session(session, ctx.short_id) if session&.alive?
 
-        # Try to resume from store before creating new
         persisted = @session_store&.load&.dig(thread_id)
-        if persisted && persisted.claude_session_id
-          return resume_or_create(thread_id, short_id, persisted,
-                                  channel_id: channel_id, working_dir: working_dir, username: username)
-        end
+        return resume_or_create(ctx, persisted) if persisted&.claude_session_id
 
-        create_session(thread_id, short_id, channel_id: channel_id, working_dir: working_dir, username: username)
+        create_session(ctx)
       end
     end
 
@@ -66,7 +72,8 @@ module Earl
     def pause_all
       @mutex.synchronize do
         @sessions.each do |thread_id, session|
-          @session_store&.save(thread_id, build_persisted(session, paused: :paused))
+          persist_ctx = PersistenceContext.new(channel_id: nil, working_dir: nil, paused: true)
+          @session_store&.save(thread_id, build_persisted(session, persist_ctx))
           session.kill
         end
         @sessions.clear
@@ -108,7 +115,7 @@ module Earl
 
       def apply_stats_to_persisted(persisted, session)
         stats = session.stats
-        persisted.total_cost = session.total_cost
+        persisted.total_cost = stats.total_cost
         persisted.total_input_tokens = stats.total_input_tokens
         persisted.total_output_tokens = stats.total_output_tokens
       end
@@ -123,25 +130,30 @@ module Earl
       session
     end
 
-    def resume_or_create(thread_id, short_id, persisted, channel_id: nil, working_dir: nil, username: nil)
-      effective_channel = channel_id || persisted.channel_id
-      effective_dir = working_dir || persisted.working_dir
-      log(:info, "Attempting to resume session for thread #{short_id}")
+    def resume_or_create(ctx, persisted)
+      build_resume_session(ctx, persisted)
+    rescue StandardError => error
+      log(:warn, "Resume failed for thread #{ctx.short_id}: #{error.message}, creating new session")
+      create_session(ctx)
+    end
+
+    def build_resume_session(ctx, persisted)
+      session_config = ctx.session_config
+      thread_id = ctx.thread_id
+      effective_channel = session_config.channel_id || persisted.channel_id
+      effective_dir = session_config.working_dir || persisted.working_dir
+      log(:info, "Attempting to resume session for thread #{ctx.short_id}")
       session = ClaudeSession.new(
         session_id: persisted.claude_session_id,
         permission_config: build_permission_config(thread_id, effective_channel),
         mode: :resume,
         working_dir: effective_dir,
-        username: username
+        username: session_config.username
       )
       session.start
-      @sessions[thread_id] = session
-      @session_store&.save(thread_id, build_persisted(session, channel_id: effective_channel,
-                                                               working_dir: effective_dir))
+      persist_ctx = PersistenceContext.new(channel_id: effective_channel, working_dir: effective_dir, paused: false)
+      register_session(thread_id, session, persist_ctx)
       session
-    rescue StandardError => error
-      log(:warn, "Resume failed for thread #{short_id}: #{error.message}, creating new session")
-      create_session(thread_id, short_id, channel_id: channel_id, working_dir: working_dir, username: username)
     end
 
     def resume_session(thread_id, persisted)
@@ -159,38 +171,47 @@ module Earl
       log(:warn, "Startup resume failed for thread #{short_id}: #{error.message}")
     end
 
-    def create_session(thread_id, short_id, channel_id: nil, working_dir: nil, username: nil)
-      log(:info, "Creating new session for thread #{short_id}")
+    def create_session(ctx)
+      session_config = ctx.session_config
+      thread_id = ctx.thread_id
+      channel_id = session_config.channel_id
+      working_dir = session_config.working_dir
+      log(:info, "Creating new session for thread #{ctx.short_id}")
       session = ClaudeSession.new(
         permission_config: build_permission_config(thread_id, channel_id),
         working_dir: working_dir,
-        username: username
+        username: session_config.username
       )
       session.start
-      @sessions[thread_id] = session
-      @session_store&.save(thread_id, build_persisted(session, channel_id: channel_id, working_dir: working_dir))
+      persist_ctx = PersistenceContext.new(channel_id: channel_id, working_dir: working_dir, paused: false)
+      register_session(thread_id, session, persist_ctx)
       session
+    end
+
+    def register_session(thread_id, session, persist_ctx)
+      @sessions[thread_id] = session
+      @session_store&.save(thread_id, build_persisted(session, persist_ctx))
     end
 
     def build_permission_config(thread_id, channel_id)
       return nil unless @config
 
-      effective_channel = channel_id || @config.channel_id
-      build_permission_env(@config, channel_id: effective_channel, thread_id: thread_id)
+      resolved = [ channel_id, @config.channel_id ].compact.first
+      build_permission_env(@config, channel_id: resolved, thread_id: thread_id)
     end
 
-    def build_persisted(session, channel_id: nil, working_dir: nil, paused: :active)
+    def build_persisted(session, persist_ctx)
       now = Time.now.iso8601
       stats = session.stats
       SessionStore::PersistedSession.new(
         claude_session_id: session.session_id,
-        channel_id: channel_id,
-        working_dir: working_dir,
+        channel_id: persist_ctx.channel_id,
+        working_dir: persist_ctx.working_dir,
         started_at: now,
         last_activity_at: now,
-        is_paused: paused == :paused,
+        is_paused: persist_ctx.paused,
         message_count: 0,
-        total_cost: session.total_cost,
+        total_cost: stats.total_cost,
         total_input_tokens: stats.total_input_tokens,
         total_output_tokens: stats.total_output_tokens
       )

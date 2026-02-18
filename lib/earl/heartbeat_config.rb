@@ -16,7 +16,38 @@ module Earl
       :name, :description, :cron, :interval, :run_at, :channel_id, :working_dir,
       :prompt, :permission_mode, :persistent, :timeout, :enabled, :once,
       keyword_init: true
-    )
+    ) do
+      def self.from_config(name, config, working_dir_resolver)
+        schedule = config["schedule"] || {}
+        new(
+          name: name,
+          description: config["description"] || name,
+          cron: schedule["cron"],
+          interval: schedule["interval"],
+          run_at: schedule["run_at"],
+          channel_id: config["channel_id"],
+          working_dir: working_dir_resolver.call(config["working_dir"]),
+          prompt: config["prompt"],
+          permission_mode: (config["permission_mode"] || "interactive").to_sym,
+          persistent: config.fetch("persistent", false),
+          timeout: config.fetch("timeout", 600),
+          enabled: config.fetch("enabled", true),
+          once: config.fetch("once", false)
+        )
+      end
+
+      def active?
+        enabled && channel_id && prompt
+      end
+
+      def auto_permission?
+        permission_mode == :auto
+      end
+
+      def base_session_opts
+        { working_dir: working_dir, auto_permission: auto_permission?, channel_id: channel_id }
+      end
+    end
 
     def initialize(path: CONFIG_PATH)
       @path = path
@@ -35,35 +66,18 @@ module Earl
       return [] unless File.exist?(@path)
 
       data = YAML.safe_load_file(@path)
-      return [] unless data.is_a?(Hash) && data["heartbeats"].is_a?(Hash)
+      heartbeats = data.is_a?(Hash) ? data["heartbeats"] : nil
+      return [] unless heartbeats.is_a?(Hash)
 
-      data["heartbeats"].filter_map { |name, config| build_definition(name, config) }
+      heartbeats.filter_map { |name, config| build_definition(name, config) }
     end
 
     def build_definition(name, config)
       return nil unless config.is_a?(Hash)
       return nil unless valid_schedule?(config)
 
-      definition = HeartbeatDefinition.new(
-        name: name,
-        description: config["description"] || name,
-        cron: config.dig("schedule", "cron"),
-        interval: config.dig("schedule", "interval"),
-        run_at: config.dig("schedule", "run_at"),
-        channel_id: config["channel_id"],
-        working_dir: resolve_working_dir(config["working_dir"]),
-        prompt: config["prompt"],
-        permission_mode: (config["permission_mode"] || "interactive").to_sym,
-        persistent: config.fetch("persistent", false),
-        timeout: config.fetch("timeout", 600),
-        enabled: config.fetch("enabled", true),
-        once: config.fetch("once", false)
-      )
-
-      return nil unless definition.enabled
-      return nil unless definition.channel_id && definition.prompt
-
-      definition
+      definition = HeartbeatDefinition.from_config(name, config, method(:resolve_working_dir))
+      definition if definition.active?
     end
 
     def valid_schedule?(config)

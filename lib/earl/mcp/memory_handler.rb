@@ -5,6 +5,8 @@ module Earl
     # MCP handler exposing save_memory and search_memory tools.
     # Conforms to the Server handler interface: tool_definitions, handles?, call.
     class MemoryHandler
+      include HandlerBase
+
       TOOL_NAMES = %w[save_memory search_memory].freeze
 
       def initialize(store:, username: nil)
@@ -16,17 +18,13 @@ module Earl
         [ save_memory_definition, search_memory_definition ]
       end
 
-      def handles?(name)
-        TOOL_NAMES.include?(name)
-      end
+      DISPATCH = { "save_memory" => :handle_save, "search_memory" => :handle_search }.freeze
 
       def call(name, arguments)
-        case name
-        when "save_memory"
-          handle_save(arguments)
-        when "search_memory"
-          handle_search(arguments)
-        end
+        method = DISPATCH[name]
+        return unless method
+
+        send(method, arguments)
       end
 
       private

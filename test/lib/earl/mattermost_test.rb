@@ -757,13 +757,9 @@ class Earl::MattermostTest < ActiveSupport::TestCase
   end
 
   def with_http_mock(on_request: nil, on_ssl: nil, response_body: "{}", success: true)
-    original = Net::HTTP.method(:new)
-    mock = Object.new
-    mock.define_singleton_method(:use_ssl=) { |v| on_ssl&.call(v) }
-    mock.define_singleton_method(:open_timeout=) { |_v| }
-    mock.define_singleton_method(:read_timeout=) { |_v| }
+    original_start = Net::HTTP.method(:start)
     is_success = success
-    mock.define_singleton_method(:request) do |req|
+    mock_response = proc do |req|
       on_request&.call(req)
       resp = Object.new
       rb = response_body
@@ -775,10 +771,15 @@ class Earl::MattermostTest < ActiveSupport::TestCase
       resp
     end
 
-    Net::HTTP.define_singleton_method(:new) { |*_args| mock }
+    Net::HTTP.define_singleton_method(:start) do |_host, _port, **kwargs, &block|
+      on_ssl&.call(kwargs[:use_ssl])
+      mock_http = Object.new
+      mock_http.define_singleton_method(:request) { |req| mock_response.call(req) }
+      block ? block.call(mock_http) : mock_http
+    end
     yield
   ensure
-    Net::HTTP.define_singleton_method(:new, original)
+    Net::HTTP.define_singleton_method(:start, original_start)
   end
 
   # Fake WebSocket that executes handlers with instance_exec like the real gem

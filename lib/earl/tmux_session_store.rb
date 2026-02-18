@@ -41,22 +41,35 @@ module Earl
       end
     end
 
+    # Returns names of dead sessions without modifying the store.
+    def cleanup
+      find_dead_sessions
+    end
+
     # Removes entries for tmux sessions that no longer exist.
     # Shell calls happen outside the mutex to avoid blocking other operations
     # if tmux is slow or hung.
     def cleanup!
-      names = @mutex.synchronize { ensure_cache.keys }
-      dead = names.reject { |name| Tmux.session_exists?(name) }
+      dead = find_dead_sessions
       return dead if dead.empty?
 
+      remove_dead_sessions(dead)
+    end
+
+    private
+
+    def find_dead_sessions
+      names = @mutex.synchronize { ensure_cache.keys }
+      names.reject { |name| Tmux.session_exists?(name) }
+    end
+
+    def remove_dead_sessions(dead)
       @mutex.synchronize do
         dead.each { |name| @cache&.delete(name) }
         write_store(@cache) if @cache
         dead
       end
     end
-
-    private
 
     def ensure_cache
       @cache ||= read_store
@@ -68,18 +81,21 @@ module Earl
       return {} unless File.exist?(@path)
 
       raw = JSON.parse(File.read(@path))
+      deserialize_entries(raw)
+    rescue JSON::ParserError, ArgumentError, Errno::ENOENT => error
+      file_missing = error.is_a?(Errno::ENOENT)
+      backup_corrupted_store unless file_missing
+      suffix = file_missing ? "" : " (backed up corrupted file)"
+      log(:warn, "Failed to read tmux session store: #{error.message}#{suffix}")
+      {}
+    end
+
+    def deserialize_entries(raw)
       valid_keys = TmuxSessionInfo.members.map(&:to_s)
       raw.transform_values do |value|
         filtered = value.slice(*valid_keys).transform_keys(&:to_sym)
         TmuxSessionInfo.new(**filtered)
       end
-    rescue JSON::ParserError, ArgumentError => error
-      backup_corrupted_store
-      log(:warn, "Failed to read tmux session store: #{error.message} (backed up corrupted file)")
-      {}
-    rescue Errno::ENOENT => error
-      log(:warn, "Failed to read tmux session store: #{error.message}")
-      {}
     end
 
     def backup_corrupted_store
@@ -92,6 +108,14 @@ module Earl
     end
 
     def write_store(data)
+      serialize_and_write(data)
+      @dirty = false
+    rescue StandardError => error
+      @dirty = true
+      log(:error, "Failed to write tmux session store: #{error.message} (will retry on next write)")
+    end
+
+    def serialize_and_write(data)
       dir = File.dirname(@path)
       FileUtils.mkdir_p(dir) unless Dir.exist?(dir)
 
@@ -99,11 +123,9 @@ module Earl
       tmp_path = "#{@path}.tmp.#{Process.pid}"
       File.write(tmp_path, JSON.pretty_generate(serialized))
       File.rename(tmp_path, @path)
-      @dirty = false
-    rescue StandardError => error
-      @dirty = true
-      log(:error, "Failed to write tmux session store: #{error.message} (will retry on next write)")
+    rescue StandardError
       FileUtils.rm_f(tmp_path) if tmp_path
+      raise
     end
   end
 end

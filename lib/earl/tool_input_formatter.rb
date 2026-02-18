@@ -29,12 +29,15 @@ module Earl
     }.freeze
 
     def extract_tool_detail_from(tool_name, input)
-      safe_input = input || {}
       key = TOOL_DETAIL_KEYS[tool_name]
-      return safe_input[key] if key
+      key ? input&.dig(key) : summarize_input(input)
+    end
 
-      compact = safe_input.compact
-      compact.empty? ? nil : JSON.generate(compact)
+    def summarize_input(input)
+      return nil unless input
+
+      entries = input.to_h.compact
+      entries.empty? ? nil : JSON.generate(entries)
     end
   end
 end

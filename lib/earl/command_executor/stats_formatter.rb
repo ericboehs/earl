@@ -17,38 +17,29 @@ module Earl
       end
 
       def append_optional_stats(lines, stats)
-        append_context_stat(lines, stats)
-        append_model_stat(lines, stats)
-        append_ttft_stat(lines, stats)
-        append_speed_stat(lines, stats)
+        append_context_line(lines, stats)
+        append_model_line(lines, stats.model_id)
+        append_ttft_line(lines, stats.time_to_first_token)
+        append_speed_line(lines, stats.tokens_per_second)
       end
 
-      def append_context_stat(lines, stats)
+      def append_context_line(lines, stats)
         pct = stats.context_percent
         return unless pct
 
         lines << "| **Context used** | #{format('%.1f%%', pct)} of #{format_number(stats.context_window)} |"
       end
 
-      def append_model_stat(lines, stats)
-        model = stats.model_id
-        return unless model
-
-        lines << "| **Model** | `#{model}` |"
+      def append_model_line(lines, model)
+        lines << "| **Model** | `#{model}` |" if model
       end
 
-      def append_ttft_stat(lines, stats)
-        ttft = stats.time_to_first_token
-        return unless ttft
-
-        lines << "| **Last TTFT** | #{format('%.1fs', ttft)} |"
+      def append_ttft_line(lines, ttft)
+        lines << "| **Last TTFT** | #{format('%.1fs', ttft)} |" if ttft
       end
 
-      def append_speed_stat(lines, stats)
-        tps = stats.tokens_per_second
-        return unless tps
-
-        lines << "| **Last speed** | #{format('%.0f', tps)} tok/s |"
+      def append_speed_line(lines, tps)
+        lines << "| **Last speed** | #{format('%.0f', tps)} tok/s |" if tps
       end
 
       def format_persisted_stats(persisted)

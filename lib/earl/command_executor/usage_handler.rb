@@ -67,7 +67,7 @@ module Earl
       end
 
       def handle_context(ctx)
-        sid = @session_manager.claude_session_id_for(ctx.thread_id)
+        sid = @deps.session_manager.claude_session_id_for(ctx.thread_id)
         unless sid
           reply(ctx, "No session found for this thread.")
           return

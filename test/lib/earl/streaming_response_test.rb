@@ -41,7 +41,7 @@ class Earl::StreamingResponseTest < ActiveSupport::TestCase
 
     sleep 0.1
     # The typing thread should have exited due to the rescue/break
-    typing_thread = response.instance_variable_get(:@typing_thread)
+    typing_thread = response.instance_variable_get(:@post_state).typing_thread
     assert_not typing_thread&.alive?
   end
 
@@ -195,7 +195,7 @@ class Earl::StreamingResponseTest < ActiveSupport::TestCase
     response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
     response.start_typing
 
-    typing_thread = response.instance_variable_get(:@typing_thread)
+    typing_thread = response.instance_variable_get(:@post_state).typing_thread
     assert typing_thread.alive?
 
     response.on_text("Hello") # on_text calls stop_typing internally
