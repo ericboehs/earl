@@ -4,6 +4,8 @@ set -euo pipefail
 EARL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 export PATH="$HOME/.local/share/mise/installs/ruby/4.0.1/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
 
 # Load EARL environment variables
 if [ -f "$HOME/.config/earl/env" ]; then
@@ -11,6 +13,21 @@ if [ -f "$HOME/.config/earl/env" ]; then
   # shellcheck source=/dev/null
   source "$HOME/.config/earl/env"
   set +a
+fi
+
+CLAUDE_HOME="${EARL_CLAUDE_HOME:-$HOME/.config/earl/claude-home}"
+
+# Extract Claude credentials from macOS Keychain into isolated HOME
+CREDS=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || true)
+if [ -n "$CREDS" ]; then
+  mkdir -p "$CLAUDE_HOME/.claude"
+  echo "$CREDS" > "$CLAUDE_HOME/.claude/.credentials.json"
+  chmod 600 "$CLAUDE_HOME/.claude/.credentials.json"
+fi
+
+# Seed .claude.json from host if not yet initialized
+if [ ! -f "$CLAUDE_HOME/.claude.json" ] && [ -f "$HOME/.claude.json" ]; then
+  cp "$HOME/.claude.json" "$CLAUDE_HOME/.claude.json"
 fi
 
 cd "$EARL_DIR"
