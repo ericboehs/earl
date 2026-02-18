@@ -748,42 +748,174 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
   end
 
   test "write_mcp_config includes EARL_CURRENT_USERNAME in env" do
-    session = Earl::ClaudeSession.new(
-      permission_config: { "PLATFORM_URL" => "http://localhost" },
-      username: "ericboehs"
-    )
-    path = session.send(:write_mcp_config)
-    config = JSON.parse(File.read(path))
+    with_mcp_config_dir do
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" },
+        username: "ericboehs"
+      )
+      path = session.send(:write_mcp_config)
+      config = JSON.parse(File.read(path))
 
-    env = config.dig("mcpServers", "earl", "env")
-    assert_equal "ericboehs", env["EARL_CURRENT_USERNAME"]
-  ensure
-    File.delete(path) if path && File.exist?(path)
+      env = config.dig("mcpServers", "earl", "env")
+      assert_equal "ericboehs", env["EARL_CURRENT_USERNAME"]
+    end
   end
 
   test "write_mcp_config uses earl as server name" do
-    session = Earl::ClaudeSession.new(
-      permission_config: { "PLATFORM_URL" => "http://localhost" }
-    )
-    path = session.send(:write_mcp_config)
-    config = JSON.parse(File.read(path))
+    with_mcp_config_dir do
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" }
+      )
+      path = session.send(:write_mcp_config)
+      config = JSON.parse(File.read(path))
 
-    assert config.dig("mcpServers", "earl"), "Expected 'earl' key in mcpServers"
-    assert_nil config.dig("mcpServers", "earl_permissions"), "Should not have old 'earl_permissions' key"
-  ensure
-    File.delete(path) if path && File.exist?(path)
+      assert config.dig("mcpServers", "earl"), "Expected 'earl' key in mcpServers"
+      assert_nil config.dig("mcpServers", "earl_permissions"), "Should not have old 'earl_permissions' key"
+    end
   end
 
   test "write_mcp_config creates file with 0600 permissions" do
-    session = Earl::ClaudeSession.new(
-      permission_config: { "PLATFORM_URL" => "http://localhost" }
-    )
-    path = session.send(:write_mcp_config)
+    with_mcp_config_dir do
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" }
+      )
+      path = session.send(:write_mcp_config)
 
-    mode = File.stat(path).mode & 0o777
-    assert_equal 0o600, mode, "Expected MCP config file to have 0600 permissions, got #{format('%04o', mode)}"
-  ensure
-    File.delete(path) if path && File.exist?(path)
+      mode = File.stat(path).mode & 0o777
+      assert_equal 0o600, mode, "Expected MCP config file to have 0600 permissions, got #{format('%04o', mode)}"
+    end
+  end
+
+  test "write_mcp_config writes to ~/.config/earl/mcp/ directory" do
+    with_mcp_config_dir do |mcp_dir|
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" }
+      )
+      path = session.send(:write_mcp_config)
+
+      assert path.start_with?(mcp_dir), "Expected path to start with #{mcp_dir}, got #{path}"
+      assert_match(/earl-mcp-.*\.json\z/, File.basename(path))
+    end
+  end
+
+  test "write_mcp_config merges user-defined MCP servers" do
+    with_mcp_config_dir do
+      user_servers = {
+        "mcpServers" => {
+          "apple-mail" => { "command" => "/usr/bin/mail", "args" => [] },
+          "mcp-ical" => { "command" => "/usr/bin/ical", "args" => [] }
+        }
+      }
+      File.write(Earl::ClaudeSession::USER_MCP_SERVERS_PATH, JSON.generate(user_servers))
+
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" }
+      )
+      path = session.send(:write_mcp_config)
+      config = JSON.parse(File.read(path))
+      servers = config["mcpServers"]
+
+      assert servers.key?("earl"), "Expected earl server"
+      assert servers.key?("apple-mail"), "Expected apple-mail server"
+      assert servers.key?("mcp-ical"), "Expected mcp-ical server"
+    end
+  end
+
+  test "write_mcp_config earl server takes precedence over user-defined" do
+    with_mcp_config_dir do
+      user_servers = {
+        "mcpServers" => {
+          "earl" => { "command" => "/usr/bin/fake-earl", "args" => [ "--bad" ] }
+        }
+      }
+      File.write(Earl::ClaudeSession::USER_MCP_SERVERS_PATH, JSON.generate(user_servers))
+
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" }
+      )
+      path = session.send(:write_mcp_config)
+      config = JSON.parse(File.read(path))
+      earl_server = config.dig("mcpServers", "earl")
+
+      assert_not_equal "/usr/bin/fake-earl", earl_server["command"]
+      assert_includes earl_server["command"], "earl-permission-server"
+    end
+  end
+
+  test "write_mcp_config handles missing mcp_servers.json gracefully" do
+    with_mcp_config_dir do
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" }
+      )
+      path = session.send(:write_mcp_config)
+      config = JSON.parse(File.read(path))
+
+      assert_equal 1, config["mcpServers"].size
+      assert config.dig("mcpServers", "earl")
+    end
+  end
+
+  test "write_mcp_config handles malformed mcp_servers.json gracefully" do
+    with_mcp_config_dir do
+      File.write(Earl::ClaudeSession::USER_MCP_SERVERS_PATH, "not valid json{{{")
+
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" }
+      )
+      path = session.send(:write_mcp_config)
+      config = JSON.parse(File.read(path))
+
+      assert_equal 1, config["mcpServers"].size
+      assert config.dig("mcpServers", "earl")
+    end
+  end
+
+  test "write_mcp_config handles mcp_servers.json without mcpServers key" do
+    with_mcp_config_dir do
+      File.write(Earl::ClaudeSession::USER_MCP_SERVERS_PATH, JSON.generate({ "other" => "data" }))
+
+      session = Earl::ClaudeSession.new(
+        permission_config: { "PLATFORM_URL" => "http://localhost" }
+      )
+      path = session.send(:write_mcp_config)
+      config = JSON.parse(File.read(path))
+
+      assert_equal 1, config["mcpServers"].size
+      assert config.dig("mcpServers", "earl")
+    end
+  end
+
+  test "cleanup_mcp_configs removes stale config files" do
+    with_mcp_config_dir do |mcp_dir|
+      FileUtils.mkdir_p(mcp_dir)
+      stale_path = File.join(mcp_dir, "earl-mcp-stale-session-id.json")
+      active_path = File.join(mcp_dir, "earl-mcp-active-session-id.json")
+      File.write(stale_path, "{}")
+      File.write(active_path, "{}")
+
+      Earl::ClaudeSession.cleanup_mcp_configs(active_session_ids: [ "active-session-id" ])
+
+      assert_not File.exist?(stale_path), "Expected stale config to be removed"
+      assert File.exist?(active_path), "Expected active config to be preserved"
+    end
+  end
+
+  test "cleanup_mcp_configs removes all files when no active sessions" do
+    with_mcp_config_dir do |mcp_dir|
+      FileUtils.mkdir_p(mcp_dir)
+      path = File.join(mcp_dir, "earl-mcp-old-session.json")
+      File.write(path, "{}")
+
+      Earl::ClaudeSession.cleanup_mcp_configs
+
+      assert_not File.exist?(path), "Expected config to be removed"
+    end
+  end
+
+  test "cleanup_mcp_configs handles missing directory gracefully" do
+    with_mcp_config_dir do
+      assert_nothing_raised { Earl::ClaudeSession.cleanup_mcp_configs }
+    end
   end
 
   test "stats tokens_per_second returns nil when duration is zero" do
@@ -967,5 +1099,26 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     dir = File.join(Dir.tmpdir, "earl-tests")
     FileUtils.mkdir_p(dir)
     dir
+  end
+
+  def with_mcp_config_dir
+    tmp_dir = Dir.mktmpdir("earl-mcp-test")
+    mcp_dir = File.join(tmp_dir, "mcp")
+    user_servers_path = File.join(tmp_dir, "mcp_servers.json")
+
+    original_mcp_dir = Earl::ClaudeSession::MCP_CONFIG_DIR
+    original_user_path = Earl::ClaudeSession::USER_MCP_SERVERS_PATH
+    Earl::ClaudeSession.send(:remove_const, :MCP_CONFIG_DIR)
+    Earl::ClaudeSession.const_set(:MCP_CONFIG_DIR, mcp_dir)
+    Earl::ClaudeSession.send(:remove_const, :USER_MCP_SERVERS_PATH)
+    Earl::ClaudeSession.const_set(:USER_MCP_SERVERS_PATH, user_servers_path)
+
+    yield mcp_dir
+  ensure
+    Earl::ClaudeSession.send(:remove_const, :MCP_CONFIG_DIR)
+    Earl::ClaudeSession.const_set(:MCP_CONFIG_DIR, original_mcp_dir)
+    Earl::ClaudeSession.send(:remove_const, :USER_MCP_SERVERS_PATH)
+    Earl::ClaudeSession.const_set(:USER_MCP_SERVERS_PATH, original_user_path)
+    FileUtils.rm_rf(tmp_dir)
   end
 end

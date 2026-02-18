@@ -7,6 +7,9 @@ module Earl
     include Logging
     attr_reader :session_id
 
+    MCP_CONFIG_DIR = File.join(Dir.home, ".config", "earl", "mcp")
+    USER_MCP_SERVERS_PATH = File.join(Dir.home, ".config", "earl", "mcp_servers.json")
+
     def process_pid
       @runtime.process_state.process&.pid
     end
@@ -184,6 +187,7 @@ module Earl
         terminate_process
         close_stdin
         join_threads
+        remove_mcp_config
       end
 
       private
@@ -227,6 +231,11 @@ module Earl
       rescue IOError
         # Already closed
       end
+
+      def remove_mcp_config
+        path = File.join(MCP_CONFIG_DIR, "earl-mcp-#{@session_id}.json")
+        File.delete(path) if File.exist?(path)
+      end
     end
 
     # Builds the CLI argument list for spawning the Claude process.
@@ -259,30 +268,57 @@ module Earl
       end
 
       def write_mcp_config
-        config = {
-          mcpServers: {
-            earl: {
-              command: File.expand_path("../../bin/earl-permission-server", __dir__),
-              args: [],
-              env: @options.permission_config.merge(
-                "EARL_CURRENT_USERNAME" => @options.username || ""
-              )
-            }
+        all_servers = load_user_mcp_servers.merge(build_earl_server_entry)
+        json = JSON.generate({ mcpServers: all_servers })
+        write_mcp_config_file(json)
+      end
+
+      def build_earl_server_entry
+        {
+          earl: {
+            command: File.expand_path("../../bin/earl-permission-server", __dir__),
+            args: [],
+            env: @options.permission_config.merge(
+              "EARL_CURRENT_USERNAME" => @options.username || ""
+            )
           }
         }
-        path = File.join(Dir.tmpdir, "earl-mcp-#{@session_id}.json")
-        json = JSON.generate(config)
-        File.open(path, File::CREAT | File::EXCL | File::WRONLY, 0o600) do |file|
-          file.write(json)
-        end
-        path
+      end
+
+      def load_user_mcp_servers
+        return {} unless File.exist?(USER_MCP_SERVERS_PATH)
+
+        parsed = JSON.parse(File.read(USER_MCP_SERVERS_PATH))
+        symbolize_mcp_servers(parsed.fetch("mcpServers", nil))
+      rescue JSON::ParserError => error
+        log(:warn, "Malformed #{USER_MCP_SERVERS_PATH}: #{error.message}")
+        {}
+      end
+
+      def symbolize_mcp_servers(servers)
+        servers.is_a?(Hash) ? servers.transform_keys(&:to_sym) : {}
+      end
+
+      def write_mcp_config_file(json)
+        path = mcp_config_file_path
+        FileUtils.mkdir_p(MCP_CONFIG_DIR, mode: 0o700)
+        write_exclusive(path, json)
       rescue Errno::EEXIST
-        write_file_securely(path, json)
+        write_overwrite(path, json)
+      end
+
+      def write_exclusive(path, content)
+        File.open(path, File::CREAT | File::EXCL | File::WRONLY, 0o600) { |file| file.write(content) }
         path
       end
 
-      def write_file_securely(path, content)
+      def write_overwrite(path, content)
         File.open(path, File::WRONLY | File::TRUNC, 0o600) { |file| file.write(content) }
+        path
+      end
+
+      def mcp_config_file_path
+        File.join(MCP_CONFIG_DIR, "earl-mcp-#{@session_id}.json")
       end
     end
 
@@ -460,6 +496,17 @@ module Earl
 
       def format_cost
         format("cost=$%.4f", @stats.total_cost)
+      end
+    end
+
+    # Removes MCP config files that don't match any active session ID.
+    def self.cleanup_mcp_configs(active_session_ids: [])
+      return unless Dir.exist?(MCP_CONFIG_DIR)
+
+      active_set = Set.new(active_session_ids)
+      Dir.glob(File.join(MCP_CONFIG_DIR, "earl-mcp-*.json")).each do |path|
+        session_id = File.basename(path).delete_prefix("earl-mcp-").delete_suffix(".json")
+        File.delete(path) unless active_set.include?(session_id)
       end
     end
 
