@@ -12,14 +12,14 @@ echo "==> Installing EARL as a launchd agent..."
 echo "  Creating $CONFIG_DIR/logs/"
 mkdir -p "$CONFIG_DIR/logs"
 
-# 2. Copy default Claude config (if not present)
+# 2. Copy default Claude project config (if not present)
 CLAUDE_HOME="$CONFIG_DIR/claude-home"
 if [ ! -d "$CLAUDE_HOME/.claude" ]; then
-  echo "  Copying default Claude config to $CLAUDE_HOME/"
+  echo "  Copying default Claude project config to $CLAUDE_HOME/"
   mkdir -p "$CLAUDE_HOME"
   cp -r "$EARL_DIR/config/earl-claude-home/.claude" "$CLAUDE_HOME/.claude"
 else
-  echo "  Claude config already exists at $CLAUDE_HOME/.claude (skipping)"
+  echo "  Claude project config already exists at $CLAUDE_HOME/.claude (skipping)"
 fi
 
 # 3. Create env file template (if not present)

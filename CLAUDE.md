@@ -32,7 +32,7 @@ Optional config files:
 - `~/.config/earl/sessions.json` — Session persistence store
 - `~/.config/earl/allowed_tools/` — Per-thread tool approval lists
 - `~/.config/earl/tmux_sessions.json` — Tmux session metadata persistence
-- `~/.config/earl/claude-home/` — Isolated HOME directory for Claude subprocesses
+- `~/.config/earl/claude-home/` — Default working directory for Claude subprocesses (project-level CLAUDE.md lives here)
 - `~/.config/earl/env` — Environment variables for launchd (secrets, config)
 - `~/.config/earl/logs/` — stdout/stderr logs when running via launchd
 
@@ -69,9 +69,9 @@ launchctl kickstart -k gui/$(id -u)/com.boehs.earl
 launchctl bootout gui/$(id -u)/com.boehs.earl
 ```
 
-### Claude HOME Isolation
+### Claude Project Directory
 
-Claude subprocesses spawned by EARL use `~/.config/earl/claude-home/` as HOME instead of `~/.claude/`. This keeps EARL's permissions, hooks, and settings separate from the user's personal Claude config. Override with `EARL_CLAUDE_HOME` env var.
+Claude subprocesses spawned by EARL use `~/.config/earl/claude-home/` as their default working directory (when no channel-specific working dir is configured). This lets EARL have its own project-level `CLAUDE.md` without polluting other repos. Claude uses the real `$HOME` for global config and credentials. Override with `EARL_CLAUDE_HOME` env var.
 
 ## Architecture
 

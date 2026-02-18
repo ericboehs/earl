@@ -20,23 +20,9 @@ set -a
 source "$ENV_FILE"
 set +a
 
-CLAUDE_HOME="${EARL_CLAUDE_HOME:-$HOME/.config/earl/claude-home}"
-mkdir -p "$CLAUDE_HOME/.claude"
-
-# Extract Claude credentials from macOS Keychain into isolated HOME
-CREDS=$(security find-generic-password -s "Claude Code-credentials" -a "$USER" -w 2>/dev/null || true)
-if [ -n "$CREDS" ]; then
-  echo "$CREDS" > "$CLAUDE_HOME/.claude/.credentials.json"
-  chmod 600 "$CLAUDE_HOME/.claude/.credentials.json"
-else
-  echo "WARNING: Could not extract Claude credentials from macOS Keychain." >&2
-  echo "  Claude sessions may fail to authenticate." >&2
-fi
-
-# Seed .claude.json from host if not yet initialized
-if [ ! -f "$CLAUDE_HOME/.claude.json" ] && [ -f "$HOME/.claude.json" ]; then
-  cp "$HOME/.claude.json" "$CLAUDE_HOME/.claude.json"
-fi
+# Ensure EARL project dir exists (used as default working dir for Claude subprocesses)
+EARL_PROJECT_DIR="${EARL_CLAUDE_HOME:-$HOME/.config/earl/claude-home}"
+mkdir -p "$EARL_PROJECT_DIR"
 
 cd "$EARL_DIR"
 exec bundle exec ruby bin/earl
