@@ -24,7 +24,11 @@
     "deny": [
       "Bash(rm -rf:*)",
       "Bash(sudo:*)",
-      "Bash(curl -X DELETE:*)"
+      "Bash(curl -X DELETE:*)",
+      "Bash(curl -X PUT:*)",
+      "Bash(curl -X PATCH:*)",
+      "Bash(curl *| bash:*)",
+      "Bash(curl *| sh:*)"
     ]
   }
 }

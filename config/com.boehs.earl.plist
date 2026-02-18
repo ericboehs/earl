@@ -10,6 +10,9 @@
     <string>__EARL_DIR__/bin/earl-launchd</string>
   </array>
 
+  <key>WorkingDirectory</key>
+  <string>__EARL_DIR__</string>
+
   <key>RunAtLoad</key>
   <true/>
 

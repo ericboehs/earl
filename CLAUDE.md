@@ -40,6 +40,8 @@ Optional config files:
 
 EARL can run as a macOS launchd agent for automatic startup and crash recovery.
 
+**Prerequisite:** Claude CLI must be installed and authenticated (`claude` login) so credentials are stored in the macOS Keychain. The launchd wrapper extracts these on each startup.
+
 ### Setup
 
 ```bash
