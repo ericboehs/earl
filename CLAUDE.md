@@ -64,18 +64,16 @@ EARL can run as a macOS launchd agent for automatic startup and crash recovery (
 ### Setup
 
 ```bash
-# Production: clones repo, creates ~/bin/earl wrapper, installs launchd
 bin/earl-install
-
-# Development: creates config dirs and env template only
-EARL_ENV=development bin/earl-install
 ```
 
-On first run this creates `<config_root>/env` — fill in your secrets and re-run. Production mode additionally:
-1. Clones the repo to `~/.local/share/earl/`
-2. Creates `~/bin/earl` wrapper script
-3. Installs the launchd plist to `~/Library/LaunchAgents/`
-4. Loads and starts the agent
+On first run this creates env files for both environments — fill in secrets and re-run. On subsequent runs it:
+1. Creates config dirs for both dev (`~/.config/earl-dev/`) and prod (`~/.config/earl/`)
+2. Copies default Claude project config to both `claude-home/` dirs
+3. Clones the repo to `~/.local/share/earl/` (prod)
+4. Creates `~/bin/earl` wrapper script (prod)
+5. Installs the launchd plist to `~/Library/LaunchAgents/` (prod)
+6. Loads and starts the launchd agent (prod)
 
 ### Management
 
