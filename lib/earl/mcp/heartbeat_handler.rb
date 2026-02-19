@@ -13,13 +13,15 @@ module Earl
       include HandlerBase
 
       TOOL_NAMES = %w[manage_heartbeat].freeze
-      CONFIG_PATH = File.expand_path("~/.config/earl/heartbeats.yml")
+      def self.config_path
+        @config_path ||= File.join(Earl.config_root, "heartbeats.yml")
+      end
 
       VALID_ACTIONS = %w[list create update delete].freeze
       MUTABLE_FIELDS = %w[description cron interval run_at channel_id working_dir
                           prompt permission_mode persistent timeout enabled once].freeze
 
-      def initialize(default_channel_id: nil, config_path: CONFIG_PATH)
+      def initialize(default_channel_id: nil, config_path: self.class.config_path)
         @default_channel_id = default_channel_id
         @config_path = config_path
       end

@@ -14,9 +14,11 @@ module Earl
                                   :message_count, :total_cost, :total_input_tokens,
                                   :total_output_tokens, keyword_init: true)
 
-    DEFAULT_PATH = File.expand_path("~/.config/earl/sessions.json")
+    def self.default_path
+      @default_path ||= File.join(Earl.config_root, "sessions.json")
+    end
 
-    def initialize(path: DEFAULT_PATH)
+    def initialize(path: self.class.default_path)
       @path = path
       @mutex = Mutex.new
       @cache = nil # Lazy-loaded from disk on first access

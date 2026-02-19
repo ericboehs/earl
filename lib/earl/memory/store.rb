@@ -6,9 +6,11 @@ module Earl
     # Manages markdown-based persistent memory in ~/.config/earl/memory/
     # with SOUL.md (personality), USER.md (user notes), and YYYY-MM-DD.md (daily episodic).
     class Store
-      DEFAULT_DIR = File.expand_path("~/.config/earl/memory")
+      def self.default_dir
+        @default_dir ||= File.join(Earl.config_root, "memory")
+      end
 
-      def initialize(dir: DEFAULT_DIR)
+      def initialize(dir: self.class.default_dir)
         @dir = dir
       end
 

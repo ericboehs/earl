@@ -10,13 +10,32 @@ This is a standalone CLI app — the Rails starter template provides Gemfile/tes
 
 Reference implementation: `~/Code/anneschuth/claude-threads/` (TypeScript/Bun).
 
+## Environments
+
+EARL supports dev and prod running simultaneously with separate config, bots, and channels.
+
+| | Production | Development |
+|--|-----------|-------------|
+| **Config root** | `~/.config/earl/` | `~/.config/earl-dev/` |
+| **Repo checkout** | `~/.local/share/earl/` (stable clone) | `~/Code/ericboehs/earl/` (working copy) |
+| **Start command** | `earl` (from `~/bin/earl`) | `bin/earl` (from repo, direnv loads `.envrc`) |
+| **Bot account** | `@earl` | `@earl-dev` |
+| **Detection** | `EARL_ENV` unset or `production` | `EARL_ENV=development` via direnv |
+
+Config root is derived from `EARL_ENV` via `Earl.config_root`. All file paths (sessions, memory, heartbeats, MCP configs, allowed tools) are relative to the config root.
+
 ## Running
 
 ```bash
-ruby bin/earl
+# Development (from repo checkout, direnv sets EARL_ENV=development)
+bin/earl
+
+# Production (from ~/bin wrapper, uses ~/.local/share/earl/)
+earl
 ```
 
-Requires env vars (see `~/.config/earl/env` or `.envrc`):
+Requires env vars (see `<config_root>/env` or `.envrc`):
+- `EARL_ENV` — Environment: `production` (default) or `development`
 - `MATTERMOST_URL` — Mattermost server URL
 - `MATTERMOST_BOT_TOKEN` — Bot authentication token
 - `MATTERMOST_BOT_ID` — Bot user ID (to ignore own messages)
@@ -24,34 +43,39 @@ Requires env vars (see `~/.config/earl/env` or `.envrc`):
 - `EARL_CHANNELS` — Multi-channel config (comma-separated `channel_id:/working/dir` pairs, e.g. `chan1:/path1,chan2:/path2`)
 - `EARL_ALLOWED_USERS` — Comma-separated usernames allowed to interact
 - `EARL_SKIP_PERMISSIONS` — Set to `true` to use `--dangerously-skip-permissions` instead of MCP approval
-- `EARL_CLAUDE_HOME` — Custom HOME for Claude subprocesses (default: `~/.config/earl/claude-home`)
+- `EARL_CLAUDE_HOME` — Custom HOME for Claude subprocesses (default: `<config_root>/claude-home`)
 
-Optional config files:
-- `~/.config/earl/heartbeats.yml` — Heartbeat schedule definitions
-- `~/.config/earl/memory/` — Persistent memory files (SOUL.md, USER.md, daily notes)
-- `~/.config/earl/sessions.json` — Session persistence store
-- `~/.config/earl/allowed_tools/` — Per-thread tool approval lists
-- `~/.config/earl/tmux_sessions.json` — Tmux session metadata persistence
-- `~/.config/earl/claude-home/` — Default working directory for Claude subprocesses (project-level CLAUDE.md lives here)
-- `~/.config/earl/env` — Environment variables for launchd (secrets, config)
-- `~/.config/earl/logs/` — stdout/stderr logs when running via launchd
+Optional config files (under `<config_root>/`):
+- `heartbeats.yml` — Heartbeat schedule definitions
+- `memory/` — Persistent memory files (SOUL.md, USER.md, daily notes)
+- `sessions.json` — Session persistence store
+- `allowed_tools/` — Per-thread tool approval lists
+- `tmux_sessions.json` — Tmux session metadata persistence
+- `claude-home/` — Default working directory for Claude subprocesses (project-level CLAUDE.md lives here)
+- `env` — Environment variables for launchd/wrapper (secrets, config)
+- `logs/` — stdout/stderr logs when running via launchd
 
 ## Running as a Service (launchd)
 
-EARL can run as a macOS launchd agent for automatic startup and crash recovery.
+EARL can run as a macOS launchd agent for automatic startup and crash recovery (production only).
 
-**Prerequisite:** Claude CLI must be installed and authenticated (`claude` login) so credentials are stored in the macOS Keychain. The launchd wrapper extracts these on each startup.
+**Prerequisite:** Claude CLI must be installed and authenticated (`claude` login) so credentials are stored in the macOS Keychain.
 
 ### Setup
 
 ```bash
+# Production: clones repo, creates ~/bin/earl wrapper, installs launchd
 bin/earl-install
+
+# Development: creates config dirs and env template only
+EARL_ENV=development bin/earl-install
 ```
 
-On first run this creates `~/.config/earl/env` — fill in your secrets and re-run. On subsequent runs it:
-1. Copies default Claude config to `~/.config/earl/claude-home/`
-2. Installs the launchd plist to `~/Library/LaunchAgents/`
-3. Loads and starts the agent
+On first run this creates `<config_root>/env` — fill in your secrets and re-run. Production mode additionally:
+1. Clones the repo to `~/.local/share/earl/`
+2. Creates `~/bin/earl` wrapper script
+3. Installs the launchd plist to `~/Library/LaunchAgents/`
+4. Loads and starts the agent
 
 ### Management
 
@@ -71,19 +95,19 @@ launchctl bootout gui/$(id -u)/com.boehs.earl
 
 ### Claude Project Directory
 
-Claude subprocesses spawned by EARL use `~/.config/earl/claude-home/` as their default working directory (when no channel-specific working dir is configured). This lets EARL have its own project-level `CLAUDE.md` without polluting other repos. Claude uses the real `$HOME` for global config and credentials. Override with `EARL_CLAUDE_HOME` env var.
+Claude subprocesses spawned by EARL use `<config_root>/claude-home/` as their default working directory (when no channel-specific working dir is configured). This lets EARL have its own project-level `CLAUDE.md` without polluting other repos. Claude uses the real `$HOME` for global config and credentials. Override with `EARL_CLAUDE_HOME` env var.
 
 ## Architecture
 
 ```
 bin/earl                          # Entry point
-bin/earl-launchd                  # Wrapper script for launchd (sets PATH, loads env, extracts credentials)
-bin/earl-install                  # One-time setup: dirs, config, plist, launchctl load
+bin/earl-install                  # Setup script: config dirs, ~/bin/earl wrapper, launchd plist
 bin/earl-permission-server        # MCP permission server (spawned by Claude CLI as subprocess)
 bin/claude-context                # Context window usage helper (spawned by !context command)
 bin/claude-usage                  # Claude Pro usage helper (spawned by !usage command)
+~/bin/earl                        # Production wrapper (generated by bin/earl-install)
 lib/
-  earl.rb                         # Module root, requires, shared logger
+  earl.rb                         # Module root, requires, shared logger, env/config_root
   earl/
     config.rb                     # ENV-based configuration
     logging.rb                    # Shared logging mixin

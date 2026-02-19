@@ -7,11 +7,11 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>__EARL_DIR__/bin/earl-launchd</string>
+    <string>__EARL_BIN__</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>__EARL_DIR__</string>
+  <string>__PROD_INSTALL_DIR__</string>
 
   <key>RunAtLoad</key>
   <true/>

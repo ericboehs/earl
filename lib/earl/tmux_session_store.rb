@@ -10,9 +10,11 @@ module Earl
     TmuxSessionInfo = Struct.new(:name, :channel_id, :thread_id, :working_dir,
                                   :prompt, :created_at, keyword_init: true)
 
-    DEFAULT_PATH = File.expand_path("~/.config/earl/tmux_sessions.json")
+    def self.default_path
+      @default_path ||= File.join(Earl.config_root, "tmux_sessions.json")
+    end
 
-    def initialize(path: DEFAULT_PATH)
+    def initialize(path: self.class.default_path)
       @path = path
       @mutex = Mutex.new
       @cache = nil
