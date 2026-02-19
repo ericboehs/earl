@@ -327,11 +327,11 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
   end
 
   test "start spawns process and creates reader threads" do
-    session = Earl::ClaudeSession.new(session_id: "test-sess")
-
-    # Create a fake 'claude' script in a temp dir
     fake_bin = File.join(scratchpad_dir, "fake_bin")
     FileUtils.mkdir_p(fake_bin)
+    session = Earl::ClaudeSession.new(session_id: "test-sess", working_dir: fake_bin)
+
+    # Create a fake 'claude' script in a temp dir
     fake_claude = File.join(fake_bin, "claude")
     event_json = JSON.generate({ "type" => "system", "subtype" => "init" })
     File.write(fake_claude, "#!/bin/sh\necho '#{event_json}'\n")
