@@ -4,8 +4,6 @@ set -euo pipefail
 EARL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROD_CONFIG_DIR="$HOME/.config/earl"
 DEV_CONFIG_DIR="$HOME/.config/earl-dev"
-LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
-PLIST_NAME="com.boehs.earl.plist"
 PROD_INSTALL_DIR="$HOME/.local/share/earl"
 PROD_BIN="$HOME/bin/earl"
 NEEDS_ENV=false
@@ -56,7 +54,7 @@ if [ "$NEEDS_ENV" = true ]; then
   exit 0
 fi
 
-# --- Production: clone repo, create wrapper, install launchd ---
+# --- Production: clone repo, create wrapper ---
 
 echo ""
 echo "  [prod] Setting up production install..."
@@ -106,33 +104,8 @@ WRAPPER
 chmod +x "$PROD_BIN"
 echo "  [prod] Created $PROD_BIN"
 
-# Generate plist pointing to ~/bin/earl
-echo "  [prod] Installing launchd plist..."
-mkdir -p "$LAUNCH_AGENTS_DIR"
-sed -e "s|__EARL_BIN__|$PROD_BIN|g" \
-    -e "s|__PROD_INSTALL_DIR__|$PROD_INSTALL_DIR|g" \
-    -e "s|__HOME__|$HOME|g" \
-  "$EARL_DIR/config/$PLIST_NAME" > "$LAUNCH_AGENTS_DIR/$PLIST_NAME"
-
-# Load the agent
-echo "  [prod] Loading launchd agent..."
-launchctl bootout "gui/$(id -u)/com.boehs.earl" 2>/dev/null || true
-if ! launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENTS_DIR/$PLIST_NAME" 2>&1; then
-  echo "" >&2
-  echo "ERROR: Failed to load launchd agent." >&2
-  echo "  Try: launchctl bootout gui/$(id -u)/com.boehs.earl" >&2
-  echo "  Then re-run: bin/earl-install" >&2
-  exit 1
-fi
-
 echo ""
 echo "==> EARL installed!"
 echo ""
 echo "  Dev:  cd ~/Code/ericboehs/earl && bin/earl"
-echo "  Prod: earl  (or via launchd)"
-echo ""
-echo "Useful commands:"
-echo "  launchctl list | grep earl              # Check status"
-echo "  tail -f $PROD_CONFIG_DIR/logs/*.log     # View prod logs"
-echo "  launchctl kickstart -k gui/$(id -u)/com.boehs.earl  # Restart prod"
-echo "  launchctl bootout gui/$(id -u)/com.boehs.earl       # Stop prod"
+echo "  Prod: earl  (runs from $PROD_INSTALL_DIR)"

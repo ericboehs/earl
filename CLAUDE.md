@@ -55,13 +55,7 @@ Optional config files (under `<config_root>/`):
 - `env` — Environment variables for launchd/wrapper (secrets, config)
 - `logs/` — stdout/stderr logs when running via launchd
 
-## Running as a Service (launchd)
-
-EARL can run as a macOS launchd agent for automatic startup and crash recovery (production only).
-
-**Prerequisite:** Claude CLI must be installed and authenticated (`claude` login) so credentials are stored in the macOS Keychain.
-
-### Setup
+## Setup
 
 ```bash
 bin/earl-install
@@ -72,24 +66,6 @@ On first run this creates env files for both environments — fill in secrets an
 2. Copies default Claude project config to both `claude-home/` dirs
 3. Clones the repo to `~/.local/share/earl/` (prod)
 4. Creates `~/bin/earl` wrapper script (prod)
-5. Installs the launchd plist to `~/Library/LaunchAgents/` (prod)
-6. Loads and starts the launchd agent (prod)
-
-### Management
-
-```bash
-# Check status
-launchctl list | grep earl
-
-# View logs
-tail -f ~/.config/earl/logs/*.log
-
-# Restart
-launchctl kickstart -k gui/$(id -u)/com.boehs.earl
-
-# Stop
-launchctl bootout gui/$(id -u)/com.boehs.earl
-```
 
 ### Claude Project Directory
 
@@ -99,7 +75,7 @@ Claude subprocesses spawned by EARL use `<config_root>/claude-home/` as their de
 
 ```
 bin/earl                          # Entry point
-bin/earl-install                  # Setup script: config dirs, ~/bin/earl wrapper, launchd plist
+bin/earl-install                  # Setup script: config dirs, prod clone, ~/bin/earl wrapper
 bin/earl-permission-server        # MCP permission server (spawned by Claude CLI as subprocess)
 bin/claude-context                # Context window usage helper (spawned by !context command)
 bin/claude-usage                  # Claude Pro usage helper (spawned by !usage command)
