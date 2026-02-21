@@ -195,6 +195,12 @@ class Earl::CommandParserTest < ActiveSupport::TestCase
     assert_equal [ "code:4.0" ], cmd.args
   end
 
+  test "parse recognizes !restart" do
+    cmd = Earl::CommandParser.parse("!restart")
+    assert_equal :restart, cmd.name
+    assert_empty cmd.args
+  end
+
   test "session commands are case insensitive" do
     cmd = Earl::CommandParser.parse("!Sessions")
     assert_equal :sessions, cmd.name

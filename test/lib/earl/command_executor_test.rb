@@ -917,6 +917,45 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "not found"
   end
 
+  test "!restart replies and calls runner.request_restart" do
+    posted = []
+    mock_runner = Object.new
+    restarted = false
+    mock_runner.define_singleton_method(:request_restart) { restarted = true }
+
+    executor = build_executor(posted: posted, runner: mock_runner)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :restart, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, posted.size
+    assert_includes posted.first[:message], "Restarting"
+    assert restarted, "Expected runner.request_restart to be called"
+  end
+
+  test "!restart handles nil runner gracefully" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :restart, args: [])
+    assert_nothing_raised do
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+    end
+
+    assert_equal 1, posted.size
+    assert_includes posted.first[:message], "Restarting"
+  end
+
+  test "!help includes restart command" do
+    posted = []
+    executor = build_executor(posted: posted)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :help, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_includes posted.first[:message], "!restart"
+  end
+
   # -- New tests: empty prompt, invalid name, shell-safe prompt ---------------
 
   test "!spawn rejects empty prompt" do
@@ -1075,7 +1114,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     MockTmuxAdapter.new
   end
 
-  def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set, tmux_store: nil, tmux_adapter: nil)
+  def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set, tmux_store: nil, tmux_adapter: nil, runner: nil)
     config = Earl::Config.new
 
     mock_manager = Object.new
@@ -1101,6 +1140,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     opts[:heartbeat_scheduler] = heartbeat_scheduler unless heartbeat_scheduler == :not_set
     opts[:tmux_store] = tmux_store[:store] if tmux_store
     opts[:tmux_adapter] = tmux_adapter if tmux_adapter
+    opts[:runner] = runner if runner
 
     Earl::CommandExecutor.new(**opts)
   end

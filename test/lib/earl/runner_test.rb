@@ -1081,6 +1081,83 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_includes result, "User's latest message: thanks"
   end
 
+  # -- Restart tests --
+
+  test "restart_command returns ruby and program name" do
+    runner = Earl::Runner.new
+    cmd = runner.send(:restart_command)
+    assert_equal 2, cmd.size
+    assert_equal RbConfig.ruby, cmd.first
+    assert_equal $PROGRAM_NAME, cmd.last
+  end
+
+  test "request_restart sets shutting_down and is idempotent" do
+    runner = Earl::Runner.new
+    app_state = runner.instance_variable_get(:@app_state)
+
+    threads_spawned = 0
+    original_new = Thread.method(:new)
+    Thread.define_singleton_method(:new) do |&block|
+      threads_spawned += 1
+      original_new.call { }
+    end
+
+    runner.request_restart
+    assert app_state.shutting_down
+    assert_equal 1, threads_spawned
+
+    # Second call should be a no-op
+    runner.request_restart
+    assert_equal 1, threads_spawned
+  ensure
+    Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+  end
+
+  test "handle_restart_signal is idempotent like handle_shutdown_signal" do
+    runner = Earl::Runner.new
+    app_state = runner.instance_variable_get(:@app_state)
+
+    threads_spawned = 0
+    original_new = Thread.method(:new)
+    Thread.define_singleton_method(:new) do |&block|
+      threads_spawned += 1
+      original_new.call { }
+    end
+
+    runner.send(:handle_restart_signal)
+    assert app_state.shutting_down
+    assert_equal 1, threads_spawned
+
+    # Second call should return early
+    runner.send(:handle_restart_signal)
+    assert_equal 1, threads_spawned
+  ensure
+    Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+  end
+
+  test "begin_shutdown is shared by shutdown and restart signals" do
+    runner = Earl::Runner.new
+    app_state = runner.instance_variable_get(:@app_state)
+
+    threads_spawned = 0
+    original_new = Thread.method(:new)
+    Thread.define_singleton_method(:new) do |&block|
+      threads_spawned += 1
+      original_new.call { }
+    end
+
+    # First signal claims shutdown
+    runner.send(:handle_shutdown_signal)
+    assert app_state.shutting_down
+    assert_equal 1, threads_spawned
+
+    # Restart signal after shutdown should be ignored
+    runner.send(:handle_restart_signal)
+    assert_equal 1, threads_spawned
+  ensure
+    Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+  end
+
   test "check_idle_sessions iterates persisted sessions" do
     runner = Earl::Runner.new
     store = Earl::SessionStore.new(path: File.join(Dir.tmpdir, "earl-test-idle-#{SecureRandom.hex(4)}.json"))

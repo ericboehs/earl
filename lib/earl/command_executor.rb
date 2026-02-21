@@ -30,7 +30,7 @@ module Earl
 
     # Groups injected dependencies to keep ivar count low.
     Deps = Struct.new(:session_manager, :mattermost, :config, :heartbeat_scheduler,
-                      :tmux_store, :tmux, keyword_init: true)
+                      :tmux_store, :tmux, :runner, keyword_init: true)
 
     HELP_TABLE = <<~HELP
       | Command | Description |
@@ -54,6 +54,7 @@ module Earl
       | `!session <name> approve` | Approve pending permission |
       | `!session <name> deny` | Deny pending permission |
       | `!session <name> "text"` | Send input to tmux session |
+      | `!restart` | Restart EARL (pulls latest code in prod) |
       | `!spawn "prompt" [--name N] [--dir D]` | Spawn Claude in a new tmux session |
     HELP
 
@@ -70,6 +71,7 @@ module Earl
       session_status: :handle_session_status, session_kill: :handle_session_kill,
       session_nudge: :handle_session_nudge, session_approve: :handle_session_approve,
       session_deny: :handle_session_deny, session_input: :handle_session_input,
+      restart: :handle_restart,
       spawn: :handle_spawn
     }.freeze
 
@@ -77,10 +79,10 @@ module Earl
     CONTEXT_SCRIPT = File.expand_path("../../bin/claude-context", __dir__)
 
     def initialize(session_manager:, mattermost:, config:, **extras)
-      heartbeat_scheduler, tmux_store, tmux_adapter = extras.values_at(:heartbeat_scheduler, :tmux_store, :tmux_adapter)
+      heartbeat_scheduler, tmux_store, tmux_adapter, runner = extras.values_at(:heartbeat_scheduler, :tmux_store, :tmux_adapter, :runner)
       @deps = Deps.new(
         session_manager: session_manager, mattermost: mattermost, config: config,
-        heartbeat_scheduler: heartbeat_scheduler, tmux_store: tmux_store, tmux: tmux_adapter || Tmux
+        heartbeat_scheduler: heartbeat_scheduler, tmux_store: tmux_store, tmux: tmux_adapter || Tmux, runner: runner
       )
       @working_dirs = {} # thread_id -> path
     end
@@ -116,6 +118,11 @@ module Earl
 
     def handle_help(ctx)
       reply(ctx, HELP_TABLE)
+    end
+
+    def handle_restart(ctx)
+      reply(ctx, ":arrows_counterclockwise: Restarting EARL...")
+      @deps.runner&.request_restart
     end
 
     def handle_permissions(ctx)
