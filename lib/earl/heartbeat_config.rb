@@ -3,7 +3,7 @@
 require "yaml"
 
 module Earl
-  # Loads and validates heartbeat definitions from ~/.config/earl/heartbeats.yml.
+  # Loads and validates heartbeat definitions from <config_root>/heartbeats.yml.
   class HeartbeatConfig
     include Logging
 

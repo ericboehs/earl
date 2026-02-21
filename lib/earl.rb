@@ -47,8 +47,14 @@ require_relative "earl/runner"
 # Top-level module for EARL (Engineering Assistant Relay for LLMs), a Mattermost bot
 # that bridges team chat with Claude AI sessions for interactive assistance.
 module Earl
+  VALID_ENVIRONMENTS = %w[production development].freeze
+
   def self.env
-    @env ||= ENV.fetch("EARL_ENV", "production")
+    @env ||= ENV.fetch("EARL_ENV", "production").tap do |value|
+      unless VALID_ENVIRONMENTS.include?(value)
+        raise ArgumentError, "Invalid EARL_ENV=#{value.inspect}. Valid: #{VALID_ENVIRONMENTS.join(', ')}"
+      end
+    end
   end
 
   def self.development?

@@ -2,7 +2,7 @@
 
 module Earl
   # Tracks EARL-spawned tmux sessions with metadata for monitoring and control.
-  # Persists to ~/.config/earl/tmux_sessions.json with thread-safe atomic writes.
+  # Persists to <config_root>/tmux_sessions.json with thread-safe atomic writes.
   class TmuxSessionStore
     include Logging
 

@@ -264,7 +264,7 @@ module Earl
         def save_allowed_tools
           FileUtils.mkdir_p(self.class.allowed_tools_dir)
           File.write(allowed_tools_path, JSON.generate(@allowed_tools.to_a))
-        rescue StandardError => error
+        rescue Errno::ENOENT, Errno::EACCES, Errno::ENOSPC, IOError => error
           log(:warn, "Failed to save allowed tools: #{error.message}")
         end
 

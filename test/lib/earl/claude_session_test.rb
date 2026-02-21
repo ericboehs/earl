@@ -936,7 +936,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
   test "earl_project_dir returns default path when EARL_CLAUDE_HOME not set" do
     original = ENV.delete("EARL_CLAUDE_HOME")
     session = Earl::ClaudeSession.new
-    expected = File.join(Dir.home, ".config", "earl", "claude-home")
+    expected = File.join(Earl.config_root, "claude-home")
     assert_equal expected, session.send(:earl_project_dir)
   ensure
     ENV["EARL_CLAUDE_HOME"] = original if original

@@ -57,6 +57,42 @@ class EarlTest < ActiveSupport::TestCase
     ENV.delete("EARL_ENV")
   end
 
+  test "env raises on invalid EARL_ENV" do
+    Earl.instance_variable_set(:@env, nil)
+    ENV["EARL_ENV"] = "staging"
+    assert_raises(ArgumentError) { Earl.env }
+  ensure
+    ENV.delete("EARL_ENV")
+  end
+
+  test "development? returns false when EARL_ENV is unset" do
+    Earl.instance_variable_set(:@env, nil)
+    ENV.delete("EARL_ENV")
+    assert_not Earl.development?
+  end
+
+  test "config_root defaults to production path when EARL_ENV is unset" do
+    Earl.instance_variable_set(:@env, nil)
+    Earl.instance_variable_set(:@config_root, nil)
+    ENV.delete("EARL_ENV")
+    assert_equal File.join(Dir.home, ".config", "earl"), Earl.config_root
+  end
+
+  # --- Integration: downstream classes derive paths from config_root ---
+
+  test "SessionStore.default_path derives from Earl.config_root" do
+    Earl.instance_variable_set(:@env, nil)
+    Earl.instance_variable_set(:@config_root, nil)
+    Earl::SessionStore.instance_variable_set(:@default_path, nil)
+    ENV["EARL_ENV"] = "development"
+
+    expected = File.join(Dir.home, ".config", "earl-dev", "sessions.json")
+    assert_equal expected, Earl::SessionStore.default_path
+  ensure
+    ENV.delete("EARL_ENV")
+    Earl::SessionStore.instance_variable_set(:@default_path, nil)
+  end
+
   test "logger returns a Logger instance" do
     assert_instance_of Logger, Earl.logger
   end

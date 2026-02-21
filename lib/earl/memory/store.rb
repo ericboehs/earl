@@ -3,7 +3,7 @@
 module Earl
   module Memory
     # Pure Ruby file I/O for reading, writing, and searching memory files.
-    # Manages markdown-based persistent memory in ~/.config/earl/memory/
+    # Manages markdown-based persistent memory in <config_root>/memory/
     # with SOUL.md (personality), USER.md (user notes), and YYYY-MM-DD.md (daily episodic).
     class Store
       def self.default_dir

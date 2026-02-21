@@ -19,10 +19,14 @@ for CONFIG_DIR in "$PROD_CONFIG_DIR" "$DEV_CONFIG_DIR"; do
 
   # Copy default Claude project config (if not present)
   CLAUDE_HOME="$CONFIG_DIR/claude-home"
-  if [ ! -d "$CLAUDE_HOME/.claude" ]; then
+  CLAUDE_SRC="$EARL_DIR/config/earl-claude-home/.claude"
+  if [ ! -d "$CLAUDE_SRC" ]; then
+    echo "  [$ENV_LABEL] WARNING: Source Claude config not found at $CLAUDE_SRC" >&2
+    echo "  [$ENV_LABEL] Claude subprocesses will run without project-level config." >&2
+  elif [ ! -d "$CLAUDE_HOME/.claude" ]; then
     echo "  [$ENV_LABEL] Copying default Claude project config to $CLAUDE_HOME/"
     mkdir -p "$CLAUDE_HOME"
-    cp -r "$EARL_DIR/config/earl-claude-home/.claude" "$CLAUDE_HOME/.claude"
+    cp -r "$CLAUDE_SRC" "$CLAUDE_HOME/.claude"
   else
     echo "  [$ENV_LABEL] Claude project config already exists (skipping)"
   fi
@@ -62,7 +66,13 @@ echo "  [prod] Setting up production install..."
 # Clone/update production repo
 if [ -d "$PROD_INSTALL_DIR/.git" ]; then
   echo "  [prod] Updating checkout at $PROD_INSTALL_DIR..."
-  git -C "$PROD_INSTALL_DIR" pull --ff-only
+  if ! git -C "$PROD_INSTALL_DIR" pull --ff-only; then
+    echo "" >&2
+    echo "  [prod] ERROR: Failed to update production checkout." >&2
+    echo "  [prod] The local branch may have diverged. Try:" >&2
+    echo "    cd $PROD_INSTALL_DIR && git reset --hard origin/main && git pull" >&2
+    exit 1
+  fi
 else
   echo "  [prod] Cloning EARL to $PROD_INSTALL_DIR..."
   mkdir -p "$(dirname "$PROD_INSTALL_DIR")"
@@ -70,13 +80,21 @@ else
 fi
 
 echo "  [prod] Running bundle install..."
-cd "$PROD_INSTALL_DIR" && bundle install --quiet
+if ! (cd "$PROD_INSTALL_DIR" && bundle install --quiet); then
+  echo "" >&2
+  echo "  [prod] ERROR: bundle install failed. Re-running for details:" >&2
+  (cd "$PROD_INSTALL_DIR" && bundle install) || true
+  exit 1
+fi
 
 # Create ~/bin/earl wrapper
 mkdir -p "$(dirname "$PROD_BIN")"
 cat > "$PROD_BIN" <<WRAPPER
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Force production environment (prevent direnv leaking EARL_ENV=development)
+export EARL_ENV=production
 
 # PATH setup (mise shims, homebrew, ~/bin)
 export PATH="\$HOME/bin:\$HOME/.local/share/mise/shims:\$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
