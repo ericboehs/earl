@@ -44,8 +44,8 @@ module Earl
       log(:error, error.backtrace.first(5).join("\n"))
     end
 
-    def on_complete(stats_line: nil)
-      @mutex.synchronize { finalize(stats_line) }
+    def on_complete(**)
+      @mutex.synchronize { finalize }
     rescue StandardError => error
       log(:error, "Completion error (thread #{short_id}): #{error.class}: #{error.message}")
       log(:error, error.backtrace.first(5).join("\n"))
@@ -130,18 +130,18 @@ module Earl
       end
     end
 
-    # Finalization: completes the response with stats and handles multi-segment posts.
+    # Finalization: completes the response and handles multi-segment posts.
     module Finalization
       private
 
-      def finalize(stats_line)
+      def finalize
         ps = @post_state
         ps.debounce_timer&.join(1)
         stop_typing
         post_id = ps.reply_post_id
         return if ps.full_text.empty? && !post_id
 
-        final_text = build_final_text(stats_line)
+        final_text = build_final_text
 
         if only_text_segments?
           ps.full_text = final_text
@@ -156,10 +156,9 @@ module Earl
         @segments.none? { |segment| tool_segment?(segment) }
       end
 
-      def build_final_text(stats_line)
+      def build_final_text
         last_text = @segments.reverse.find { |segment| !tool_segment?(segment) }
-        text = last_text || @post_state.full_text
-        stats_line ? "#{text}\n\n---\n#{stats_line}" : text
+        last_text || @post_state.full_text
       end
 
       def remove_last_text_from_streamed_post

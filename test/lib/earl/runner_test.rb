@@ -111,13 +111,13 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_equal 1, updated_posts.size
     assert_equal "reply-post-1", updated_posts.first[:post_id]
 
-    # on_complete edits existing post with stats footer (text-only response)
+    # on_complete edits existing post (text-only response, no stats footer)
     on_complete_callback.call(mock_session)
 
-    # Text-only response: stats appended to existing post via update
+    # Text-only response: final update contains the text without stats
     final_update = updated_posts.last
     assert_includes final_update[:message], "updated"
-    assert_includes final_update[:message], "tokens"
+    assert_not_includes final_update[:message], "tokens"
   end
 
   test "setup_message_handler registers callback with mattermost" do
@@ -177,8 +177,9 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     runner = Earl::Runner.new
     mm = runner.instance_variable_get(:@services).mattermost
 
-    # Stub connect to not make real WebSocket calls
+    # Stub connect and get_channel to not make real network calls
     mm.define_singleton_method(:connect) { }
+    mm.define_singleton_method(:get_channel) { |channel_id:| { "display_name" => "Test Channel" } }
 
     # Set shutting_down so the loop exits immediately
     runner.instance_variable_get(:@app_state).shutting_down = true
@@ -275,6 +276,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     runner = Earl::Runner.new
     mm = runner.instance_variable_get(:@services).mattermost
     mm.define_singleton_method(:connect) { }
+    mm.define_singleton_method(:get_channel) { |channel_id:| { "display_name" => "Test Channel" } }
 
     # Set shutting_down after a brief delay so the loop runs at least once
     Thread.new do
@@ -554,7 +556,7 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_equal "/channel/path", result
   end
 
-  test "final post includes token count and context percent" do
+  test "final post does not include stats footer" do
     runner = Earl::Runner.new
 
     on_text_callback = nil
@@ -589,11 +591,10 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     on_text_callback.call("Here is the answer.")
     on_complete_callback.call(mock_session)
 
-    # Text-only response: edits existing post with stats footer
+    # Text-only response: edits existing post without stats footer
     final_update = updated_posts.last
     assert_includes final_update[:message], "Here is the answer."
-    assert_includes final_update[:message], "6,500 tokens"
-    assert_includes final_update[:message], "% context"
+    assert_not_includes final_update[:message], "tokens"
   end
 
   test "final post has no stats footer when no tokens" do

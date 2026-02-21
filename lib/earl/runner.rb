@@ -360,8 +360,7 @@ module Earl
 
         if session && response
           stats = session.stats
-          response.on_complete(stats_line: build_stats_line(stats.total_input_tokens, stats.total_output_tokens,
-                                                            stats.context_percent))
+          response.on_complete
           log_session_stats(stats, thread_id)
           manager.save_stats(thread_id)
         else
@@ -370,15 +369,6 @@ module Earl
         end
 
         process_next_queued(thread_id)
-      end
-
-      def build_stats_line(input_tokens, output_tokens, context_pct)
-        total_tokens = input_tokens + output_tokens
-        return nil unless total_tokens.positive?
-
-        line = "#{format_number(total_tokens)} tokens"
-        line += format(" · %.0f%% context", context_pct) if context_pct
-        line
       end
 
       def log_session_stats(stats, thread_id)

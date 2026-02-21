@@ -135,10 +135,10 @@ class Earl::StreamingResponseTest < ActiveSupport::TestCase
     # Streamed post updated to remove "Final answer", keeping only tool use
     assert updated_posts.any? { |u| !u[:message].include?("Final answer") }
 
-    # Final post created with answer text + stats footer
+    # Final post created with answer text (no stats footer)
     final_post = created_posts.last
     assert_includes final_post[:message], "Final answer"
-    assert_includes final_post[:message], "1,500 tokens"
+    assert_not_includes final_post[:message], "tokens"
     assert_not_includes final_post[:message], "Bash"
   end
 
@@ -165,10 +165,10 @@ class Earl::StreamingResponseTest < ActiveSupport::TestCase
     # No new post created — just edits the existing one
     assert_empty created_posts
 
-    # Existing post updated with stats footer
+    # Existing post updated (no stats footer)
     assert_equal 1, updated_posts.size
     assert_includes updated_posts.first[:message], "Simple answer"
-    assert_includes updated_posts.first[:message], "500 tokens"
+    assert_not_includes updated_posts.first[:message], "tokens"
   end
 
   test "on_complete without prior text does not update or create posts" do
