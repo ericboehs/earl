@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Earl
-  # Persists session metadata to ~/.config/earl/sessions.json for
+  # Persists session metadata to <config_root>/sessions.json for
   # resuming sessions across EARL restarts. Uses an in-memory cache
   # to avoid re-reading from disk on every save, preventing race
   # conditions between concurrent save/touch calls.
@@ -14,9 +14,11 @@ module Earl
                                   :message_count, :total_cost, :total_input_tokens,
                                   :total_output_tokens, keyword_init: true)
 
-    DEFAULT_PATH = File.expand_path("~/.config/earl/sessions.json")
+    def self.default_path
+      @default_path ||= File.join(Earl.config_root, "sessions.json")
+    end
 
-    def initialize(path: DEFAULT_PATH)
+    def initialize(path: self.class.default_path)
       @path = path
       @mutex = Mutex.new
       @cache = nil # Lazy-loaded from disk on first access
@@ -74,7 +76,7 @@ module Earl
       tmp_path = "#{@path}.tmp.#{Process.pid}"
       File.write(tmp_path, JSON.pretty_generate(serialized))
       File.rename(tmp_path, @path)
-    rescue StandardError => error
+    rescue Errno::ENOENT, Errno::EACCES, Errno::ENOSPC, IOError => error
       log(:error, "Failed to write session store: #{error.message}")
       FileUtils.rm_f(tmp_path) if tmp_path
     end

@@ -2,30 +2,39 @@
 set -euo pipefail
 
 EARL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-CONFIG_DIR="$HOME/.config/earl"
-LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
-PLIST_NAME="com.boehs.earl.plist"
+PROD_CONFIG_DIR="$HOME/.config/earl"
+DEV_CONFIG_DIR="$HOME/.config/earl-dev"
+PROD_INSTALL_DIR="$HOME/.local/share/earl"
+PROD_BIN="$HOME/bin/earl"
+NEEDS_ENV=false
 
-echo "==> Installing EARL as a launchd agent..."
+echo "==> Installing EARL (dev + prod)..."
 
-# 1. Create log directory
-echo "  Creating $CONFIG_DIR/logs/"
-mkdir -p "$CONFIG_DIR/logs"
+# --- Setup config dirs for both environments ---
+for CONFIG_DIR in "$PROD_CONFIG_DIR" "$DEV_CONFIG_DIR"; do
+  ENV_LABEL=$([ "$CONFIG_DIR" = "$DEV_CONFIG_DIR" ] && echo "dev" || echo "prod")
+  echo ""
+  echo "  [$ENV_LABEL] Creating $CONFIG_DIR/"
+  mkdir -p "$CONFIG_DIR/logs" "$CONFIG_DIR/memory" "$CONFIG_DIR/allowed_tools" "$CONFIG_DIR/mcp"
 
-# 2. Copy default Claude project config (if not present)
-CLAUDE_HOME="$CONFIG_DIR/claude-home"
-if [ ! -d "$CLAUDE_HOME/.claude" ]; then
-  echo "  Copying default Claude project config to $CLAUDE_HOME/"
-  mkdir -p "$CLAUDE_HOME"
-  cp -r "$EARL_DIR/config/earl-claude-home/.claude" "$CLAUDE_HOME/.claude"
-else
-  echo "  Claude project config already exists at $CLAUDE_HOME/.claude (skipping)"
-fi
+  # Copy default Claude project config (if not present)
+  CLAUDE_HOME="$CONFIG_DIR/claude-home"
+  CLAUDE_SRC="$EARL_DIR/config/earl-claude-home/.claude"
+  if [ ! -d "$CLAUDE_SRC" ]; then
+    echo "  [$ENV_LABEL] WARNING: Source Claude config not found at $CLAUDE_SRC" >&2
+    echo "  [$ENV_LABEL] Claude subprocesses will run without project-level config." >&2
+  elif [ ! -d "$CLAUDE_HOME/.claude" ]; then
+    echo "  [$ENV_LABEL] Copying default Claude project config to $CLAUDE_HOME/"
+    mkdir -p "$CLAUDE_HOME"
+    cp -r "$CLAUDE_SRC" "$CLAUDE_HOME/.claude"
+  else
+    echo "  [$ENV_LABEL] Claude project config already exists (skipping)"
+  fi
 
-# 3. Create env file template (if not present)
-ENV_FILE="$CONFIG_DIR/env"
-if [ ! -f "$ENV_FILE" ]; then
-  cat > "$ENV_FILE" <<'ENVTEMPLATE'
+  # Create env file template (if not present)
+  ENV_FILE="$CONFIG_DIR/env"
+  if [ ! -f "$ENV_FILE" ]; then
+    cat > "$ENV_FILE" <<'ENVTEMPLATE'
 # EARL environment variables — fill in and restart the agent
 MATTERMOST_URL=https://your-mattermost-server.example.com
 MATTERMOST_BOT_TOKEN=your-bot-token
@@ -34,38 +43,87 @@ EARL_CHANNEL_ID=your-channel-id
 EARL_ALLOWED_USERS=your-username
 # EARL_CHANNELS=chan1:/path1,chan2:/path2
 # EARL_SKIP_PERMISSIONS=true
-# EARL_CLAUDE_HOME=/custom/path
 # EARL_DEBUG=1
 ENVTEMPLATE
-  chmod 600 "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo "  [$ENV_LABEL] Created $ENV_FILE — fill in your secrets."
+    NEEDS_ENV=true
+  fi
+done
+
+if [ "$NEEDS_ENV" = true ]; then
   echo ""
-  echo "  Created $ENV_FILE — please fill in your secrets, then re-run this script."
+  echo "  One or more env files need secrets filled in. Do that, then re-run this script."
   echo ""
   exit 0
 fi
 
-# 4. Generate plist with resolved paths
-echo "  Installing launchd plist..."
-mkdir -p "$LAUNCH_AGENTS_DIR"
-sed -e "s|__EARL_DIR__|$EARL_DIR|g" -e "s|__HOME__|$HOME|g" \
-  "$EARL_DIR/config/$PLIST_NAME" > "$LAUNCH_AGENTS_DIR/$PLIST_NAME"
+# --- Production: clone repo, create wrapper ---
 
-# 5. Load the agent
-echo "  Loading agent..."
-launchctl bootout "gui/$(id -u)/com.boehs.earl" 2>/dev/null || true
-if ! launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENTS_DIR/$PLIST_NAME" 2>&1; then
+echo ""
+echo "  [prod] Setting up production install..."
+
+# Clone/update production repo
+if [ -d "$PROD_INSTALL_DIR/.git" ]; then
+  echo "  [prod] Updating checkout at $PROD_INSTALL_DIR..."
+  if ! git -C "$PROD_INSTALL_DIR" pull --ff-only; then
+    echo "" >&2
+    echo "  [prod] ERROR: Failed to update production checkout." >&2
+    echo "  [prod] The local branch may have diverged. Try:" >&2
+    echo "    cd $PROD_INSTALL_DIR && git reset --hard origin/main && git pull" >&2
+    exit 1
+  fi
+else
+  echo "  [prod] Cloning EARL to $PROD_INSTALL_DIR..."
+  mkdir -p "$(dirname "$PROD_INSTALL_DIR")"
+  git clone "https://github.com/ericboehs/earl.git" "$PROD_INSTALL_DIR"
+fi
+
+echo "  [prod] Running bundle install..."
+if ! (cd "$PROD_INSTALL_DIR" && bundle install --quiet); then
   echo "" >&2
-  echo "ERROR: Failed to load launchd agent." >&2
-  echo "  Try: launchctl bootout gui/$(id -u)/com.boehs.earl" >&2
-  echo "  Then re-run: bin/earl-install" >&2
+  echo "  [prod] ERROR: bundle install failed. Re-running for details:" >&2
+  (cd "$PROD_INSTALL_DIR" && bundle install) || true
   exit 1
 fi
 
+# Create ~/bin/earl wrapper
+mkdir -p "$(dirname "$PROD_BIN")"
+cat > "$PROD_BIN" <<WRAPPER
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Force production environment (prevent direnv leaking EARL_ENV=development)
+export EARL_ENV=production
+
+# PATH setup (mise shims, homebrew, ~/bin)
+export PATH="\$HOME/bin:\$HOME/.local/share/mise/shims:\$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+# Load EARL environment variables
+ENV_FILE="$PROD_CONFIG_DIR/env"
+if [ ! -f "\$ENV_FILE" ]; then
+  echo "FATAL: Environment file not found: \$ENV_FILE" >&2
+  echo "  Run 'bin/earl-install' to create it, then fill in your secrets." >&2
+  exit 1
+fi
+set -a
+# shellcheck source=/dev/null
+source "\$ENV_FILE"
+set +a
+
+# Ensure Claude home dir exists
+mkdir -p "$PROD_CONFIG_DIR/claude-home"
+
+cd "$PROD_INSTALL_DIR"
+exec bundle exec ruby bin/earl "\$@"
+WRAPPER
+chmod +x "$PROD_BIN"
+echo "  [prod] Created $PROD_BIN"
+
 echo ""
-echo "==> EARL installed and running!"
+echo "==> EARL installed!"
 echo ""
-echo "Useful commands:"
-echo "  launchctl list | grep earl          # Check status"
-echo "  tail -f ~/.config/earl/logs/*.log   # View logs"
-echo "  launchctl kickstart -k gui/$(id -u)/com.boehs.earl  # Restart"
-echo "  launchctl bootout gui/$(id -u)/com.boehs.earl       # Stop"
+echo "  Dev:  cd ~/Code/ericboehs/earl && bin/earl"
+echo "  Prod: earl  (runs from $PROD_INSTALL_DIR)"

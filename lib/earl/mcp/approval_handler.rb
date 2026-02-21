@@ -15,7 +15,9 @@ module Earl
 
       TOOL_NAME = "permission_prompt"
       TOOL_NAMES = [ TOOL_NAME ].freeze
-      ALLOWED_TOOLS_DIR = File.expand_path("~/.config/earl/allowed_tools")
+      def self.allowed_tools_dir
+        @allowed_tools_dir ||= File.join(Earl.config_root, "allowed_tools")
+      end
 
       # Bundles tool_name and input that travel together through the approval flow.
       ToolRequest = Data.define(:tool_name, :input)
@@ -260,14 +262,14 @@ module Earl
         end
 
         def save_allowed_tools
-          FileUtils.mkdir_p(ALLOWED_TOOLS_DIR)
+          FileUtils.mkdir_p(self.class.allowed_tools_dir)
           File.write(allowed_tools_path, JSON.generate(@allowed_tools.to_a))
-        rescue StandardError => error
+        rescue Errno::ENOENT, Errno::EACCES, Errno::ENOSPC, IOError => error
           log(:warn, "Failed to save allowed tools: #{error.message}")
         end
 
         def allowed_tools_path
-          File.join(ALLOWED_TOOLS_DIR, "#{@config.platform_thread_id}.json")
+          File.join(self.class.allowed_tools_dir, "#{@config.platform_thread_id}.json")
         end
       end
 

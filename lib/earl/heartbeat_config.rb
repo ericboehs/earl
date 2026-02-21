@@ -3,11 +3,13 @@
 require "yaml"
 
 module Earl
-  # Loads and validates heartbeat definitions from ~/.config/earl/heartbeats.yml.
+  # Loads and validates heartbeat definitions from <config_root>/heartbeats.yml.
   class HeartbeatConfig
     include Logging
 
-    CONFIG_PATH = File.expand_path("~/.config/earl/heartbeats.yml")
+    def self.config_path
+      @config_path ||= File.join(Earl.config_root, "heartbeats.yml")
+    end
 
     attr_reader :path
 
@@ -49,7 +51,7 @@ module Earl
       end
     end
 
-    def initialize(path: CONFIG_PATH)
+    def initialize(path: self.class.config_path)
       @path = path
     end
 

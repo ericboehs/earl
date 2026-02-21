@@ -7,8 +7,13 @@ module Earl
     include Logging
     attr_reader :session_id
 
-    MCP_CONFIG_DIR = File.join(Dir.home, ".config", "earl", "mcp")
-    USER_MCP_SERVERS_PATH = File.join(Dir.home, ".config", "earl", "mcp_servers.json")
+    def self.mcp_config_dir
+      @mcp_config_dir ||= File.join(Earl.config_root, "mcp")
+    end
+
+    def self.user_mcp_servers_path
+      @user_mcp_servers_path ||= File.join(Earl.config_root, "mcp_servers.json")
+    end
 
     def process_pid
       @runtime.process_state.process&.pid
@@ -199,7 +204,7 @@ module Earl
       end
 
       def earl_project_dir
-        ENV.fetch("EARL_CLAUDE_HOME", File.join(Dir.home, ".config", "earl", "claude-home"))
+        ENV.fetch("EARL_CLAUDE_HOME", File.join(Earl.config_root, "claude-home"))
       end
 
       def join_threads
@@ -232,7 +237,7 @@ module Earl
       end
 
       def remove_mcp_config
-        path = File.join(MCP_CONFIG_DIR, "earl-mcp-#{@session_id}.json")
+        path = File.join(self.class.mcp_config_dir, "earl-mcp-#{@session_id}.json")
         File.delete(path) if File.exist?(path)
       end
     end
@@ -285,12 +290,13 @@ module Earl
       end
 
       def load_user_mcp_servers
-        return {} unless File.exist?(USER_MCP_SERVERS_PATH)
+        path = self.class.user_mcp_servers_path
+        return {} unless File.exist?(path)
 
-        parsed = JSON.parse(File.read(USER_MCP_SERVERS_PATH))
+        parsed = JSON.parse(File.read(path))
         symbolize_mcp_servers(parsed.fetch("mcpServers", nil))
       rescue JSON::ParserError => error
-        log(:warn, "Malformed #{USER_MCP_SERVERS_PATH}: #{error.message}")
+        log(:warn, "Malformed #{path}: #{error.message}")
         {}
       end
 
@@ -300,7 +306,7 @@ module Earl
 
       def write_mcp_config_file(json)
         path = mcp_config_file_path
-        FileUtils.mkdir_p(MCP_CONFIG_DIR, mode: 0o700)
+        FileUtils.mkdir_p(self.class.mcp_config_dir, mode: 0o700)
         write_exclusive(path, json)
       rescue Errno::EEXIST
         write_overwrite(path, json)
@@ -317,7 +323,7 @@ module Earl
       end
 
       def mcp_config_file_path
-        File.join(MCP_CONFIG_DIR, "earl-mcp-#{@session_id}.json")
+        File.join(self.class.mcp_config_dir, "earl-mcp-#{@session_id}.json")
       end
     end
 
@@ -500,10 +506,10 @@ module Earl
 
     # Removes MCP config files that don't match any active session ID.
     def self.cleanup_mcp_configs(active_session_ids: [])
-      return unless Dir.exist?(MCP_CONFIG_DIR)
+      return unless Dir.exist?(mcp_config_dir)
 
       active_set = Set.new(active_session_ids)
-      Dir.glob(File.join(MCP_CONFIG_DIR, "earl-mcp-*.json")).each do |path|
+      Dir.glob(File.join(mcp_config_dir, "earl-mcp-*.json")).each do |path|
         session_id = File.basename(path).delete_prefix("earl-mcp-").delete_suffix(".json")
         File.delete(path) unless active_set.include?(session_id)
       end

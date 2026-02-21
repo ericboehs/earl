@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "rbconfig"
+
 module Earl
   # Main event loop that connects Mattermost messages to Claude sessions,
   # managing per-thread message queuing, command parsing, question handling,
@@ -45,8 +47,10 @@ module Earl
         question_handler: QuestionHandler.new(mattermost: mattermost),
         tmux_monitor: TmuxMonitor.new(mattermost: mattermost, tmux_store: tmux_store)
       )
-      # Wire heartbeat_scheduler into command_executor after both exist
-      @services.command_executor.instance_variable_get(:@deps).heartbeat_scheduler = @services.heartbeat_scheduler
+      # Wire circular deps into command_executor after both exist
+      executor_deps = @services.command_executor.instance_variable_get(:@deps)
+      executor_deps.heartbeat_scheduler = @services.heartbeat_scheduler
+      executor_deps.runner = self
       @app_state = AppState.new(shutting_down: false, message_queue: MessageQueue.new)
       @responses = ResponseState.new(question_threads: {}, active_responses: {})
 
@@ -91,13 +95,22 @@ module Earl
 
     def setup_signal_handlers
       %w[INT TERM].each { |signal| trap(signal) { handle_shutdown_signal } }
+      trap("HUP") { handle_restart_signal }
     end
 
-    def handle_shutdown_signal
+    def begin_shutdown(&action)
       return if @app_state.shutting_down
 
       @app_state.shutting_down = true
-      Thread.new { shutdown }
+      Thread.new(&action)
+    end
+
+    def handle_shutdown_signal
+      begin_shutdown { shutdown }
+    end
+
+    def handle_restart_signal
+      begin_shutdown { restart }
     end
 
     def shutdown
@@ -107,6 +120,35 @@ module Earl
       @services.tmux_monitor.stop
       @services.session_manager.pause_all
       log(:info, "Goodbye!")
+    end
+
+    public
+
+    def request_restart
+      begin_shutdown { restart }
+    end
+
+    private
+
+    def restart
+      log(:info, "Restarting EARL...")
+      pull_latest unless Earl.development?
+      shutdown
+      log(:info, "Exec: #{restart_command.join(' ')}")
+      Kernel.exec(*restart_command)
+    end
+
+    def pull_latest
+      Dir.chdir(File.dirname($PROGRAM_NAME)) do
+        success = system("git", "pull", "--ff-only")
+        log(success ? :info : :warn, "git pull --ff-only #{success ? 'succeeded' : 'failed (continuing with current code)'}")
+      end
+    rescue StandardError => error
+      log(:warn, "git pull failed: #{error.message}")
+    end
+
+    def restart_command
+      [ RbConfig.ruby, $PROGRAM_NAME ]
     end
 
     # Message routing: receives user messages, dispatches commands or enqueues for Claude.

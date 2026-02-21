@@ -30,6 +30,7 @@ module Earl
       /\A!session\s+(\S+)\s+"([^"]+)"\z/i => :session_input,
       /\A!session\s+(\S+)\s+'([^']+)'\z/i => :session_input,
       /\A!session\s+(\S+)\z/i => :session_show,
+      /\A!restart\z/i => :restart,
       /\A!spawn\s+"([^"]+)"(.*)\z/i => :spawn
     }.freeze
 

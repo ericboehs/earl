@@ -327,11 +327,11 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
   end
 
   test "start spawns process and creates reader threads" do
-    session = Earl::ClaudeSession.new(session_id: "test-sess")
-
-    # Create a fake 'claude' script in a temp dir
     fake_bin = File.join(scratchpad_dir, "fake_bin")
     FileUtils.mkdir_p(fake_bin)
+    session = Earl::ClaudeSession.new(session_id: "test-sess", working_dir: fake_bin)
+
+    # Create a fake 'claude' script in a temp dir
     fake_claude = File.join(fake_bin, "claude")
     event_json = JSON.generate({ "type" => "system", "subtype" => "init" })
     File.write(fake_claude, "#!/bin/sh\necho '#{event_json}'\n")
@@ -704,10 +704,8 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     tmp_dir = Dir.mktmpdir("earl-memory-cli-test")
     File.write(File.join(tmp_dir, "SOUL.md"), "I am EARL.")
 
-    # Temporarily override the default memory dir
-    original_default = Earl::Memory::Store::DEFAULT_DIR
-    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
-    Earl::Memory::Store.const_set(:DEFAULT_DIR, tmp_dir)
+    original_default = Earl::Memory::Store.default_dir
+    Earl::Memory::Store.instance_variable_set(:@default_dir, tmp_dir)
 
     session = Earl::ClaudeSession.new
     args = session.send(:cli_args)
@@ -717,25 +715,22 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     assert_includes args[idx + 1], "I am EARL."
     assert_includes args[idx + 1], "<earl-memory>"
   ensure
-    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
-    Earl::Memory::Store.const_set(:DEFAULT_DIR, original_default)
+    Earl::Memory::Store.instance_variable_set(:@default_dir, original_default)
     FileUtils.rm_rf(tmp_dir)
   end
 
   test "cli_args omits --append-system-prompt when no memory" do
     tmp_dir = Dir.mktmpdir("earl-memory-cli-empty-test")
 
-    original_default = Earl::Memory::Store::DEFAULT_DIR
-    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
-    Earl::Memory::Store.const_set(:DEFAULT_DIR, tmp_dir)
+    original_default = Earl::Memory::Store.default_dir
+    Earl::Memory::Store.instance_variable_set(:@default_dir, tmp_dir)
 
     session = Earl::ClaudeSession.new
     args = session.send(:cli_args)
 
     assert_not_includes args, "--append-system-prompt"
   ensure
-    Earl::Memory::Store.send(:remove_const, :DEFAULT_DIR)
-    Earl::Memory::Store.const_set(:DEFAULT_DIR, original_default)
+    Earl::Memory::Store.instance_variable_set(:@default_dir, original_default)
     FileUtils.rm_rf(tmp_dir)
   end
 
@@ -806,7 +801,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
           "mcp-ical" => { "command" => "/usr/bin/ical", "args" => [] }
         }
       }
-      File.write(Earl::ClaudeSession::USER_MCP_SERVERS_PATH, JSON.generate(user_servers))
+      File.write(Earl::ClaudeSession.user_mcp_servers_path, JSON.generate(user_servers))
 
       session = Earl::ClaudeSession.new(
         permission_config: { "PLATFORM_URL" => "http://localhost" }
@@ -828,7 +823,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
           "earl" => { "command" => "/usr/bin/fake-earl", "args" => [ "--bad" ] }
         }
       }
-      File.write(Earl::ClaudeSession::USER_MCP_SERVERS_PATH, JSON.generate(user_servers))
+      File.write(Earl::ClaudeSession.user_mcp_servers_path, JSON.generate(user_servers))
 
       session = Earl::ClaudeSession.new(
         permission_config: { "PLATFORM_URL" => "http://localhost" }
@@ -857,7 +852,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
   test "write_mcp_config handles malformed mcp_servers.json gracefully" do
     with_mcp_config_dir do
-      File.write(Earl::ClaudeSession::USER_MCP_SERVERS_PATH, "not valid json{{{")
+      File.write(Earl::ClaudeSession.user_mcp_servers_path, "not valid json{{{")
 
       session = Earl::ClaudeSession.new(
         permission_config: { "PLATFORM_URL" => "http://localhost" }
@@ -872,7 +867,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
 
   test "write_mcp_config handles mcp_servers.json without mcpServers key" do
     with_mcp_config_dir do
-      File.write(Earl::ClaudeSession::USER_MCP_SERVERS_PATH, JSON.generate({ "other" => "data" }))
+      File.write(Earl::ClaudeSession.user_mcp_servers_path, JSON.generate({ "other" => "data" }))
 
       session = Earl::ClaudeSession.new(
         permission_config: { "PLATFORM_URL" => "http://localhost" }
@@ -941,7 +936,7 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
   test "earl_project_dir returns default path when EARL_CLAUDE_HOME not set" do
     original = ENV.delete("EARL_CLAUDE_HOME")
     session = Earl::ClaudeSession.new
-    expected = File.join(Dir.home, ".config", "earl", "claude-home")
+    expected = File.join(Earl.config_root, "claude-home")
     assert_equal expected, session.send(:earl_project_dir)
   ensure
     ENV["EARL_CLAUDE_HOME"] = original if original
@@ -1106,19 +1101,15 @@ class Earl::ClaudeSessionTest < ActiveSupport::TestCase
     mcp_dir = File.join(tmp_dir, "mcp")
     user_servers_path = File.join(tmp_dir, "mcp_servers.json")
 
-    original_mcp_dir = Earl::ClaudeSession::MCP_CONFIG_DIR
-    original_user_path = Earl::ClaudeSession::USER_MCP_SERVERS_PATH
-    Earl::ClaudeSession.send(:remove_const, :MCP_CONFIG_DIR)
-    Earl::ClaudeSession.const_set(:MCP_CONFIG_DIR, mcp_dir)
-    Earl::ClaudeSession.send(:remove_const, :USER_MCP_SERVERS_PATH)
-    Earl::ClaudeSession.const_set(:USER_MCP_SERVERS_PATH, user_servers_path)
+    original_mcp_dir = Earl::ClaudeSession.mcp_config_dir
+    original_user_path = Earl::ClaudeSession.user_mcp_servers_path
+    Earl::ClaudeSession.instance_variable_set(:@mcp_config_dir, mcp_dir)
+    Earl::ClaudeSession.instance_variable_set(:@user_mcp_servers_path, user_servers_path)
 
     yield mcp_dir
   ensure
-    Earl::ClaudeSession.send(:remove_const, :MCP_CONFIG_DIR)
-    Earl::ClaudeSession.const_set(:MCP_CONFIG_DIR, original_mcp_dir)
-    Earl::ClaudeSession.send(:remove_const, :USER_MCP_SERVERS_PATH)
-    Earl::ClaudeSession.const_set(:USER_MCP_SERVERS_PATH, original_user_path)
+    Earl::ClaudeSession.instance_variable_set(:@mcp_config_dir, original_mcp_dir)
+    Earl::ClaudeSession.instance_variable_set(:@user_mcp_servers_path, original_user_path)
     FileUtils.rm_rf(tmp_dir)
   end
 end

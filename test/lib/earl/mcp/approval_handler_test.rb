@@ -4,16 +4,14 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   setup do
     Earl.logger = Logger.new(File::NULL)
     @tmp_dir = Dir.mktmpdir("earl-allowed-tools-test")
-    @original_allowed_tools_dir = Earl::Mcp::ApprovalHandler::ALLOWED_TOOLS_DIR
-    Earl::Mcp::ApprovalHandler.send(:remove_const, :ALLOWED_TOOLS_DIR)
-    Earl::Mcp::ApprovalHandler.const_set(:ALLOWED_TOOLS_DIR, @tmp_dir)
+    @original_allowed_tools_dir = Earl::Mcp::ApprovalHandler.allowed_tools_dir
+    Earl::Mcp::ApprovalHandler.instance_variable_set(:@allowed_tools_dir, @tmp_dir)
   end
 
   teardown do
     Earl.logger = nil
     FileUtils.rm_rf(@tmp_dir)
-    Earl::Mcp::ApprovalHandler.send(:remove_const, :ALLOWED_TOOLS_DIR)
-    Earl::Mcp::ApprovalHandler.const_set(:ALLOWED_TOOLS_DIR, @original_allowed_tools_dir)
+    Earl::Mcp::ApprovalHandler.instance_variable_set(:@allowed_tools_dir, @original_allowed_tools_dir)
   end
 
   test "returns allow when tool is in allowed_tools set" do
