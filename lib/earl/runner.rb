@@ -10,8 +10,9 @@ module Earl
     include Logging
     include Formatting
 
-    # Tracks runtime state: shutdown flag and per-thread message queue.
-    AppState = Struct.new(:shutting_down, :message_queue, :idle_checker_thread, keyword_init: true)
+    # Tracks runtime state: shutdown flag, restart intent, and per-thread message queue.
+    AppState = Struct.new(:shutting_down, :pending_restart, :shutdown_thread, :message_queue, :idle_checker_thread,
+                          keyword_init: true)
 
     # Bundles user message parameters that travel together through message routing.
     UserMessage = Data.define(:thread_id, :text, :channel_id, :sender_name)
@@ -51,7 +52,8 @@ module Earl
       executor_deps = @services.command_executor.instance_variable_get(:@deps)
       executor_deps.heartbeat_scheduler = @services.heartbeat_scheduler
       executor_deps.runner = self
-      @app_state = AppState.new(shutting_down: false, message_queue: MessageQueue.new)
+      @app_state = AppState.new(shutting_down: false, pending_restart: false, shutdown_thread: nil,
+                                message_queue: MessageQueue.new)
       @responses = ResponseState.new(question_threads: {}, active_responses: {})
 
       configure_channels
@@ -66,6 +68,8 @@ module Earl
       @services.mattermost.connect
       log_startup
       sleep 0.5 until @app_state.shutting_down
+      @app_state.shutdown_thread&.join
+      exec_restart if @app_state.pending_restart
     end
 
     private
@@ -102,7 +106,7 @@ module Earl
       return if @app_state.shutting_down
 
       @app_state.shutting_down = true
-      Thread.new(&action)
+      @app_state.shutdown_thread = Thread.new(&action)
     end
 
     def handle_shutdown_signal
@@ -110,6 +114,7 @@ module Earl
     end
 
     def handle_restart_signal
+      @app_state.pending_restart = true
       begin_shutdown { restart }
     end
 
@@ -125,6 +130,7 @@ module Earl
     public
 
     def request_restart
+      @app_state.pending_restart = true
       begin_shutdown { restart }
     end
 
@@ -134,8 +140,12 @@ module Earl
       log(:info, "Restarting EARL...")
       pull_latest unless Earl.development?
       shutdown
-      log(:info, "Exec: #{restart_command.join(' ')}")
-      Kernel.exec(*restart_command)
+    end
+
+    def exec_restart
+      cmd = restart_command
+      log(:info, "Exec: #{cmd.join(' ')}")
+      Kernel.exec(*cmd)
     end
 
     def pull_latest
