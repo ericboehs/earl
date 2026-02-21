@@ -9,7 +9,8 @@ require_relative "../lib/earl"
 
 pid_file = File.join(Earl.config_root, "earl.pid")
 
-if ARGV[0] == "restart"
+case ARGV[0]
+when "restart"
   unless File.exist?(pid_file)
     warn "No PID file found at #{pid_file} — is EARL running?"
     exit 1
@@ -24,6 +25,14 @@ if ARGV[0] == "restart"
     File.delete(pid_file)
     exit 1
   end
+  exit 0
+when "update"
+  repo_dir = File.expand_path("..", __dir__)
+  Dir.chdir(repo_dir) do
+    system("git", "pull", "--ff-only") || warn("git pull failed")
+    system("bundle", "install", "--quiet") || warn("bundle install failed")
+  end
+  puts "Updated. Run 'earl restart' to apply."
   exit 0
 end
 
