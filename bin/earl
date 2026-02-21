@@ -4,7 +4,10 @@
 $stdout.sync = true
 $stderr.sync = true
 
+original_verbose = $VERBOSE
+$VERBOSE = nil
 require "bundler/setup"
+$VERBOSE = original_verbose
 require_relative "../lib/earl"
 
 pid_file = File.join(Earl.config_root, "earl.pid")
