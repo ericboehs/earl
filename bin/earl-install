@@ -117,7 +117,7 @@ set +a
 mkdir -p "$PROD_CONFIG_DIR/claude-home"
 
 cd "$PROD_INSTALL_DIR"
-exec bundle exec ruby bin/earl "\$@"
+exec ruby bin/earl "\$@"
 WRAPPER
 chmod +x "$PROD_BIN"
 echo "  [prod] Created $PROD_BIN"
