@@ -42,8 +42,7 @@ If `EARL_CHANNELS` is not set, EARL listens on `EARL_CHANNEL_ID` using the curre
 | `~/.config/earl/memory/SOUL.md` | Markdown | EARL's personality and boundaries |
 | `~/.config/earl/memory/USER.md` | Markdown | User preferences and identity |
 | `~/.config/earl/memory/YYYY-MM-DD.md` | Markdown | Daily episodic memory entries |
-| `~/.config/earl/allowed_tools/` | JSON | Per-thread tool approval lists |
-| `~/.config/earl/allowed_tools/<thread_id>.json` | JSON | Array of tool names approved for a thread |
+| `~/.config/earl/allowed_tools.json` | JSON | Global tool approval list (array of tool names) |
 
 ## MCP Server Environment Variables
 

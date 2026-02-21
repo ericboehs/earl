@@ -4,14 +4,15 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   setup do
     Earl.logger = Logger.new(File::NULL)
     @tmp_dir = Dir.mktmpdir("earl-allowed-tools-test")
-    @original_allowed_tools_dir = Earl::Mcp::ApprovalHandler.allowed_tools_dir
-    Earl::Mcp::ApprovalHandler.instance_variable_set(:@allowed_tools_dir, @tmp_dir)
+    @tmp_path = File.join(@tmp_dir, "allowed_tools.json")
+    @original_allowed_tools_path = Earl::Mcp::ApprovalHandler.allowed_tools_path
+    Earl::Mcp::ApprovalHandler.instance_variable_set(:@allowed_tools_path, @tmp_path)
   end
 
   teardown do
     Earl.logger = nil
     FileUtils.rm_rf(@tmp_dir)
-    Earl::Mcp::ApprovalHandler.instance_variable_set(:@allowed_tools_dir, @original_allowed_tools_dir)
+    Earl::Mcp::ApprovalHandler.instance_variable_set(:@allowed_tools_path, @original_allowed_tools_path)
   end
 
   test "returns allow when tool is in allowed_tools set" do
@@ -116,11 +117,9 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
     request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
     handler.send(:process_reaction, "white_check_mark", request)
 
-    # Verify the file was written
-    path = handler.send(:allowed_tools_path)
-    assert File.exist?(path)
+    assert File.exist?(@tmp_path)
 
-    saved = JSON.parse(File.read(path))
+    saved = JSON.parse(File.read(@tmp_path))
     assert_includes saved, "Bash"
   end
 
@@ -151,10 +150,7 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   end
 
   test "load_allowed_tools reads from persisted file" do
-    # Write a test file
-    thread_id = "thread-1"
-    path = File.join(@tmp_dir, "#{thread_id}.json")
-    File.write(path, JSON.generate(%w[Bash Read]))
+    File.write(@tmp_path, JSON.generate(%w[Bash Read]))
 
     handler = build_handler
     allowed = handler.instance_variable_get(:@allowed_tools)
@@ -171,25 +167,22 @@ class Earl::Mcp::ApprovalHandlerTest < ActiveSupport::TestCase
   end
 
   test "load_allowed_tools returns empty set for corrupt JSON" do
-    thread_id = "thread-1"
-    path = File.join(@tmp_dir, "#{thread_id}.json")
-    File.write(path, "not json{{{")
+    File.write(@tmp_path, "not json{{{")
 
     handler = build_handler
     allowed = handler.instance_variable_get(:@allowed_tools)
     assert allowed.empty?
   end
 
-  test "save_allowed_tools creates directory and writes file" do
+  test "save_allowed_tools writes to global file" do
     handler = build_handler
     handler.instance_variable_get(:@allowed_tools).add("Bash")
     handler.instance_variable_get(:@allowed_tools).add("Edit")
     handler.send(:save_allowed_tools)
 
-    path = handler.send(:allowed_tools_path)
-    assert File.exist?(path)
+    assert File.exist?(@tmp_path)
 
-    saved = Set.new(JSON.parse(File.read(path)))
+    saved = Set.new(JSON.parse(File.read(@tmp_path)))
     assert_equal Set.new(%w[Bash Edit]), saved
   end
 

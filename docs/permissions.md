@@ -60,15 +60,15 @@ The displayed input varies by tool:
 - **Edit/Write**: Shows `file_path` and a preview of content (truncated to 300 chars)
 - **Read and other tools**: Shows JSON-serialized input (truncated to 500 chars)
 
-## Per-Thread Tool Allowlists
+## Global Tool Allowlist
 
-When a user reacts with ✅ (always allow), the tool name is added to a per-thread allowlist stored at:
+When a user reacts with ✅ (always allow), the tool name is added to a global allowlist stored at:
 
 ```
-~/.config/earl/allowed_tools/<thread_id>.json
+~/.config/earl/allowed_tools.json
 ```
 
-This is a JSON array of tool name strings (e.g., `["Bash", "Read", "Write"]`). Future uses of these tools in the same thread are auto-approved without prompting.
+This is a JSON array of tool name strings (e.g., `["Bash", "Read", "Write"]`). Future uses of these tools are auto-approved across all threads without prompting.
 
 ## Timeout
 

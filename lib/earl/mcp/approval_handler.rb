@@ -6,17 +6,16 @@ module Earl
   module Mcp
     # Handles permission approval flow: posts a permission request to Mattermost,
     # adds reaction options, and waits for a user reaction to approve or deny.
-    # Tracks per-tool approvals persisted to disk per-thread (stored in
-    # allowed_tools/{thread_id}.json) so "always allow" applies to specific
-    # tool names (e.g., Bash) rather than blanket approval.
+    # Tracks per-tool approvals persisted to a global file (allowed_tools.json)
+    # so "always allow" applies across all threads.
     class ApprovalHandler
       include Logging
       include HandlerBase
 
       TOOL_NAME = "permission_prompt"
       TOOL_NAMES = [ TOOL_NAME ].freeze
-      def self.allowed_tools_dir
-        @allowed_tools_dir ||= File.join(Earl.config_root, "allowed_tools")
+      def self.allowed_tools_path
+        @allowed_tools_path ||= File.join(Earl.config_root, "allowed_tools.json")
       end
 
       # Bundles tool_name and input that travel together through the approval flow.
@@ -248,12 +247,12 @@ module Earl
         end
       end
 
-      # Persistence for per-tool allowed list.
+      # Persistence for globally allowed tool list.
       module AllowedToolsPersistence
         private
 
         def load_allowed_tools
-          path = allowed_tools_path
+          path = self.class.allowed_tools_path
           return Set.new unless File.exist?(path)
 
           Set.new(JSON.parse(File.read(path)))
@@ -262,14 +261,9 @@ module Earl
         end
 
         def save_allowed_tools
-          FileUtils.mkdir_p(self.class.allowed_tools_dir)
-          File.write(allowed_tools_path, JSON.generate(@allowed_tools.to_a))
+          File.write(self.class.allowed_tools_path, JSON.generate(@allowed_tools.to_a))
         rescue Errno::ENOENT, Errno::EACCES, Errno::ENOSPC, IOError => error
           log(:warn, "Failed to save allowed tools: #{error.message}")
-        end
-
-        def allowed_tools_path
-          File.join(self.class.allowed_tools_dir, "#{@config.platform_thread_id}.json")
         end
       end
 
