@@ -68,8 +68,7 @@ module Earl
       @services.mattermost.connect
       log_startup
       sleep 0.5 until @app_state.shutting_down
-      @app_state.shutdown_thread&.join
-      exec_restart if @app_state.pending_restart
+      wait_and_exec_restart if @app_state.pending_restart
     end
 
     private
@@ -142,7 +141,8 @@ module Earl
       shutdown
     end
 
-    def exec_restart
+    def wait_and_exec_restart
+      @app_state.shutdown_thread&.join
       cmd = restart_command
       log(:info, "Exec: #{cmd.join(' ')}")
       Bundler.with_unbundled_env { Kernel.exec(*cmd) }
