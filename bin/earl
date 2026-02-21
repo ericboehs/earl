@@ -33,7 +33,7 @@ when "update"
   repo_dir = File.expand_path("..", __dir__)
   Dir.chdir(repo_dir) do
     system("git", "pull", "--ff-only") || warn("git pull failed")
-    system("bundle", "install", "--quiet") || warn("bundle install failed")
+    system({ "RUBYOPT" => "-W0" }, "bundle", "install", "--quiet") || warn("bundle install failed")
   end
   puts "Updated. Run 'earl restart' to apply."
   exit 0
