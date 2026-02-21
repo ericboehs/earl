@@ -68,6 +68,10 @@ module Earl
       parse_post_response(@api.get("/users/#{user_id}"))
     end
 
+    def get_channel(channel_id:)
+      parse_post_response(@api.get("/channels/#{channel_id}"))
+    end
+
     # Fetches all posts in a thread, ordered oldest-first.
     # Returns an array of hashes with :sender, :message, :is_bot.
     def get_thread_posts(thread_id)

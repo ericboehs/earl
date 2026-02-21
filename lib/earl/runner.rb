@@ -80,8 +80,17 @@ module Earl
 
     def log_startup
       config = @services.config
-      log(:info, "EARL is running. Listening for messages in channel #{config.channel_id[0..7]}...")
+      channel_names = resolve_channel_names(config.channels.keys)
+      count = channel_names.size
+      log(:info, "EARL is running. Listening in #{count} channel#{'s' unless count == 1}: #{channel_names.join(', ')}")
       log(:info, "Allowed users: #{config.allowed_users.join(', ')}")
+    end
+
+    def resolve_channel_names(channel_ids)
+      channel_ids.map do |id|
+        info = @services.mattermost.get_channel(channel_id: id)
+        info&.fetch("display_name", nil) || info&.fetch("name", nil) || id[0..7]
+      end
     end
 
     def start_background_services
