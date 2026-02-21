@@ -32,6 +32,10 @@ bin/earl
 
 # Production (from ~/bin wrapper, uses ~/.local/share/earl/)
 earl
+
+# Restart a running instance (sends SIGHUP via PID file)
+bin/earl restart   # dev
+earl restart       # prod
 ```
 
 Requires env vars (see `<config_root>/env` or `.envrc`):
@@ -48,6 +52,7 @@ Requires env vars (see `<config_root>/env` or `.envrc`):
 Optional config files (under `<config_root>/`):
 - `heartbeats.yml` — Heartbeat schedule definitions
 - `memory/` — Persistent memory files (SOUL.md, USER.md, daily notes)
+- `earl.pid` — PID file for running instance (used by `earl restart`)
 - `sessions.json` — Session persistence store
 - `allowed_tools/` — Per-thread tool approval lists
 - `tmux_sessions.json` — Tmux session metadata persistence
@@ -96,7 +101,7 @@ lib/
     streaming_response.rb         # Mattermost post lifecycle (create/update/debounce)
     message_queue.rb              # Per-thread message queuing for busy sessions
     command_parser.rb             # Parses !commands from message text
-    command_executor.rb           # Executes !help, !stats, !stop, !kill, !escape, !compact, !cd, !permissions, !heartbeats, !usage, !context, !sessions, !session, !spawn
+    command_executor.rb           # Executes !help, !stats, !stop, !kill, !escape, !compact, !cd, !permissions, !heartbeats, !usage, !context, !sessions, !session, !restart, !spawn
     question_handler.rb           # AskUserQuestion tool -> emoji reaction flow
     runner.rb                     # Main event loop, wires everything together
     cron_parser.rb                # Minimal 5-field cron expression parser
@@ -124,7 +129,7 @@ User posts in channel
   -> Mattermost WebSocket 'posted' event
   -> Runner checks allowlist
   -> CommandParser checks for !commands
-     -> If command: CommandExecutor handles it (!help, !stats, !kill, !cd, !sessions, !session, !spawn, etc.)
+     -> If command: CommandExecutor handles it (!help, !stats, !kill, !cd, !restart, !sessions, !session, !spawn, etc.)
      -> If message: MessageQueue serializes per-thread
   -> SessionManager gets/creates ClaudeSession for thread
      -> Resumes from session store if available
@@ -148,7 +153,8 @@ User posts in channel
 - **Streaming**: first text chunk creates a POST, subsequent chunks do PUT with 300ms debounce
 - **Sessions**: follow-up messages in same thread reuse the same Claude process (same context window)
 - **Session persistence**: sessions are saved to `~/.config/earl/sessions.json` and resumed on restart
-- **Shutdown**: SIGINT sends INT to Claude process, waits ~2s, then TERM. Runner calls `pause_all` to persist sessions before exit.
+- **Shutdown**: SIGINT/SIGTERM triggers graceful shutdown: stops background services, pauses all sessions, then exits.
+- **Restart**: `!restart` (Mattermost), `SIGHUP` (signal), or `earl restart` (CLI). In prod, runs `git pull --ff-only` first (non-fatal on failure). Pauses sessions, then `Kernel.exec` replaces the process in-place. Sessions resume on boot. PID file at `<config_root>/earl.pid` enables CLI restart.
 - **Memory**: Persistent facts stored as markdown in `~/.config/earl/memory/`. Injected into Claude sessions via `--append-system-prompt`. Claude can save/search via MCP tools.
 - **Heartbeats**: Scheduled tasks (cron/interval/one-shot via `run_at`) that spawn Claude sessions, posting results to configured channels. One-off tasks (`once: true`) auto-disable after execution. Config auto-reloads on file change. Claude can manage schedules via the `manage_heartbeat` MCP tool.
 - **Tmux MCP tool**: `manage_tmux_sessions` tool exposes tmux session control to spawned Claude sessions. Actions: list, capture, status, approve, deny, send_input, spawn (requires Mattermost confirmation), kill.
