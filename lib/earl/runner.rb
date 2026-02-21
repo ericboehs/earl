@@ -145,7 +145,7 @@ module Earl
     def exec_restart
       cmd = restart_command
       log(:info, "Exec: #{cmd.join(' ')}")
-      Kernel.exec(*cmd)
+      Bundler.with_unbundled_env { Kernel.exec(*cmd) }
     end
 
     def pull_latest
