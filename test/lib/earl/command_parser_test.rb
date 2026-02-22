@@ -195,6 +195,12 @@ class Earl::CommandParserTest < ActiveSupport::TestCase
     assert_equal [ "code:4.0" ], cmd.args
   end
 
+  test "parse recognizes !update" do
+    cmd = Earl::CommandParser.parse("!update")
+    assert_equal :update, cmd.name
+    assert_empty cmd.args
+  end
+
   test "parse recognizes !restart" do
     cmd = Earl::CommandParser.parse("!restart")
     assert_equal :restart, cmd.name

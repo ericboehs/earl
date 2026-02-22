@@ -1084,14 +1084,6 @@ class Earl::RunnerTest < ActiveSupport::TestCase
 
   # -- Restart tests --
 
-  test "restart_command returns ruby and program name" do
-    runner = Earl::Runner.new
-    cmd = runner.send(:restart_command)
-    assert_equal 2, cmd.size
-    assert_equal RbConfig.ruby, cmd.first
-    assert_equal $PROGRAM_NAME, cmd.last
-  end
-
   test "request_restart sets shutting_down and is idempotent" do
     runner = Earl::Runner.new
     app_state = runner.instance_variable_get(:@app_state)
@@ -1157,6 +1149,71 @@ class Earl::RunnerTest < ActiveSupport::TestCase
     assert_equal 1, threads_spawned
   ensure
     Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+  end
+
+  test "request_update sets pending_update flag" do
+    runner = Earl::Runner.new
+    app_state = runner.instance_variable_get(:@app_state)
+
+    original_new = Thread.method(:new)
+    Thread.define_singleton_method(:new) do |&block|
+      original_new.call { }
+    end
+
+    runner.request_update
+    assert app_state.shutting_down
+    assert app_state.pending_restart
+    assert app_state.pending_update
+  ensure
+    Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+  end
+
+  test "notify_restart posts to mattermost and deletes context file" do
+    runner = Earl::Runner.new
+    path = File.join(Earl.config_root, "restart_context.json")
+    File.write(path, JSON.generate({ channel_id: "ch-1", thread_id: "th-1", command: "restart" }))
+
+    posted = []
+    mm = runner.instance_variable_get(:@services).mattermost
+    psts = posted
+    mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      psts << { channel_id: channel_id, message: message, root_id: root_id }
+    end
+
+    runner.send(:notify_restart)
+
+    assert_equal 1, posted.size
+    assert_includes posted.first[:message], "restarted"
+    assert_equal "ch-1", posted.first[:channel_id]
+    assert_equal "th-1", posted.first[:root_id]
+    assert_not File.exist?(path)
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
+  test "notify_restart uses updated verb for update command" do
+    runner = Earl::Runner.new
+    path = File.join(Earl.config_root, "restart_context.json")
+    File.write(path, JSON.generate({ channel_id: "ch-1", thread_id: "th-1", command: "update" }))
+
+    posted = []
+    mm = runner.instance_variable_get(:@services).mattermost
+    psts = posted
+    mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      psts << { message: message }
+    end
+
+    runner.send(:notify_restart)
+
+    assert_includes posted.first[:message], "updated"
+    assert_not File.exist?(path)
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
+  test "notify_restart is a no-op when no context file exists" do
+    runner = Earl::Runner.new
+    assert_nothing_raised { runner.send(:notify_restart) }
   end
 
   test "check_idle_sessions iterates persisted sessions" do

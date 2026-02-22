@@ -54,6 +54,7 @@ module Earl
       | `!session <name> approve` | Approve pending permission |
       | `!session <name> deny` | Deny pending permission |
       | `!session <name> "text"` | Send input to tmux session |
+      | `!update` | Pull latest code + bundle install, then restart |
       | `!restart` | Restart EARL (pulls latest code in prod) |
       | `!spawn "prompt" [--name N] [--dir D]` | Spawn Claude in a new tmux session |
     HELP
@@ -71,7 +72,7 @@ module Earl
       session_status: :handle_session_status, session_kill: :handle_session_kill,
       session_nudge: :handle_session_nudge, session_approve: :handle_session_approve,
       session_deny: :handle_session_deny, session_input: :handle_session_input,
-      restart: :handle_restart,
+      update: :handle_update, restart: :handle_restart,
       spawn: :handle_spawn
     }.freeze
 
@@ -120,9 +121,24 @@ module Earl
       reply(ctx, HELP_TABLE)
     end
 
+    def handle_update(ctx)
+      reply(ctx, ":arrows_counterclockwise: Updating EARL...")
+      save_restart_context(ctx, "update")
+      @deps.runner&.request_update
+    end
+
     def handle_restart(ctx)
       reply(ctx, ":arrows_counterclockwise: Restarting EARL...")
+      save_restart_context(ctx, "restart")
       @deps.runner&.request_restart
+    end
+
+    def save_restart_context(ctx, command)
+      path = File.join(Earl.config_root, "restart_context.json")
+      data = { channel_id: ctx.channel_id, thread_id: ctx.thread_id, command: command }
+      File.write(path, JSON.generate(data))
+    rescue StandardError
+      nil
     end
 
     def handle_permissions(ctx)

@@ -11,8 +11,8 @@ module Earl
     include Formatting
 
     # Tracks runtime state: shutdown flag, restart intent, and per-thread message queue.
-    AppState = Struct.new(:shutting_down, :pending_restart, :shutdown_thread, :message_queue, :idle_checker_thread,
-                          keyword_init: true)
+    AppState = Struct.new(:shutting_down, :pending_restart, :pending_update, :shutdown_thread, :message_queue,
+                          :idle_checker_thread, keyword_init: true)
 
     # Bundles user message parameters that travel together through message routing.
     UserMessage = Data.define(:thread_id, :text, :channel_id, :sender_name)
@@ -52,8 +52,8 @@ module Earl
       executor_deps = @services.command_executor.instance_variable_get(:@deps)
       executor_deps.heartbeat_scheduler = @services.heartbeat_scheduler
       executor_deps.runner = self
-      @app_state = AppState.new(shutting_down: false, pending_restart: false, shutdown_thread: nil,
-                                message_queue: MessageQueue.new)
+      @app_state = AppState.new(shutting_down: false, pending_restart: false, pending_update: false,
+                                shutdown_thread: nil, message_queue: MessageQueue.new)
       @responses = ResponseState.new(question_threads: {}, active_responses: {})
 
       configure_channels
@@ -84,6 +84,22 @@ module Earl
       count = channel_names.size
       log(:info, "EARL is running. Listening in #{count} channel#{'s' unless count == 1}: #{channel_names.join(', ')}")
       log(:info, "Allowed users: #{config.allowed_users.join(', ')}")
+      notify_restart
+    end
+
+    def notify_restart
+      path = File.join(Earl.config_root, "restart_context.json")
+      data = JSON.parse(File.read(path))
+      channel_id, thread_id, command = data.values_at("channel_id", "thread_id", "command")
+      verb = command == "update" ? "updated" : "restarted"
+      @services.mattermost.create_post(
+        channel_id: channel_id, message: ":white_check_mark: EARL #{verb} successfully.", root_id: thread_id
+      )
+      File.delete(path)
+    rescue Errno::ENOENT
+      nil
+    rescue StandardError => error
+      log(:warn, "Failed to post restart notification: #{error.message}")
     end
 
     def resolve_channel_names(channel_ids)
@@ -142,32 +158,44 @@ module Earl
       begin_shutdown { restart }
     end
 
+    def request_update
+      @app_state.pending_restart = true
+      @app_state.pending_update = true
+      begin_shutdown { restart }
+    end
+
     private
 
     def restart
-      log(:info, "Restarting EARL...")
-      pull_latest unless Earl.development?
+      updating = @app_state.pending_update
+      log(:info, updating ? "Updating EARL..." : "Restarting EARL...")
+      pull_latest if updating || !Earl.development?
+      update_dependencies if updating
       shutdown
     end
 
     def wait_and_exec_restart
       @app_state.shutdown_thread&.join
-      cmd = restart_command
+      cmd = [ RbConfig.ruby, $PROGRAM_NAME ]
       log(:info, "Exec: #{cmd.join(' ')}")
       Bundler.with_unbundled_env { Kernel.exec(*cmd) }
     end
 
     def pull_latest
-      Dir.chdir(File.dirname($PROGRAM_NAME)) do
-        success = system("git", "pull", "--ff-only")
-        log(success ? :info : :warn, "git pull --ff-only #{success ? 'succeeded' : 'failed (continuing with current code)'}")
-      end
-    rescue StandardError => error
-      log(:warn, "git pull failed: #{error.message}")
+      run_in_repo("git pull --ff-only", "git", "pull", "--ff-only")
     end
 
-    def restart_command
-      [ RbConfig.ruby, $PROGRAM_NAME ]
+    def update_dependencies
+      run_in_repo("bundle install", { "RUBYOPT" => "-W0" }, "bundle", "install", "--quiet")
+    end
+
+    def run_in_repo(label, *cmd)
+      Dir.chdir(File.dirname($PROGRAM_NAME)) do
+        result = system(*cmd) ? "succeeded" : "failed (continuing)"
+        log(result.start_with?("s") ? :info : :warn, "#{label} #{result}")
+      end
+    rescue StandardError => error
+      log(:warn, "#{label} failed: #{error.message}")
     end
 
     # Message routing: receives user messages, dispatches commands or enqueues for Claude.

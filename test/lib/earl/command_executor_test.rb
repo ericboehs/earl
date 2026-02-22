@@ -946,6 +946,43 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     assert_includes posted.first[:message], "Restarting"
   end
 
+  test "!update replies and calls runner.request_update" do
+    posted = []
+    mock_runner = Object.new
+    updated = false
+    mock_runner.define_singleton_method(:request_update) { updated = true }
+
+    executor = build_executor(posted: posted, runner: mock_runner)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :update, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    assert_equal 1, posted.size
+    assert_includes posted.first[:message], "Updating"
+    assert updated, "Expected runner.request_update to be called"
+  end
+
+  test "!restart saves restart context to disk" do
+    posted = []
+    mock_runner = Object.new
+    mock_runner.define_singleton_method(:request_restart) { nil }
+
+    executor = build_executor(posted: posted, runner: mock_runner)
+
+    command = Earl::CommandParser::ParsedCommand.new(name: :restart, args: [])
+    executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+    path = File.join(Earl.config_root, "restart_context.json")
+    assert File.exist?(path), "Expected restart_context.json to be written"
+
+    data = JSON.parse(File.read(path))
+    assert_equal "channel-1", data["channel_id"]
+    assert_equal "thread-1", data["thread_id"]
+    assert_equal "restart", data["command"]
+  ensure
+    File.delete(path) if path && File.exist?(path)
+  end
+
   test "!help includes restart command" do
     posted = []
     executor = build_executor(posted: posted)
