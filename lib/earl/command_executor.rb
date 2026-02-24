@@ -37,7 +37,7 @@ module Earl
       |---------|-------------|
       | `!help` | Show this help table |
       | `!stats` | Show session stats (tokens, context, cost) |
-      | `!usage` | Show Claude Pro subscription usage limits |
+      | `!usage` | Show Claude subscription usage limits |
       | `!context` | Show context window usage for current session |
       | `!stop` | Kill current session |
       | `!escape` | Send SIGINT to Claude (interrupt) |

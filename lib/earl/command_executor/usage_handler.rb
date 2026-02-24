@@ -47,7 +47,7 @@ module Earl
       end
 
       def format_usage(data)
-        lines = [ "#### :bar_chart: Claude Pro Usage" ]
+        lines = [ "#### :bar_chart: Claude Usage" ]
         append_usage_section(lines, data["session"], "Session")
         append_usage_section(lines, data["week"], "Week")
         append_usage_section(lines, data["sonnet_week"], "Sonnet")

@@ -8,7 +8,7 @@ All commands start with `!` and are sent as regular messages in a Mattermost thr
 |---------|-------------|
 | `!help` | Show the help table |
 | `!stats` (or `!cost`) | Show session stats (tokens, context, cost) |
-| `!usage` | Show Claude Pro subscription usage limits |
+| `!usage` | Show Claude subscription usage limits |
 | `!context` | Show context window usage for current session |
 | `!stop` | Kill current session |
 | `!escape` | Send SIGINT to Claude (interrupt mid-response) |
@@ -45,11 +45,11 @@ If no active session exists but persisted stats are available, shows a "(stopped
 
 ### !usage
 
-Fetches Claude Pro subscription usage data. Runs asynchronously (takes ~15s) and posts results when ready.
+Fetches Claude subscription usage data. Runs asynchronously (takes ~15s) and posts results when ready.
 
 **Output:**
 ```
-#### :bar_chart: Claude Pro Usage
+#### :bar_chart: Claude Usage
 - **Session:** 45% used — resets in 3h 22m
 - **Week:** 12% used — resets Mon 9:00 AM
 - **Extra:** 5% used ($2.50 / $50.00) — resets Feb 28

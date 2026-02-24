@@ -473,7 +473,7 @@ class Earl::CommandExecutorTest < ActiveSupport::TestCase
     }
 
     result = executor.send(:format_usage, data)
-    assert_includes result, "Claude Pro Usage"
+    assert_includes result, "Claude Usage"
     assert_includes result, "80% used"
     assert_includes result, "45% used"
     assert_includes result, "$6.00 / $20.00"

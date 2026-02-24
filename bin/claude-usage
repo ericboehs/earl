@@ -89,7 +89,7 @@ if [[ "${1:-}" == "--json" ]]; then
 }
 JSON
 else
-  echo "📊 Claude Pro Usage"
+  echo "📊 Claude Usage"
   echo ""
   if [[ -n "$session_pct" ]]; then
     echo "  Session:  ${session_pct}% used — resets ${session_reset}"

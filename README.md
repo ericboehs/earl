@@ -81,7 +81,7 @@ Users can send commands in Mattermost messages:
 | `!sessions` | List all Claude sessions (EARL + tmux) |
 | `!session <name> status/approve/deny` | Manage tmux sessions |
 | `!spawn "prompt"` | Spawn a new Claude session in tmux |
-| `!usage` | Show Claude Pro usage |
+| `!usage` | Show Claude usage |
 | `!context` | Show context window usage |
 | `!heartbeats` | List scheduled heartbeats |
 
