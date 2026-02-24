@@ -45,8 +45,19 @@ sleep 1
 session_pct=$(echo "$OUTPUT" | grep -A1 "Current session" | grep -o '[0-9]*% used' | grep -o '[0-9]*' || echo "")
 session_reset=$(echo "$OUTPUT" | grep -A2 "Current session" | grep "Resets" | sed 's/^[[:space:]]*//' | sed 's/Resets //' || echo "")
 
-week_pct=$(echo "$OUTPUT" | grep -A1 "Current week" | grep -o '[0-9]*% used' | grep -o '[0-9]*' || echo "")
-week_reset=$(echo "$OUTPUT" | grep -A2 "Current week" | grep "Resets" | sed 's/^[[:space:]]*//' | sed 's/Resets //' || echo "")
+# "Current week (all models)" — use head -1 to pick only the first match
+week_pct=$(echo "$OUTPUT" | grep -A1 "Current week (all models)" | grep -o '[0-9]*% used' | head -1 | grep -o '[0-9]*' || echo "")
+week_reset=$(echo "$OUTPUT" | grep -A2 "Current week (all models)" | grep "Resets" | head -1 | sed 's/^[[:space:]]*//' | sed 's/Resets //' || echo "")
+
+# "Current week (Sonnet only)" — separate field
+sonnet_pct=$(echo "$OUTPUT" | grep -A1 "Current week (Sonnet only)" | grep -o '[0-9]*% used' | head -1 | grep -o '[0-9]*' || echo "")
+sonnet_reset=$(echo "$OUTPUT" | grep -A2 "Current week (Sonnet only)" | grep "Resets" | head -1 | sed 's/^[[:space:]]*//' | sed 's/Resets //' || echo "")
+
+# Fallback: if "all models" label not found, try plain "Current week" (older CLI)
+if [[ -z "$week_pct" ]]; then
+  week_pct=$(echo "$OUTPUT" | grep -A1 "Current week" | grep -o '[0-9]*% used' | head -1 | grep -o '[0-9]*' || echo "")
+  week_reset=$(echo "$OUTPUT" | grep -A2 "Current week" | grep "Resets" | head -1 | sed 's/^[[:space:]]*//' | sed 's/Resets //' || echo "")
+fi
 
 extra_pct=$(echo "$OUTPUT" | grep -A1 "Extra usage" | grep -o '[0-9]*% used' | grep -o '[0-9]*' || echo "")
 extra_detail=$(echo "$OUTPUT" | grep -A2 "Extra usage" | grep "spent" | sed 's/^[[:space:]]*//' || echo "")
@@ -65,6 +76,10 @@ if [[ "${1:-}" == "--json" ]]; then
     "percent_used": ${week_pct:-null},
     "resets": "${week_reset}"
   },
+  "sonnet_week": {
+    "percent_used": ${sonnet_pct:-null},
+    "resets": "${sonnet_reset}"
+  },
   "extra": {
     "percent_used": ${extra_pct:-null},
     "spent": "${extra_spent}",
@@ -81,6 +96,9 @@ else
   fi
   if [[ -n "$week_pct" ]]; then
     echo "  Week:     ${week_pct}% used — resets ${week_reset}"
+  fi
+  if [[ -n "$sonnet_pct" ]]; then
+    echo "  Sonnet:   ${sonnet_pct}% used — resets ${sonnet_reset}"
   fi
   if [[ -n "$extra_pct" ]]; then
     echo "  Extra:    ${extra_pct}% used (${extra_spent} / ${extra_budget}) — resets ${extra_reset}"

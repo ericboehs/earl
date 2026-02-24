@@ -50,6 +50,7 @@ module Earl
         lines = [ "#### :bar_chart: Claude Pro Usage" ]
         append_usage_section(lines, data["session"], "Session")
         append_usage_section(lines, data["week"], "Week")
+        append_usage_section(lines, data["sonnet_week"], "Sonnet")
         append_usage_extra(lines, data["extra"])
         lines.join("\n")
       end

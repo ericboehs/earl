@@ -15,7 +15,7 @@ for CONFIG_DIR in "$PROD_CONFIG_DIR" "$DEV_CONFIG_DIR"; do
   ENV_LABEL=$([ "$CONFIG_DIR" = "$DEV_CONFIG_DIR" ] && echo "dev" || echo "prod")
   echo ""
   echo "  [$ENV_LABEL] Creating $CONFIG_DIR/"
-  mkdir -p "$CONFIG_DIR/logs" "$CONFIG_DIR/memory" "$CONFIG_DIR/allowed_tools" "$CONFIG_DIR/mcp"
+  mkdir -p "$CONFIG_DIR/logs" "$CONFIG_DIR/memory" "$CONFIG_DIR/mcp"
 
   # Copy default Claude project config (if not present)
   CLAUDE_HOME="$CONFIG_DIR/claude-home"
