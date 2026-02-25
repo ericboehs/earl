@@ -33,7 +33,7 @@ module Earl
       end
 
       def websocket_url
-        platform_url.sub(%r{^https://}, "wss://").sub(%r{^http://}, "ws://") + "/api/v4/websocket"
+        "#{platform_url.sub(%r{^https://}, "wss://").sub(%r{^http://}, "ws://")}/api/v4/websocket"
       end
 
       # Build a Config-like object compatible with ApiClient

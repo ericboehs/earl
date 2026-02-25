@@ -1,3 +1,8 @@
+---
+title: Permissions
+nav_order: 5
+---
+
 # Permissions
 
 EARL uses an MCP-based permission system to control which tools Claude can use. When Claude needs to run a tool (e.g., Bash, Edit, Write), the user is prompted in Mattermost to approve or deny.

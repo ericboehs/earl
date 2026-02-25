@@ -37,20 +37,17 @@ module Earl
       end
 
       def handle_request(request)
-        method = request["method"]
-        id = request["id"]
+        method_name, request_id, params = request.values_at("method", "id", "params")
+        dispatch_method(method_name, request_id, params || {})
+      end
 
-        case method
-        when "initialize"
-          initialize_response(id)
-        when "notifications/initialized"
-          nil # notification, no response
-        when "tools/list"
-          tools_list_response(id)
-        when "tools/call"
-          tools_call_response(id, request["params"] || {})
-        else
-          error_response(id, -32601, "Method not found: #{method}")
+      def dispatch_method(method_name, request_id, params)
+        case method_name
+        when "initialize" then initialize_response(request_id)
+        when "notifications/initialized" then nil
+        when "tools/list" then tools_list_response(request_id)
+        when "tools/call" then tools_call_response(request_id, params)
+        else error_response(request_id, -32_601, "Method not found: #{method_name}")
         end
       end
 
@@ -79,7 +76,7 @@ module Earl
       def tools_call_response(id, params)
         tool_name, arguments = extract_tool_params(params)
         handler = find_tool_handler(tool_name)
-        return error_response(id, -32602, "No handler for tool: #{tool_name}") unless handler
+        return error_response(id, -32_602, "No handler for tool: #{tool_name}") unless handler
 
         log(:info, "MCP tool call: #{tool_name}")
         result = handler.call(tool_name, arguments)
@@ -91,8 +88,8 @@ module Earl
       end
 
       def extract_tool_params(args)
-        tool_name = args.dig("name") || args.dig("arguments", "tool_name") || "unknown"
-        [ tool_name, args.dig("arguments") || {} ]
+        tool_name = args["name"] || args.dig("arguments", "tool_name") || "unknown"
+        [tool_name, args["arguments"] || {}]
       end
 
       def find_tool_handler(tool_name)
@@ -107,7 +104,7 @@ module Earl
         msg = error.message
         log(:error, "MCP tool call error: #{error.class}: #{msg}")
         log(:error, error.backtrace&.first(3)&.join("\n"))
-        error_response(id, -32603, "Internal error: #{msg}")
+        error_response(id, -32_603, "Internal error: #{msg}")
       end
 
       def error_response(id, code, message)

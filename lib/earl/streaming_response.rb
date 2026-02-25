@@ -6,8 +6,9 @@ module Earl
   class StreamingResponse
     include Logging
     include ToolInputFormatter
+
     DEBOUNCE_MS = 300
-    TOOL_PREFIXES = ToolInputFormatter::TOOL_ICONS.values.uniq.concat([ "\u2699\uFE0F" ]).freeze
+    TOOL_PREFIXES = ToolInputFormatter::TOOL_ICONS.values.uniq.push("\u2699\uFE0F").freeze
 
     # Holds the Mattermost thread and channel context for posting.
     Context = Struct.new(:thread_id, :mattermost, :channel_id, keyword_init: true)
@@ -91,7 +92,8 @@ module Earl
       private
 
       def create_initial_post(text)
-        result = @context.mattermost.create_post(channel_id: @context.channel_id, message: text, root_id: @context.thread_id)
+        result = @context.mattermost.create_post(channel_id: @context.channel_id, message: text,
+                                                 root_id: @context.thread_id)
         post_id = result["id"]
         return handle_create_failure unless post_id
 
@@ -138,14 +140,20 @@ module Earl
         ps = @post_state
         ps.debounce_timer&.join(1)
         stop_typing
-        post_id = ps.reply_post_id
-        return if ps.full_text.empty? && !post_id
+        return if finalize_empty?(ps)
 
         final_text = build_final_text
+        apply_final_text(ps, final_text)
+      end
 
+      def finalize_empty?(post_state)
+        post_state.full_text.empty? && !post_state.reply_post_id
+      end
+
+      def apply_final_text(post_state, final_text)
         if only_text_segments?
-          ps.full_text = final_text
-          update_post if post_id
+          post_state.full_text = final_text
+          update_post if post_state.reply_post_id
         else
           remove_last_text_from_streamed_post
           create_notification_post(final_text)

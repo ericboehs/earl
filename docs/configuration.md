@@ -1,3 +1,8 @@
+---
+title: Configuration
+nav_order: 4
+---
+
 # Configuration
 
 ## Required Environment Variables
@@ -6,8 +11,8 @@
 |----------|-------------|---------|
 | `MATTERMOST_URL` | Mattermost server URL | `https://mattermost.example.com` |
 | `MATTERMOST_BOT_TOKEN` | Bot authentication token | `abc123...` |
-| `MATTERMOST_BOT_ID` | Bot user ID (used to ignore own messages) | `x1pomjhc9f8xjx7nwj1o6s33gc` |
-| `EARL_CHANNEL_ID` | Default channel to listen in | `bt36n3e7qj837qoi1mmho54xhh` |
+| `MATTERMOST_BOT_ID` | Bot user ID (used to ignore own messages) | `your-bot-user-id` |
+| `EARL_CHANNEL_ID` | Default channel to listen in | `your-channel-id` |
 
 ## Optional Environment Variables
 

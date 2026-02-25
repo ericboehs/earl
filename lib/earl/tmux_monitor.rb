@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "tmux_monitor/alert_dispatcher"
+require_relative "tmux_monitor/output_analyzer"
 require_relative "tmux_monitor/question_forwarder"
 require_relative "tmux_monitor/permission_forwarder"
 
@@ -10,21 +12,26 @@ module Earl
   # back to tmux sessions as keyboard input.
   class TmuxMonitor
     include Logging
+    include AlertDispatcher
 
     DEFAULT_POLL_INTERVAL = 45 # seconds
     DEFAULT_STALL_THRESHOLD = 5 # consecutive unchanged polls
 
     # Pattern matchers for detecting session state from captured output.
     STATE_PATTERNS = {
-      asking_question: /\?\s*\n\s*(?:1[\.\)]\s|❯)/m,
+      asking_question: /\?\s*\n\s*(?:1[.)]\s|❯)/m,
       requesting_permission: /(?:Allow|Deny|approve|permission|Do you want to allow)/i,
       errored: /(?:Error:|error:|FAILED|panic:|Traceback|fatal:)/
     }.freeze
 
     INTERACTIVE_STATES = { asking_question: :question, requesting_permission: :permission }.freeze
 
+    # Bundles external service dependencies and forwarder collaborators.
+    Forwarders = Struct.new(:question, :permission, keyword_init: true)
+
     def initialize(mattermost:, tmux_store:, tmux_adapter: Tmux)
-      @poll_state = PollState.new(stall_threshold: Integer(ENV.fetch("EARL_TMUX_STALL_THRESHOLD", DEFAULT_STALL_THRESHOLD)))
+      @poll_state = PollState.new(stall_threshold: Integer(ENV.fetch("EARL_TMUX_STALL_THRESHOLD",
+                                                                     DEFAULT_STALL_THRESHOLD)))
       @deps = Dependencies.new(mattermost, tmux_store, tmux_adapter, @poll_state)
       @poll_interval = Integer(ENV.fetch("EARL_TMUX_POLL_INTERVAL", DEFAULT_POLL_INTERVAL))
       @thread_ctl = ThreadControl.new
@@ -81,7 +88,8 @@ module Earl
       sessions.each do |name, info|
         poll_single_session(name, info)
       rescue StandardError => error
-        log(:error, "TmuxMonitor: error polling session '#{name}': #{error.message}\n#{error.backtrace&.first(5)&.join("\n")}")
+        log(:error,
+            "TmuxMonitor: error polling session '#{name}': #{error.message}\n#{error.backtrace&.first(5)&.join("\n")}")
       end
     end
 
@@ -97,30 +105,11 @@ module Earl
       dispatch_state_alert(state, name: name, output: output, info: info)
     end
 
-    def dispatch_state_alert(state, **context)
-      name, output, info = context.values_at(:name, :output, :info)
-      forwarder = { asking_question: @deps.question_forwarder,
-                    requesting_permission: @deps.permission_forwarder }[state]
-      if forwarder
-        forwarder.forward(name, output, info)
-      else
-        msg = { errored: error_message(name, output),
-                completed: completed_message(name),
-                stalled: stalled_message(name) }[state]
-        post_alert(info, msg) if msg
-      end
-    end
-
-    def error_message(name, output)
-      ":x: Session `#{name}` encountered an error:\n```\n#{output.lines.last(10)&.join}\n```"
-    end
-
-    def completed_message(name)
-      ":white_check_mark: Session `#{name}` appears to have completed (shell prompt detected)."
-    end
-
-    def stalled_message(name)
-      ":hourglass: Session `#{name}` appears stalled (output unchanged for #{@poll_state.stall_threshold} polls)."
+    def safe_capture(name)
+      @deps.tmux.capture_pane(name, lines: 50)
+    rescue Tmux::Error => error
+      log(:warn, "TmuxMonitor: failed to capture '#{name}': #{error.message}")
+      nil
     end
 
     def cleanup_dead_sessions(sessions)
@@ -133,57 +122,6 @@ module Earl
         @poll_state.cleanup_session(name)
       end
     end
-
-    def safe_capture(name)
-      @deps.tmux.capture_pane(name, lines: 50)
-    rescue Tmux::Error => error
-      log(:warn, "TmuxMonitor: failed to capture '#{name}': #{error.message}")
-      nil
-    end
-
-    def post_alert(info, message)
-      @deps.mattermost.create_post(
-        channel_id: info.channel_id,
-        message: message,
-        root_id: info.thread_id
-      )
-    rescue StandardError => error
-      log(:error, "TmuxMonitor: failed to post alert (#{error.class}): #{error.message}")
-      nil
-    end
-
-    # Stateless output analysis that detects tmux session state from captured text.
-    module OutputAnalyzer
-      SHELL_PROMPT_PATTERN = /[❯#%]\s*\z|\$\s+\z/
-
-      module_function
-
-      def detect(output, name, poll_state)
-        all_lines = output.lines
-        return :completed if completed?(all_lines)
-
-        state_from_patterns(all_lines) || stall_or_running(name, output, poll_state)
-      end
-
-      def completed?(all_lines)
-        (all_lines.last(3)&.join || "").match?(SHELL_PROMPT_PATTERN)
-      end
-
-      def state_from_patterns(all_lines)
-        recent = all_lines.last(15)&.join || ""
-        STATE_PATTERNS.each do |state, pattern|
-          return state if recent.match?(pattern)
-        end
-        nil
-      end
-
-      def stall_or_running(name, output, poll_state)
-        poll_state.stalled?(name, output) ? :stalled : :running
-      end
-    end
-
-    # Bundles external service dependencies and forwarder collaborators.
-    Forwarders = Struct.new(:question, :permission, keyword_init: true)
 
     # Holds external service references and forwarder pair.
     class Dependencies
@@ -239,11 +177,7 @@ module Earl
       def transition(name, state)
         tracking = ensure_tracking(name)
         last_state = tracking.last_state
-        interaction_type = INTERACTIVE_STATES[state]
-        should_retrigger = interaction_type && @mutex.synchronize {
-          @pending_interactions.none? { |_, interaction| interaction[:session_name] == name && interaction[:type] == interaction_type }
-        }
-        changed = last_state != state || should_retrigger
+        changed = last_state != state || should_retrigger?(name, state)
         return false unless changed
 
         tracking.last_state = state
@@ -262,6 +196,20 @@ module Earl
       end
 
       private
+
+      def should_retrigger?(name, state)
+        interaction_type = INTERACTIVE_STATES[state]
+        return false unless interaction_type
+
+        pending = pending_interactions_for(name)
+        pending.none? { |interaction| interaction[:type] == interaction_type }
+      end
+
+      def pending_interactions_for(session_name)
+        @mutex.synchronize do
+          @pending_interactions.values.select { |interaction| interaction[:session_name] == session_name }
+        end
+      end
 
       def ensure_tracking(name)
         @tracking[name] ||= TrackingEntry.new(last_state: nil, output_hash: nil, stall_count: 0)
@@ -283,9 +231,9 @@ module Earl
         @shutdown
       end
 
-      def start(&block)
+      def start(&)
         @shutdown = false
-        @thread = Thread.new(&block)
+        @thread = Thread.new(&)
       end
 
       def stop

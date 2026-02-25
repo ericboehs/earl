@@ -22,16 +22,17 @@ module Earl
 
     private
 
+    def extract_tool_detail_from(tool_name, input)
+      key = TOOL_DETAIL_KEYS[tool_name]
+      key ? input&.dig(key) : summarize_input(input)
+    end
+
     TOOL_DETAIL_KEYS = {
       "Bash" => "command", "Read" => "file_path", "Edit" => "file_path",
       "Write" => "file_path", "WebFetch" => "url", "WebSearch" => "query",
       "Grep" => "pattern", "Glob" => "pattern"
     }.freeze
-
-    def extract_tool_detail_from(tool_name, input)
-      key = TOOL_DETAIL_KEYS[tool_name]
-      key ? input&.dig(key) : summarize_input(input)
-    end
+    private_constant :TOOL_DETAIL_KEYS
 
     def summarize_input(input)
       return nil unless input

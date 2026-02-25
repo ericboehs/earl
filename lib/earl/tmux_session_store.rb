@@ -8,7 +8,7 @@ module Earl
 
     # Holds metadata for an EARL-spawned tmux session.
     TmuxSessionInfo = Struct.new(:name, :channel_id, :thread_id, :working_dir,
-                                  :prompt, :created_at, keyword_init: true)
+                                 :prompt, :created_at, keyword_init: true)
 
     def self.default_path
       @default_path ||= File.join(Earl.config_root, "tmux_sessions.json")
@@ -103,7 +103,7 @@ module Earl
     def backup_corrupted_store
       return unless File.exist?(@path)
 
-      backup_path = "#{@path}.corrupt.#{Time.now.strftime('%Y%m%d%H%M%S')}"
+      backup_path = "#{@path}.corrupt.#{Time.now.strftime("%Y%m%d%H%M%S")}"
       FileUtils.cp(@path, backup_path)
     rescue StandardError => error
       log(:warn, "Failed to back up corrupted store: #{error.message}")
@@ -119,7 +119,7 @@ module Earl
 
     def serialize_and_write(data)
       dir = File.dirname(@path)
-      FileUtils.mkdir_p(dir) unless Dir.exist?(dir)
+      FileUtils.mkdir_p(dir)
 
       serialized = data.transform_values(&:to_h)
       tmp_path = "#{@path}.tmp.#{Process.pid}"

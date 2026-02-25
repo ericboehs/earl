@@ -13,7 +13,7 @@ module Earl
       include HandlerBase
 
       TOOL_NAME = "manage_tmux_sessions"
-      TOOL_NAMES = [ TOOL_NAME ].freeze
+      TOOL_NAMES = [TOOL_NAME].freeze
       VALID_ACTIONS = %w[list capture status approve deny send_input spawn kill].freeze
 
       # Bundles spawn parameters that travel together through the confirmation and creation flow.
@@ -40,7 +40,7 @@ module Earl
       end
 
       def tool_definitions
-        [ tool_definition ]
+        [tool_definition]
       end
 
       TARGET_REQUIRED_ACTIONS = %w[capture status approve deny send_input kill].freeze
@@ -48,123 +48,150 @@ module Earl
       def call(name, arguments)
         return unless handles?(name)
 
-        action = arguments["action"]
-        valid_list = VALID_ACTIONS.join(", ")
-        return text_content("Error: action is required (#{valid_list})") unless action
-        return text_content("Error: unknown action '#{action}'. Valid: #{valid_list}") unless VALID_ACTIONS.include?(action)
-        return text_content("Error: target is required for #{action}") if TARGET_REQUIRED_ACTIONS.include?(action) && !arguments["target"]
+        error = validate_call_args(arguments)
+        return error if error
 
-        send("handle_#{action}", arguments)
+        send("handle_#{arguments["action"]}", arguments)
       end
 
       private
 
-      # --- list ---
+      def validate_call_args(arguments)
+        action = arguments["action"]
+        valid_list = VALID_ACTIONS.join(", ")
+        return text_content("Error: action is required (#{valid_list})") unless action
+        unless VALID_ACTIONS.include?(action)
+          return text_content("Error: unknown action '#{action}'. Valid: #{valid_list}")
+        end
 
-      def handle_list(_arguments)
-        return text_content("Error: tmux is not available") unless @tmux.available?
-
-        panes = @tmux.list_all_panes
-        return text_content("No tmux sessions running.") if panes.empty?
-
-        claude_panes = panes.select { |pane| @tmux.claude_on_tty?(pane[:tty]) }
-        return text_content("No Claude sessions found across #{panes.size} tmux panes.") if claude_panes.empty?
-
-        lines = claude_panes.map { |pane| format_pane(pane) }
-        text_content("**Claude Sessions (#{claude_panes.size}):**\n\n#{lines.join("\n")}")
+        text_content("Error: target is required for #{action}") if target_required_but_missing?(action,
+                                                                                                arguments)
       end
 
-      # --- capture ---
-
-      def handle_capture(arguments)
-        target = arguments["target"]
-        lines = arguments.fetch("lines", 100).to_i
-        lines = [ lines, 1 ].max
-        output = @tmux.capture_pane(target, lines: lines)
-        text_content("**`#{target}` output (last #{lines} lines):**\n```\n#{output}\n```")
-      rescue Tmux::NotFound
-        text_content("Error: session/pane '#{target}' not found")
-      rescue Tmux::Error => error
-        text_content("Error: #{error.message}")
+      def target_required_but_missing?(action, arguments)
+        TARGET_REQUIRED_ACTIONS.include?(action) && !arguments["target"]
       end
 
-      # --- status ---
+      # Action handlers for list, capture, status, approve, deny, send_input, spawn, kill.
+      module ActionHandlers
+        private
 
-      def handle_status(arguments)
-        target = arguments["target"]
-        output = @tmux.capture_pane(target, lines: 200)
-        status_label = Reactions::PANE_STATUS_LABELS.fetch(classify_pane_output(output), "Idle")
-        text_content("**`#{target}` status: #{status_label}**\n```\n#{output}\n```")
-      rescue Tmux::NotFound
-        text_content("Error: session/pane '#{target}' not found")
-      rescue Tmux::Error => error
-        text_content("Error: #{error.message}")
+        # --- list ---
+
+        def handle_list(_arguments)
+          return text_content("Error: tmux is not available") unless @tmux.available?
+
+          panes = @tmux.list_all_panes
+          claude_panes = select_claude_panes(panes)
+          format_pane_list(panes, claude_panes)
+        end
+
+        def select_claude_panes(panes)
+          panes.select { |pane| @tmux.claude_on_tty?(pane[:tty]) }
+        end
+
+        def format_pane_list(panes, claude_panes)
+          return text_content("No tmux sessions running.") if panes.empty?
+          return text_content("No Claude sessions found across #{panes.size} tmux panes.") if claude_panes.empty?
+
+          lines = claude_panes.map { |pane| format_pane(pane) }
+          text_content("**Claude Sessions (#{claude_panes.size}):**\n\n#{lines.join("\n")}")
+        end
+
+        # --- capture ---
+
+        def handle_capture(arguments)
+          target = arguments["target"]
+          lines = arguments.fetch("lines", 100).to_i
+          lines = [lines, 1].max
+          output = @tmux.capture_pane(target, lines: lines)
+          text_content("**`#{target}` output (last #{lines} lines):**\n```\n#{output}\n```")
+        rescue Tmux::NotFound
+          text_content("Error: session/pane '#{target}' not found")
+        rescue Tmux::Error => error
+          text_content("Error: #{error.message}")
+        end
+
+        # --- status ---
+
+        def handle_status(arguments)
+          target = arguments["target"]
+          output = @tmux.capture_pane(target, lines: 200)
+          status_label = Reactions::PANE_STATUS_LABELS.fetch(classify_pane_output(output), "Idle")
+          text_content("**`#{target}` status: #{status_label}**\n```\n#{output}\n```")
+        rescue Tmux::NotFound
+          text_content("Error: session/pane '#{target}' not found")
+        rescue Tmux::Error => error
+          text_content("Error: #{error.message}")
+        end
+
+        # --- approve ---
+
+        def handle_approve(arguments)
+          target = arguments["target"]
+          @tmux.send_keys_raw(target, "Enter")
+          text_content("Approved permission on `#{target}`.")
+        rescue Tmux::NotFound
+          text_content("Error: session/pane '#{target}' not found")
+        rescue Tmux::Error => error
+          text_content("Error: #{error.message}")
+        end
+
+        # --- deny ---
+
+        def handle_deny(arguments)
+          target = arguments["target"]
+          @tmux.send_keys_raw(target, "Escape")
+          text_content("Denied permission on `#{target}`.")
+        rescue Tmux::NotFound
+          text_content("Error: session/pane '#{target}' not found")
+        rescue Tmux::Error => error
+          text_content("Error: #{error.message}")
+        end
+
+        # --- send_input ---
+
+        def handle_send_input(arguments)
+          target = arguments["target"]
+          text = arguments["text"]
+          return text_content("Error: text is required for send_input") unless text
+
+          @tmux.send_keys(target, text)
+          text_content("Sent to `#{target}`: `#{text}`")
+        rescue Tmux::NotFound
+          text_content("Error: session/pane '#{target}' not found")
+        rescue Tmux::Error => error
+          text_content("Error: #{error.message}")
+        end
+
+        # --- spawn ---
+
+        def handle_spawn(arguments)
+          spawn_error = validate_spawn_args(arguments)
+          return spawn_error if spawn_error
+
+          request = build_spawn_request(arguments)
+          execute_spawn(request)
+        rescue Tmux::Error => error
+          text_content("Error: #{error.message}")
+        end
+
+        # --- kill ---
+
+        def handle_kill(arguments)
+          target = arguments["target"]
+          kill_tmux_session(target)
+        rescue Tmux::Error => error
+          text_content("Error: #{error.message}")
+        end
       end
 
-      # --- approve ---
-
-      def handle_approve(arguments)
-        target = arguments["target"]
-        @tmux.send_keys_raw(target, "Enter")
-        text_content("Approved permission on `#{target}`.")
-      rescue Tmux::NotFound
-        text_content("Error: session/pane '#{target}' not found")
-      rescue Tmux::Error => error
-        text_content("Error: #{error.message}")
-      end
-
-      # --- deny ---
-
-      def handle_deny(arguments)
-        target = arguments["target"]
-        @tmux.send_keys_raw(target, "Escape")
-        text_content("Denied permission on `#{target}`.")
-      rescue Tmux::NotFound
-        text_content("Error: session/pane '#{target}' not found")
-      rescue Tmux::Error => error
-        text_content("Error: #{error.message}")
-      end
-
-      # --- send_input ---
-
-      def handle_send_input(arguments)
-        target = arguments["target"]
-        text = arguments["text"]
-        return text_content("Error: text is required for send_input") unless text
-
-        @tmux.send_keys(target, text)
-        text_content("Sent to `#{target}`: `#{text}`")
-      rescue Tmux::NotFound
-        text_content("Error: session/pane '#{target}' not found")
-      rescue Tmux::Error => error
-        text_content("Error: #{error.message}")
-      end
-
-      # --- spawn ---
-
-      def handle_spawn(arguments)
-        error = validate_spawn_args(arguments)
-        return error if error
-
-        request = build_spawn_request(arguments)
-        execute_spawn(request)
-      rescue Tmux::Error => error
-        text_content("Error: #{error.message}")
-      end
-
-      # --- kill ---
-
-      def handle_kill(arguments)
-        target = arguments["target"]
-        kill_tmux_session(target)
-      rescue Tmux::Error => error
-        text_content("Error: #{error.message}")
-      end
+      include ActionHandlers
 
       # --- helpers ---
 
       def text_content(text)
-        { content: [ { type: "text", text: text } ] }
+        { content: [{ type: "text", text: text }] }
       end
 
       # Pane formatting and status detection.
@@ -206,33 +233,64 @@ module Earl
         end
       end
 
-      # Spawn validation, request building, confirmation, and session creation.
-      module SpawnConfirmation
+      # Spawn argument validation and request building.
+      module SpawnValidation
         private
 
         def validate_spawn_args(arguments)
+          error = validate_prompt(arguments)
+          error ||= validate_working_dir(arguments)
+          error || validate_session_or_name(arguments)
+        end
+
+        def validate_prompt(arguments)
           prompt = arguments["prompt"]
-          return text_content("Error: prompt is required for spawn") unless prompt && !prompt.strip.empty?
+          text_content("Error: prompt is required for spawn") unless prompt && !prompt.strip.empty?
+        end
 
+        def validate_working_dir(arguments)
           working_dir = arguments["working_dir"]
-          return text_content("Error: directory '#{working_dir}' not found") if working_dir && !Dir.exist?(working_dir)
+          text_content("Error: directory '#{working_dir}' not found") if working_dir && !Dir.exist?(working_dir)
+        end
 
+        def validate_session_or_name(arguments)
           session = arguments["session"]
-          name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(2)}"
           if session
-            return text_content("Error: session '#{session}' not found") unless @tmux.session_exists?(session)
+            validate_existing_session(session)
           else
-            return text_content("Error: session name '#{name}' cannot contain '.' or ':' (tmux target delimiters)") if name.match?(/[.:]/)
-            return text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
+            validate_new_session_name(arguments)
+          end
+        end
+
+        def validate_existing_session(session)
+          text_content("Error: session '#{session}' not found") unless @tmux.session_exists?(session)
+        end
+
+        def validate_new_session_name(arguments)
+          name = arguments["name"] || generate_session_name
+          if name.match?(/[.:]/)
+            return text_content("Error: session name '#{name}' cannot contain '.' or ':' (tmux target delimiters)")
           end
 
-          nil
+          text_content("Error: session '#{name}' already exists") if @tmux.session_exists?(name)
+        end
+
+        def generate_session_name
+          "earl-#{Time.now.strftime("%Y%m%d%H%M%S")}-#{SecureRandom.hex(2)}"
         end
 
         def build_spawn_request(arguments)
-          name = arguments["name"] || "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}-#{SecureRandom.hex(2)}"
-          SpawnRequest.new(name: name, prompt: arguments["prompt"], working_dir: arguments["working_dir"], session: arguments["session"])
+          name, prompt, working_dir, session = arguments.values_at("name", "prompt", "working_dir", "session")
+          SpawnRequest.new(
+            name: name || generate_session_name, prompt: prompt,
+            working_dir: working_dir, session: session
+          )
         end
+      end
+
+      # Spawn confirmation, session creation, and Mattermost messaging.
+      module SpawnConfirmation
+        private
 
         def execute_spawn(request)
           case request_spawn_confirmation(request)
@@ -245,13 +303,11 @@ module Earl
         def create_spawned_session(request)
           name, prompt, working_dir, session = request.deconstruct
           command = "claude #{Shellwords.shellescape(prompt)}"
-
           if session
             @tmux.create_window(session: session, name: name, command: command, working_dir: working_dir)
           else
             @tmux.create_session(name: name, command: command, working_dir: working_dir)
           end
-
           persist_session_info(name, working_dir, prompt)
           mode = session ? "window in `#{session}`" : "session"
           text_content("Spawned tmux #{mode} `#{name}`.\n- Prompt: #{prompt}\n- Dir: #{working_dir || Dir.pwd}")
@@ -289,17 +345,17 @@ module Earl
           dir_line = working_dir ? "\n- **Dir:** #{working_dir}" : ""
           session_line = session ? "\n- **Session:** #{session} (new window)" : ""
           ":rocket: **Spawn Request**\n" \
-            "Claude wants to spawn #{session ? 'window' : 'session'} `#{name}`\n" \
+            "Claude wants to spawn #{session ? "window" : "session"} `#{name}`\n" \
             "- **Prompt:** #{prompt}#{dir_line}#{session_line}\n" \
             "React: :+1: approve | :-1: deny"
         end
 
         def post_to_channel(message)
           response = @api.post("/posts", {
-            channel_id: @config.platform_channel_id,
-            message: message,
-            root_id: @config.platform_thread_id
-          })
+                                 channel_id: @config.platform_channel_id,
+                                 message: message,
+                                 root_id: @config.platform_thread_id
+                               })
 
           return unless response.is_a?(Net::HTTPSuccess)
 
@@ -309,53 +365,63 @@ module Earl
         def add_reaction_options(post_id)
           Reactions::ALL.each do |emoji|
             response = @api.post("/reactions", {
-              user_id: @config.platform_bot_id,
-              post_id: post_id,
-              emoji_name: emoji
-            })
+                                   user_id: @config.platform_bot_id,
+                                   post_id: post_id,
+                                   emoji_name: emoji
+                                 })
             log(:warn, "Failed to add reaction #{emoji} to post #{post_id}") unless response.is_a?(Net::HTTPSuccess)
           end
         rescue IOError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
           log(:error, "Failed to add reaction options to post #{post_id}: #{error.message}")
         end
+      end
+
+      # WebSocket-based polling for spawn confirmation reactions.
+      module SpawnPolling
+        private
 
         def wait_for_confirmation(post_id)
           timeout_sec = @config.permission_timeout_ms / 1000.0
           deadline = Time.now + timeout_sec
 
-          ws = connect_websocket
-          return :error unless ws
+          websocket = connect_websocket
+          return :error unless websocket
 
-          poll_confirmation(ws, post_id, deadline)
+          poll_confirmation(websocket, post_id, deadline)
         ensure
-          begin
-            ws&.close
-          rescue IOError, Errno::ECONNRESET => error
-            log(:debug, "Failed to close spawn confirmation WebSocket: #{error.message}")
-          end
+          close_websocket(websocket)
+        end
+
+        def close_websocket(websocket)
+          websocket&.close
+        rescue IOError, Errno::ECONNRESET => error
+          log(:debug, "Failed to close spawn confirmation WebSocket: #{error.message}")
         end
 
         def connect_websocket
-          ws = WebSocket::Client::Simple.connect(@config.websocket_url)
+          websocket = WebSocket::Client::Simple.connect(@config.websocket_url)
           token = @config.platform_token
-          ws_ref = ws
-          ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
-          ws
+          ws_ref = websocket
+          websocket.on(:open) do
+            ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } }))
+          end
+          websocket
         rescue IOError, SocketError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH => error
           log(:error, "Spawn confirmation WebSocket failed: #{error.message}")
           nil
         end
 
-        def poll_confirmation(ws, post_id, deadline)
-          queue = setup_reaction_listener(ws, post_id)
+        def poll_confirmation(websocket, post_id, deadline)
+          queue = setup_reaction_listener(websocket, post_id)
           await_reaction(queue, deadline)
         end
 
-        def setup_reaction_listener(ws, post_id)
+        def setup_reaction_listener(websocket, post_id)
           queue = Queue.new
-          ws.on(:message) do |msg|
+          websocket.on(:message) do |msg|
             reaction_data = parse_reaction_event(msg)
             next unless reaction_data
+
             matches_post = reaction_data["post_id"] == post_id
             queue.push(reaction_data) if matches_post
           end
@@ -404,6 +470,7 @@ module Earl
 
           emoji = reaction["emoji_name"]
           return :approved if Reactions::APPROVE_EMOJIS.include?(emoji)
+
           :denied if Reactions::DENY_EMOJIS.include?(emoji)
         end
 
@@ -425,55 +492,71 @@ module Earl
         end
       end
 
-      include PaneOperations
-      include SpawnConfirmation
+      # Tool definition building: splits the large schema into composable property groups.
+      module ToolDefinitionBuilder
+        private
 
-      def tool_definition
-        {
-          name: TOOL_NAME,
-          description: "Manage Claude sessions running in tmux. " \
-                       "List sessions, capture output, approve/deny permissions, send input, spawn new sessions, or kill sessions.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              action: {
-                type: "string",
-                enum: VALID_ACTIONS,
-                description: "Action to perform"
-              },
-              target: {
-                type: "string",
-                description: "Tmux pane target (e.g., 'session:window.pane'). Required for capture, status, approve, deny, send_input, kill."
-              },
-              text: {
-                type: "string",
-                description: "Text to send (required for send_input)"
-              },
-              lines: {
-                type: "integer",
-                description: "Number of lines to capture (default 100, for capture action)"
-              },
-              prompt: {
-                type: "string",
-                description: "Prompt for new Claude session (required for spawn)"
-              },
-              name: {
-                type: "string",
-                description: "Session name for spawn (auto-generated if omitted)"
-              },
-              working_dir: {
-                type: "string",
-                description: "Working directory for spawn"
-              },
-              session: {
-                type: "string",
-                description: "Existing tmux session to add a window to (for spawn). If omitted, creates a new session."
-              }
-            },
-            required: %w[action]
+        def tool_definition
+          {
+            name: TOOL_NAME,
+            description: tmux_tool_description,
+            inputSchema: tmux_input_schema
           }
-        }
+        end
+
+        def tmux_tool_description
+          "Manage Claude sessions running in tmux. " \
+            "List sessions, capture output, approve/deny permissions, " \
+            "send input, spawn new sessions, or kill sessions."
+        end
+
+        def tmux_input_schema
+          { type: "object", properties: tmux_properties, required: %w[action] }
+        end
+
+        def tmux_properties
+          {}.merge(tmux_action_properties)
+            .merge(tmux_capture_properties)
+            .merge(tmux_spawn_properties)
+        end
+
+        def tmux_action_properties
+          {
+            action: { type: "string", enum: VALID_ACTIONS, description: "Action to perform" },
+            target: {
+              type: "string",
+              description: "Tmux pane target (e.g., 'session:window.pane'). " \
+                           "Required for capture, status, approve, deny, send_input, kill."
+            }
+          }
+        end
+
+        def tmux_capture_properties
+          {
+            text: { type: "string", description: "Text to send (required for send_input)" },
+            lines: { type: "integer", description: "Number of lines to capture (default 100, for capture action)" }
+          }
+        end
+
+        def tmux_spawn_properties
+          {
+            prompt: { type: "string", description: "Prompt for new Claude session (required for spawn)" },
+            name: { type: "string", description: "Session name for spawn (auto-generated if omitted)" },
+            working_dir: { type: "string", description: "Working directory for spawn" },
+            session: {
+              type: "string",
+              description: "Existing tmux session to add a window to (for spawn). " \
+                           "If omitted, creates a new session."
+            }
+          }
+        end
       end
+
+      include PaneOperations
+      include SpawnValidation
+      include SpawnConfirmation
+      include SpawnPolling
+      include ToolDefinitionBuilder
     end
   end
 end

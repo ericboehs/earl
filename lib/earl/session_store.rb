@@ -21,7 +21,7 @@ module Earl
     def initialize(path: self.class.default_path)
       @path = path
       @mutex = Mutex.new
-      @cache = nil # Lazy-loaded from disk on first access
+      @ensure_cache = nil # Lazy-loaded from disk on first access
     end
 
     def load
@@ -31,14 +31,14 @@ module Earl
     def save(thread_id, persisted_session)
       @mutex.synchronize do
         ensure_cache[thread_id] = persisted_session
-        write_store(@cache)
+        write_store(@ensure_cache)
       end
     end
 
     def remove(thread_id)
       @mutex.synchronize do
         ensure_cache.delete(thread_id)
-        write_store(@cache)
+        write_store(@ensure_cache)
       end
     end
 
@@ -47,7 +47,7 @@ module Earl
         session = ensure_cache[thread_id]
         if session
           session.last_activity_at = Time.now.iso8601
-          write_store(@cache)
+          write_store(@ensure_cache)
         end
       end
     end
@@ -55,7 +55,7 @@ module Earl
     private
 
     def ensure_cache
-      @cache ||= read_store
+      @ensure_cache ||= read_store
     end
 
     def read_store
@@ -70,7 +70,7 @@ module Earl
 
     def write_store(data)
       dir = File.dirname(@path)
-      FileUtils.mkdir_p(dir) unless Dir.exist?(dir)
+      FileUtils.mkdir_p(dir)
 
       serialized = data.transform_values(&:to_h)
       tmp_path = "#{@path}.tmp.#{Process.pid}"

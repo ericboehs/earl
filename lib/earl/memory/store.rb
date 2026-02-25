@@ -34,7 +34,7 @@ module Earl
         now = Time.now.utc
         today = now.strftime("%Y-%m-%d")
         path = File.join(@dir, "#{today}.md")
-        entry = "- **#{now.strftime('%H:%M UTC')}** | `@#{username}` | #{text}"
+        entry = "- **#{now.strftime("%H:%M UTC")}** | `@#{username}` | #{text}"
 
         write_with_header(path, today, entry)
         { file: path, entry: entry }
@@ -99,18 +99,25 @@ module Earl
 
       def search_files
         priority = %w[SOUL.md USER.md].filter_map { |name| file_at(name) }
-        date_files = Dir.glob(File.join(@dir, "????-??-??.md")).sort.reverse
+        date_files = Dir.glob(File.join(@dir, "????-??-??.md")).reverse
         priority + date_files
       end
 
       def write_with_header(path, today, entry)
+        content = build_entry_content(path, today, entry)
+        append_locked(path, content)
+      end
+
+      def build_entry_content(path, today, entry)
+        needs_header = !File.exist?(path) || File.empty?(path)
+        header = needs_header ? "# Memories for #{today}\n\n" : ""
+        "#{header}#{entry}\n"
+      end
+
+      def append_locked(path, content)
         File.open(path, "a") do |file|
           file.flock(File::LOCK_EX)
-          if file.size.zero?
-            file.puts "# Memories for #{today}"
-            file.puts
-          end
-          file.puts entry
+          file.write(content)
         end
       end
     end

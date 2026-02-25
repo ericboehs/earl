@@ -1,6 +1,43 @@
 #!/usr/bin/env ruby
-require_relative "../config/boot"
-require "active_support/continuous_integration"
+# frozen_string_literal: true
 
-CI = ActiveSupport::ContinuousIntegration
-require_relative "../config/ci.rb"
+require "open3"
+
+steps = []
+failures = []
+
+def run_step(name, command, steps, failures)
+  print "  #{name}... "
+  $stdout.flush
+  output, status = Open3.capture2e(command)
+  if status.success?
+    puts "OK"
+    steps << { name: name, status: :ok }
+  else
+    puts "FAIL"
+    failures << { name: name, output: output }
+    steps << { name: name, status: :fail }
+  end
+end
+
+puts "Running CI pipeline..."
+puts ""
+
+run_step("Style: RuboCop", "bundle exec rubocop --no-server", steps, failures)
+run_step("Quality: Reek", "bundle exec reek", steps, failures)
+run_step("Security: Bundler audit", "bundle exec bundle-audit check --update", steps, failures)
+run_step("Tests: Minitest", "bundle exec rake test", steps, failures)
+run_step("Coverage: Report", "ruby bin/coverage", steps, failures)
+
+puts ""
+if failures.empty?
+  puts "All #{steps.size} steps passed!"
+else
+  puts "#{failures.size} of #{steps.size} steps failed:"
+  failures.each do |f|
+    puts ""
+    puts "--- #{f[:name]} ---"
+    puts f[:output]
+  end
+  exit 1
+end

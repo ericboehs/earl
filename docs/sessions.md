@@ -1,3 +1,8 @@
+---
+title: Sessions
+nav_order: 8
+---
+
 # Sessions
 
 Each Mattermost thread maps to one Claude CLI session. EARL manages the full lifecycle of these sessions, including creation, persistence, resume, and cleanup.

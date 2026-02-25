@@ -1,3 +1,8 @@
+---
+title: Heartbeats
+nav_order: 7
+---
+
 # Heartbeats
 
 Heartbeats are scheduled tasks that let EARL proactively perform work without waiting for a user message. Each heartbeat spawns a Claude session on a schedule, posts results to a configured Mattermost channel.

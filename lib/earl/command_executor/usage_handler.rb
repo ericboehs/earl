@@ -6,14 +6,10 @@ module Earl
     # via background threads and posts formatted results.
     module UsageHandler
       CONTEXT_CATEGORIES = {
-        "messages" => "Messages",
-        "system_prompt" => "System prompt",
-        "system_tools" => "System tools",
-        "custom_agents" => "Custom agents",
-        "memory_files" => "Memory files",
-        "skills" => "Skills",
-        "free_space" => "Free space",
-        "autocompact_buffer" => "Autocompact buffer"
+        "messages" => "Messages", "system_prompt" => "System prompt",
+        "system_tools" => "System tools", "custom_agents" => "Custom agents",
+        "memory_files" => "Memory files", "skills" => "Skills",
+        "free_space" => "Free space", "autocompact_buffer" => "Autocompact buffer"
       }.freeze
 
       private
@@ -47,7 +43,7 @@ module Earl
       end
 
       def format_usage(data)
-        lines = [ "#### :bar_chart: Claude Usage" ]
+        lines = ["#### :bar_chart: Claude Usage"]
         append_usage_section(lines, data["session"], "Session")
         append_usage_section(lines, data["week"], "Week")
         append_usage_section(lines, data["sonnet_week"], "Sonnet")
@@ -58,13 +54,14 @@ module Earl
       def append_usage_section(lines, section, label)
         return unless section&.dig("percent_used")
 
-        lines << "- **#{label}:** #{section['percent_used']}% used \u2014 resets #{section['resets']}"
+        lines << "- **#{label}:** #{section["percent_used"]}% used \u2014 resets #{section["resets"]}"
       end
 
       def append_usage_extra(lines, extra)
         return unless extra&.dig("percent_used")
 
-        lines << "- **Extra:** #{extra['percent_used']}% used (#{extra['spent']} / #{extra['budget']}) \u2014 resets #{extra['resets']}"
+        pct, spent, budget, resets = extra.values_at("percent_used", "spent", "budget", "resets")
+        lines << "- **Extra:** #{pct}% used (#{spent} / #{budget}) \u2014 resets #{resets}"
       end
 
       def handle_context(ctx)
@@ -102,7 +99,8 @@ module Earl
       end
 
       def format_context(data)
-        model, used, total, pct, cats = data.values_at("model", "used_tokens", "total_tokens", "percent_used", "categories")
+        model, used, total, pct, cats = data.values_at("model", "used_tokens", "total_tokens", "percent_used",
+                                                       "categories")
         lines = [
           "#### :brain: Context Window Usage",
           "- **Model:** `#{model}`",

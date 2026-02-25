@@ -31,7 +31,7 @@ module Earl
     end
 
     def websocket_url
-      mattermost_url.sub(%r{^https://}, "wss://").sub(%r{^http://}, "ws://") + "/api/v4/websocket"
+      "#{mattermost_url.sub(%r{^https://}, "wss://").sub(%r{^http://}, "ws://")}/api/v4/websocket"
     end
 
     def api_url(path)

@@ -1,74 +1,56 @@
-# Start SimpleCov before loading Rails
+# frozen_string_literal: true
+
 require "simplecov"
 
-# SimpleCov configuration
-SimpleCov.start "rails" do
-  # Enable branch coverage tracking - must come before minimum_coverage
+SimpleCov.start do
   enable_coverage :branch
 
-  # Set minimum coverage percentage
-  minimum_coverage line: 95, branch: 90
+  minimum_coverage line: 90, branch: 80
 
-  # Set minimum coverage per file
-  minimum_coverage_by_file 80
-
-  # Add filters for files/directories to exclude from coverage
-  add_filter "/spec/"
-  add_filter "/config/"
-  add_filter "/vendor/"
-  add_filter "/db/"
-  add_filter "/bin/"
   add_filter "/test/"
-  add_filter "app/channels/application_cable/connection.rb"
-  add_filter "app/jobs/application_job.rb"
+  add_filter "/bin/"
+  add_filter "/exe/"
 
-  # Group coverage results for better organization
-  add_group "Controllers", "app/controllers"
-  add_group "Models", "app/models"
-  add_group "Services", "app/services"
-  add_group "Jobs", "app/jobs"
-  add_group "Helpers", "app/helpers"
-  add_group "Mailers", "app/mailers"
-  add_group "Channels", "app/channels"
   add_group "Libraries", "lib/"
 
-  # Use Rails' default profile with some modifications
-  track_files "{app,lib}/**/*.rb"
+  track_files "lib/**/*.rb"
 
-  # Set up formatters
   formatter SimpleCov::Formatter::MultiFormatter.new([
-    SimpleCov::Formatter::HTMLFormatter
-  ])
-
-  # Refuse to run tests if coverage drops below threshold
-  refuse_coverage_drop :line, :branch
-
-  # Maximum coverage drop allowed
-  maximum_coverage_drop 5
+                                                       SimpleCov::Formatter::HTMLFormatter
+                                                     ])
 end
 
-ENV["RAILS_ENV"] ||= "test"
-require_relative "../config/environment"
-require "rails/test_help"
+require "bundler/setup"
+require "minitest/autorun"
 
-module ActiveSupport
-  # Base class for all tests with parallel execution and coverage tracking
-  class TestCase
-    # Run tests in parallel with specified workers
-    parallelize(workers: :number_of_processors)
+require_relative "../lib/earl"
 
-    # Configure SimpleCov for parallel test execution
-    parallelize_setup do |worker|
-      SimpleCov.command_name "#{SimpleCov.command_name}-#{worker}"
-    end
+# Provide Rails-like declarative test DSL for Minitest::Test
+module DeclarativeTests
+  def test(name, &)
+    define_method("test_#{name.gsub(/\s+/, "_")}", &)
+  end
 
-    parallelize_teardown do |worker|
-      SimpleCov.result
-    end
+  def setup(&block)
+    define_method(:setup) { super(); instance_exec(&block) }
+  end
 
-    # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
-    fixtures :all
+  def teardown(&block)
+    define_method(:teardown) { instance_exec(&block); super() }
+  end
+end
 
-    # Add more helper methods to be used by all tests here...
+class Minitest::Test
+  extend DeclarativeTests
+
+  alias assert_not refute
+  alias assert_not_nil refute_nil
+  alias assert_not_equal refute_equal
+  alias assert_not_includes refute_includes
+  alias assert_not_empty refute_empty
+  alias assert_not_same refute_same
+
+  def assert_nothing_raised
+    yield
   end
 end

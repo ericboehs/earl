@@ -1,3 +1,8 @@
+---
+title: Memory
+nav_order: 6
+---
+
 # Memory
 
 EARL has a persistent memory system that lets Claude remember facts across sessions and restarts. Memory is stored as markdown files and injected into Claude sessions as system prompt context.

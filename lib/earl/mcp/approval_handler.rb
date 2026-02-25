@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "set"
-
 module Earl
   module Mcp
     # Handles permission approval flow: posts a permission request to Mattermost,
@@ -13,7 +11,31 @@ module Earl
       include HandlerBase
 
       TOOL_NAME = "permission_prompt"
-      TOOL_NAMES = [ TOOL_NAME ].freeze
+      TOOL_NAMES = [TOOL_NAME].freeze
+
+      INPUT_FORMATTERS = {
+        "Bash" => ->(input) { input["command"].to_s[0..500] },
+        "Edit" => lambda { |input|
+          "#{input["file_path"]}\n#{input.fetch("new_string", input.fetch("content", ""))[0..300]}"
+        },
+        "Write" => lambda { |input|
+          "#{input["file_path"]}\n#{input.fetch("new_string", input.fetch("content", ""))[0..300]}"
+        }
+      }.freeze
+
+      TOOL_SCHEMA = {
+        name: TOOL_NAME,
+        description: "Request permission to execute a tool",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tool_name: { type: "string", description: "Name of the tool requesting permission" },
+            input: { type: "object", description: "The tool's input parameters" }
+          },
+          required: %w[tool_name input]
+        }
+      }.freeze
+
       def self.allowed_tools_path
         @allowed_tools_path ||= File.join(Earl.config_root, "allowed_tools.json")
       end
@@ -35,42 +57,38 @@ module Earl
         @mutex = Mutex.new
       end
 
-      # --- Handler interface for Server multi-handler routing ---
-
       def tool_definitions
-        [
-          {
-            name: TOOL_NAME,
-            description: "Request permission to execute a tool",
-            inputSchema: {
-              type: "object",
-              properties: {
-                tool_name: { type: "string", description: "Name of the tool requesting permission" },
-                input: { type: "object", description: "The tool's input parameters" }
-              },
-              required: %w[tool_name input]
-            }
-          }
-        ]
+        [TOOL_SCHEMA]
       end
 
       def call(_name, arguments)
-        tool_name = arguments["tool_name"] || "unknown"
-        input = arguments["input"] || {}
-        request = ToolRequest.new(tool_name: tool_name, input: input)
-        result = handle(request)
-        format_handler_result(result)
+        request = build_request(arguments)
+        format_handler_result(handle(request))
       end
 
-      # --- Core permission flow (internal implementation) ---
-
       def handle(request)
-        tool_name = request.tool_name
-        if @mutex.synchronize { @allowed_tools.include?(tool_name) }
-          log(:info, "Auto-allowing #{tool_name} (previously approved)")
-          return allow_result(request.input)
-        end
+        return allow_result(request.input) if auto_approved?(request.tool_name)
 
+        post_and_wait(request)
+      end
+
+      private
+
+      def build_request(arguments)
+        ToolRequest.new(
+          tool_name: arguments["tool_name"] || "unknown",
+          input: arguments["input"] || {}
+        )
+      end
+
+      def auto_approved?(tool_name)
+        return false unless @mutex.synchronize { @allowed_tools.include?(tool_name) }
+
+        log(:info, "Auto-allowing #{tool_name} (previously approved)")
+        true
+      end
+
+      def post_and_wait(request)
         post_id = post_permission_request(request)
         return deny_result("Failed to post permission request") unless post_id
 
@@ -79,8 +97,6 @@ module Earl
         delete_permission_post(post_id)
         decision
       end
-
-      private
 
       def allow_result(input)
         { behavior: "allow", updatedInput: input }
@@ -91,51 +107,57 @@ module Earl
       end
 
       def format_handler_result(result)
-        { content: [ { type: "text", text: JSON.generate(result) } ] }
+        { content: [{ type: "text", text: JSON.generate(result) }] }
       end
 
-      def post_permission_request(request)
-        tool_name = request.tool_name
-        input_summary = format_input(tool_name, request.input)
-        message = ":lock: **Permission Request**\nClaude wants to run: `#{tool_name}`\n```\n#{input_summary}\n```\n" \
-                  "React: :+1: allow once | :white_check_mark: always allow `#{tool_name}` | :-1: deny"
+      # Mattermost posting for permission requests.
+      module PermissionPosting
+        private
 
-        response = @api.post("/posts", {
-          channel_id: @config.platform_channel_id,
-          message: message,
-          root_id: @config.platform_thread_id
-        })
+        def post_permission_request(request)
+          message = permission_message(request)
+          response = @api.post("/posts", {
+                                 channel_id: @config.platform_channel_id,
+                                 message: message,
+                                 root_id: @config.platform_thread_id
+                               })
 
-        return unless response.is_a?(Net::HTTPSuccess)
+          return unless response.is_a?(Net::HTTPSuccess)
 
-        JSON.parse(response.body)["id"]
-      end
-
-      INPUT_FORMATTERS = {
-        "Bash" => ->(input) { input["command"].to_s[0..500] },
-        "Edit" => ->(input) { "#{input['file_path']}\n#{input.fetch('new_string', input.fetch('content', ''))[0..300]}" },
-        "Write" => ->(input) { "#{input['file_path']}\n#{input.fetch('new_string', input.fetch('content', ''))[0..300]}" }
-      }.freeze
-
-      def format_input(tool_name, input)
-        formatter = INPUT_FORMATTERS[tool_name]
-        formatter ? formatter.call(input) : JSON.generate(input)[0..500]
-      end
-
-      def add_reaction_options(post_id)
-        Reactions::ALL.each do |emoji|
-          @api.post("/reactions", {
-            user_id: @config.platform_bot_id,
-            post_id: post_id,
-            emoji_name: emoji
-          })
+          JSON.parse(response.body)["id"]
         end
-      end
 
-      def delete_permission_post(post_id)
-        @api.delete("/posts/#{post_id}")
-      rescue StandardError => error
-        log(:warn, "Failed to delete permission post #{post_id}: #{error.message}")
+        def permission_message(request)
+          tool_name = request.tool_name
+          input_summary = format_input(tool_name, request.input)
+          format_permission_text(tool_name, input_summary)
+        end
+
+        def format_permission_text(tool_name, input_summary)
+          ":lock: **Permission Request**\nClaude wants to run: `#{tool_name}`\n```\n#{input_summary}\n```\n" \
+            "React: :+1: allow once | :white_check_mark: always allow `#{tool_name}` | :-1: deny"
+        end
+
+        def format_input(tool_name, input)
+          formatter = INPUT_FORMATTERS[tool_name]
+          formatter ? formatter.call(input) : JSON.generate(input)[0..500]
+        end
+
+        def add_reaction_options(post_id)
+          Reactions::ALL.each do |emoji|
+            @api.post("/reactions", {
+                        user_id: @config.platform_bot_id,
+                        post_id: post_id,
+                        emoji_name: emoji
+                      })
+          end
+        end
+
+        def delete_permission_post(post_id)
+          @api.delete("/posts/#{post_id}")
+        rescue StandardError => error
+          log(:warn, "Failed to delete permission post #{post_id}: #{error.message}")
+        end
       end
 
       # WebSocket-based reaction polling for permission decisions.
@@ -146,32 +168,30 @@ module Earl
         private
 
         def wait_for_reaction(post_id, request)
-          timeout_sec = @config.permission_timeout_ms / 1000.0
-          deadline = Time.now + timeout_sec
+          deadline = Time.now + (@config.permission_timeout_ms / 1000.0)
+          websocket = connect_websocket
 
-          ws = connect_websocket
-          unless ws
-            log(:error, "WebSocket connection failed, denying permission")
-            return deny_result("WebSocket connection failed")
-          end
+          return deny_result("WebSocket connection failed") unless websocket
 
-          context = PollContext.new(ws: ws, post_id: post_id, request: request, deadline: deadline)
-          result = poll_for_reaction(context)
-
-          result || deny_result("Timed out waiting for approval")
+          context = PollContext.new(ws: websocket, post_id: post_id, request: request, deadline: deadline)
+          poll_for_reaction(context) || deny_result("Timed out waiting for approval")
         ensure
-          begin
-            ws&.close
-          rescue StandardError
-            nil
-          end
+          close_websocket(websocket)
+        end
+
+        def close_websocket(websocket)
+          websocket&.close
+        rescue StandardError
+          nil
         end
 
         def connect_websocket
           ws = WebSocket::Client::Simple.connect(@config.websocket_url)
           token = @config.platform_token
           ws_ref = ws
-          ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
+          ws.on(:open) do
+            ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } }))
+          end
           ws
         rescue StandardError => error
           log(:error, "MCP WebSocket connect failed: #{error.message}")
@@ -180,40 +200,47 @@ module Earl
 
         def poll_for_reaction(context)
           reaction_queue = Queue.new
-          target_post_id = context.post_id
-
-          context.ws&.on(:message) do |msg|
-            data = msg.data
-            next unless data && !data.empty?
-
-            begin
-              event = JSON.parse(data)
-              if event["event"] == "reaction_added"
-                reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
-                reaction_queue.push(reaction_data) if reaction_data["post_id"] == target_post_id
-              end
-            rescue JSON::ParserError
-              log(:debug, "MCP approval: skipped unparsable WebSocket message")
-            end
-          end
-
+          register_reaction_listener(context, reaction_queue)
           poll_reaction_loop(context, reaction_queue)
+        end
+
+        def register_reaction_listener(context, reaction_queue)
+          websocket, target_post_id = context.deconstruct
+          websocket&.on(:message) do |msg|
+            reaction_data = extract_reaction_data(msg.data)
+            reaction_queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == target_post_id
+          end
+        end
+
+        def extract_reaction_data(data)
+          return unless data && !data.empty?
+
+          parsed = JSON.parse(data)
+          event_name, event_data = parsed.values_at("event", "data")
+          return unless event_name == "reaction_added"
+
+          JSON.parse(event_data&.dig("reaction") || "{}")
+        rescue JSON::ParserError
+          log(:debug, "MCP approval: skipped unparsable WebSocket message")
+          nil
         end
 
         def poll_reaction_loop(context, reaction_queue)
           loop do
-            remaining = context.deadline - Time.now
-            return nil if remaining <= 0
+            return nil if (context.deadline - Time.now) <= 0
 
             reaction = dequeue_reaction(reaction_queue)
-            next unless reaction
-
-            user_id = reaction["user_id"]
-            next if user_id == @config.platform_bot_id
-            next unless allowed_reactor?(user_id)
+            next unless valid_user_reaction?(reaction)
 
             return process_reaction(reaction["emoji_name"], context.request)
           end
+        end
+
+        def valid_user_reaction?(reaction)
+          return false unless reaction
+
+          user_id = reaction["user_id"]
+          user_id != @config.platform_bot_id && allowed_reactor?(user_id)
         end
 
         def dequeue_reaction(reaction_queue)
@@ -236,14 +263,16 @@ module Earl
 
         def process_reaction(emoji_name, request)
           if Reactions::APPROVE.include?(emoji_name)
-            if emoji_name == "white_check_mark"
-              @mutex.synchronize { @allowed_tools.add(request.tool_name) }
-              save_allowed_tools
-            end
+            persist_always_allow(request.tool_name) if emoji_name == "white_check_mark"
             allow_result(request.input)
           elsif Reactions::DENY.include?(emoji_name)
             deny_result("Denied by user")
           end
+        end
+
+        def persist_always_allow(tool_name)
+          @mutex.synchronize { @allowed_tools.add(tool_name) }
+          save_allowed_tools
         end
       end
 
@@ -267,6 +296,7 @@ module Earl
         end
       end
 
+      include PermissionPosting
       include ReactionPolling
       include AllowedToolsPersistence
     end

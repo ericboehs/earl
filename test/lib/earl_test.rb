@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+
 require "test_helper"
 
-class EarlTest < ActiveSupport::TestCase
+class EarlTest < Minitest::Test
   teardown do
     Earl.logger = nil
     Earl.instance_variable_set(:@env, nil)
@@ -111,7 +113,7 @@ class EarlTest < ActiveSupport::TestCase
     output = StringIO.new
     Earl.logger = Logger.new(output, level: Logger::INFO)
     Earl.logger.formatter = proc do |severity, datetime, _progname, msg|
-      "#{datetime.strftime('%H:%M:%S')} [#{severity}] #{msg}\n"
+      "#{datetime.strftime("%H:%M:%S")} [#{severity}] #{msg}\n"
     end
 
     Earl.logger.info "test message"

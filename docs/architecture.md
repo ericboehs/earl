@@ -1,3 +1,8 @@
+---
+title: Architecture
+nav_order: 2
+---
+
 # Architecture
 
 ## System Diagram
@@ -18,15 +23,18 @@ Each Mattermost thread maps to an independent Claude CLI process. EARL manages t
 ## File Tree
 
 ```
-bin/
+exe/
   earl                          # Entry point
+  earl-install                  # Setup script: config dirs, prod clone, ~/bin/earl wrapper
   earl-permission-server        # MCP permission server (spawned as subprocess by Claude CLI)
+bin/
   claude-context                # Context window usage helper (spawned by !context command)
   claude-usage                  # Claude usage helper (spawned by !usage command)
 
 lib/
   earl.rb                       # Module root, requires, shared logger
   earl/
+    version.rb                  # Earl::VERSION
     config.rb                   # ENV-based configuration
     logging.rb                  # Shared logging mixin
     formatting.rb               # Shared number formatting helpers
@@ -35,23 +43,68 @@ lib/
     mattermost.rb               # WebSocket connection + REST API client
     mattermost/api_client.rb    # HTTP client with retry logic
     claude_session.rb           # Single Claude CLI process wrapper (stream-json I/O)
+    claude_session/
+      stats.rb                  # Usage statistics tracking (Struct)
     session_manager.rb          # Maps thread IDs -> Claude sessions (thread-safe registry)
+    session_manager/
+      persistence.rb            # Session pause/resume persistence
+      session_creation.rb       # Session creation and resume logic
     session_store.rb            # Persists session metadata to JSON on disk
     streaming_response.rb       # Mattermost post lifecycle (create/update/debounce)
     message_queue.rb            # Per-thread message queuing for busy sessions
     command_parser.rb           # Parses !commands from message text
     command_executor.rb         # Executes !help, !stats, !stop, !kill, etc.
+    command_executor/
+      constants.rb              # Help table, dispatch map, script paths
+      lifecycle_handler.rb      # !restart, !update handlers
+      heartbeat_display.rb      # !heartbeats display formatting
+      session_handler.rb        # !sessions, !session subcommand handlers
+      spawn_handler.rb          # !spawn handler
+      stats_formatter.rb        # !stats display formatting
+      usage_handler.rb          # !usage, !context handlers
     question_handler.rb         # AskUserQuestion tool -> emoji reaction flow
+    question_handler/
+      question_posting.rb       # Question post creation and cleanup
     runner.rb                   # Main event loop, wires everything together
+    runner/
+      idle_management.rb        # Idle session detection and cleanup
+      lifecycle.rb              # Startup, shutdown, restart logic
+      message_handling.rb       # Incoming message processing
+      reaction_handling.rb      # Emoji reaction event processing
+      response_lifecycle.rb     # Claude response streaming callbacks
+      service_builder.rb        # Dependency construction
+      startup.rb                # Channel resolution, initial logging
+      thread_context_builder.rb # Thread transcript for new sessions
     cron_parser.rb              # Minimal 5-field cron expression parser
     heartbeat_config.rb         # Loads heartbeat definitions from YAML
     heartbeat_scheduler.rb      # Runs heartbeat tasks on cron/interval/one-shot schedules
+    heartbeat_scheduler/
+      config_reloading.rb       # Auto-reload config on file change
+      execution.rb              # Heartbeat task execution
+      heartbeat_state.rb        # Per-heartbeat mutable state (Data.define)
+      lifecycle.rb              # Start/stop/pause/resume lifecycle
+    tmux.rb                     # Tmux shell wrapper (list sessions/panes, capture, send-keys)
+    tmux/
+      parsing.rb                # Tmux output parsing helpers
+      processes.rb              # Process detection on TTYs
+      sessions.rb               # Session/pane listing
+    tmux_session_store.rb       # JSON persistence for tmux session metadata
+    tmux_monitor.rb             # Background poller: detects questions/permissions in tmux panes
+    tmux_monitor/
+      alert_dispatcher.rb       # Mattermost alert posting
+      output_analyzer.rb        # Pane output state detection
+      permission_forwarder.rb   # Permission prompt forwarding
+      question_forwarder.rb     # Question prompt forwarding
+    safari_automation.rb        # Safari AppleScript automation for GitHub PAT creation
     mcp/
       config.rb                 # MCP server ENV-based config (reads from parent process env)
+      handler_base.rb           # Base class for MCP tool handlers
       server.rb                 # JSON-RPC 2.0 MCP server over stdio
       approval_handler.rb       # Permission approval via Mattermost reactions
       memory_handler.rb         # save_memory / search_memory MCP tools
       heartbeat_handler.rb      # manage_heartbeat MCP tool (CRUD heartbeat schedules)
+      tmux_handler.rb           # manage_tmux_sessions MCP tool (list, capture, approve, spawn, kill)
+      github_pat_handler.rb     # GitHub PAT creation via Safari automation
     memory/
       store.rb                  # File I/O for persistent memory (markdown files)
       prompt_builder.rb         # Builds system prompt from memory store
