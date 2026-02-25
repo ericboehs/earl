@@ -92,7 +92,9 @@ module Earl
     end
 
     def save_restart_context(ctx, command)
-      path = File.join(Earl.config_root, "restart_context.json")
+      config_dir = Earl.config_root
+      FileUtils.mkdir_p(config_dir)
+      path = File.join(config_dir, "restart_context.json")
       data = { channel_id: ctx.channel_id, thread_id: ctx.thread_id, command: command }
       File.write(path, JSON.generate(data))
     rescue StandardError
