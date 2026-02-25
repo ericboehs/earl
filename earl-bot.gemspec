@@ -9,7 +9,7 @@ Gem::Specification.new do |spec|
   spec.email = ["ericboehs@gmail.com"]
 
   spec.summary = "A Mattermost bot that spawns Claude Code CLI sessions"
-  spec.description = "EARL (Engineering Assistant Relay for LLMs) connects to Mattermost via " \
+  spec.description = "EARL (Eric's Automated Response Line) connects to Mattermost via " \
                      "WebSocket, listens for messages, spawns Claude Code CLI sessions, and " \
                      "streams responses back as threaded replies."
   spec.homepage = "https://github.com/ericboehs/earl"

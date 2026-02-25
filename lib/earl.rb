@@ -52,7 +52,7 @@ require_relative "earl/runner/response_lifecycle"
 require_relative "earl/runner/idle_management"
 require_relative "earl/runner"
 
-# Top-level module for EARL (Engineering Assistant Relay for LLMs), a Mattermost bot
+# Top-level module for EARL (Eric's Automated Response Line), a Mattermost bot
 # that bridges team chat with Claude AI sessions for interactive assistance.
 module Earl
   VALID_ENVIRONMENTS = %w[production development].freeze

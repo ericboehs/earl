@@ -6,7 +6,7 @@ nav_order: 1
 
 # EARL Documentation
 
-**EARL** (Engineering Assistant Relay for LLMs) is a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in configured channels, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
+**EARL** (Eric's Automated Response Line) is a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in configured channels, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
 
 ## Quick Start
 

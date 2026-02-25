@@ -1,6 +1,6 @@
 # EARL
 
-**Engineering Assistant Relay for LLMs** — a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in configured channels, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
+**Eric's Automated Response Line** — a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in configured channels, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
 
 ## Installation
 
