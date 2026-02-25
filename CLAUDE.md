@@ -227,19 +227,21 @@ mcp__mattermost__get_channel_messages(channel_id: "<your-channel-id>", limit: 5)
 
 ## Development Commands
 
-- `bin/ci` — Run full CI pipeline
+- `bin/ci` — Run full CI pipeline (7 steps: RuboCop, Reek, Bundler audit, Semgrep, Actionlint, Minitest, Coverage)
 - `rubocop` — Ruby style checking
 - `rubocop -A` — Auto-fix style violations
 - `bundle exec rake test` — Run test suite
+- `semgrep --config=r/ruby --metrics=off lib/` — Run Semgrep security scan manually
 
 ## Code Quality
 
-This project uses **vanilla RuboCop and Reek** with minimal global configuration. Do not:
+This project uses **vanilla RuboCop, Reek, and Semgrep** with minimal global configuration. Do not:
 
 - Add `# rubocop:disable` inline comments — fix the code instead
 - Add `# :reek:` inline annotations — refactor to eliminate the smell
 - Add per-class or per-method exclusions to `.rubocop.yml` or `.reek.yml`
 - Raise thresholds or disable detectors to work around warnings
+- Use `# nosemgrep` unless the finding is a verified false positive (e.g., `Open3` with array-form arguments)
 
 Global Reek overrides (in `.reek.yml`):
 - `UtilityFunction: public_methods_only: true` — private helpers may operate on other objects
