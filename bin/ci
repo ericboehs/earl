@@ -26,6 +26,8 @@ puts ""
 run_step("Style: RuboCop", "bundle exec rubocop --no-server", steps, failures)
 run_step("Quality: Reek", "bundle exec reek", steps, failures)
 run_step("Security: Bundler audit", "bundle exec bundle-audit check --update", steps, failures)
+run_step("Security: Semgrep", "semgrep --config=r/ruby --metrics=off --error --quiet lib/", steps, failures)
+run_step("Lint: Actionlint", "actionlint .github/workflows/*.yml", steps, failures)
 run_step("Tests: Minitest", "bundle exec rake test", steps, failures)
 run_step("Coverage: Report", "ruby bin/coverage", steps, failures)
 

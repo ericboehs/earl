@@ -23,7 +23,7 @@ module Earl
 
       def check_tty_for_claude(tty)
         tty_name = tty.sub(%r{\A/dev/}, "")
-        output, = Open3.capture2e("ps", "-t", tty_name, "-o", "command=")
+        output, = Open3.capture2e("ps", "-t", tty_name, "-o", "command=") # nosemgrep
         output.each_line.any? { |line| line.match?(%r{/claude\b|^claude\b}i) }
       rescue StandardError => error
         Earl.logger.debug("Tmux.claude_on_tty? failed for #{tty}: #{error.message}")

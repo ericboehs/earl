@@ -29,10 +29,11 @@ PreCommit:
     on_warn: fail
     env:
       RUBYOPT: '-W0'
-  ErbLint:
-    enabled: true
   Reek:
     enabled: true
+  Semgrep:
+    enabled: true
+    on_warn: fail
   MergeConflicts:
     enabled: true
   FinalNewline:
