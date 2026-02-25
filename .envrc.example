@@ -6,3 +6,6 @@ dotenv ~/.config/earl-dev/env
 
 # Optional: skip permission approval (uses --dangerously-skip-permissions)
 # export EARL_SKIP_PERMISSIONS=true
+
+# Optional: override Claude model (e.g., sonnet, opus, haiku)
+# export EARL_MODEL=sonnet

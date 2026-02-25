@@ -194,7 +194,12 @@ module Earl
 
       def cli_args
         ["claude", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-         *session_args, *permission_args, *system_prompt_args]
+         *model_args, *session_args, *permission_args, *system_prompt_args]
+      end
+
+      def model_args
+        model = ENV.fetch("EARL_MODEL", nil)
+        model ? ["--model", model] : []
       end
 
       def session_args
