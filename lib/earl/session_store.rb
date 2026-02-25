@@ -21,41 +21,41 @@ module Earl
     def initialize(path: self.class.default_path)
       @path = path
       @mutex = Mutex.new
-      @ensure_cache = nil # Lazy-loaded from disk on first access
+      @cache = nil # Lazy-loaded from disk on first access
     end
 
     def load
-      @mutex.synchronize { ensure_cache.dup }
+      @mutex.synchronize { cache.dup }
     end
 
     def save(thread_id, persisted_session)
       @mutex.synchronize do
-        ensure_cache[thread_id] = persisted_session
-        write_store(@ensure_cache)
+        cache[thread_id] = persisted_session
+        write_store(@cache)
       end
     end
 
     def remove(thread_id)
       @mutex.synchronize do
-        ensure_cache.delete(thread_id)
-        write_store(@ensure_cache)
+        cache.delete(thread_id)
+        write_store(@cache)
       end
     end
 
     def touch(thread_id)
       @mutex.synchronize do
-        session = ensure_cache[thread_id]
+        session = cache[thread_id]
         if session
           session.last_activity_at = Time.now.iso8601
-          write_store(@ensure_cache)
+          write_store(@cache)
         end
       end
     end
 
     private
 
-    def ensure_cache
-      @ensure_cache ||= read_store
+    def cache
+      @cache ||= read_store
     end
 
     def read_store
