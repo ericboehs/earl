@@ -1311,6 +1311,7 @@ module Earl
     test "notify_restart posts to mattermost and deletes context file" do
       runner = Earl::Runner.new
       path = File.join(Earl.config_root, "restart_context.json")
+      FileUtils.mkdir_p(Earl.config_root)
       File.write(path, JSON.generate({ channel_id: "ch-1", thread_id: "th-1", command: "restart" }))
 
       posted = []
@@ -1334,6 +1335,7 @@ module Earl
     test "notify_restart uses updated verb for update command" do
       runner = Earl::Runner.new
       path = File.join(Earl.config_root, "restart_context.json")
+      FileUtils.mkdir_p(Earl.config_root)
       File.write(path, JSON.generate({ channel_id: "ch-1", thread_id: "th-1", command: "update" }))
 
       posted = []
@@ -1354,6 +1356,7 @@ module Earl
     test "notify_restart rescues StandardError from create_post" do
       runner = Earl::Runner.new
       path = File.join(Earl.config_root, "restart_context.json")
+      FileUtils.mkdir_p(Earl.config_root)
       File.write(path, JSON.generate({ channel_id: "ch-1", thread_id: "th-1", command: "restart" }))
 
       mm = runner.instance_variable_get(:@services).mattermost
