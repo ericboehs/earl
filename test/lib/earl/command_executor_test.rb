@@ -197,7 +197,7 @@ module Earl
       assert_nil executor.working_dir_for("thread-1")
     end
 
-    test "!cd with nil arg shows usage" do
+    test "!cd with explicit nil arg shows usage" do
       posted = []
       executor = build_executor(posted: posted)
 
@@ -1289,7 +1289,7 @@ module Earl
       assert_includes posted.first[:message], "Usage"
     end
 
-    test "!cd with nil arg shows usage" do
+    test "!cd with empty args shows usage" do
       posted = []
       executor = build_executor(posted: posted)
 

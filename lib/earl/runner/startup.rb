@@ -61,6 +61,7 @@ module Earl
         setup_signal_handlers
         setup_message_handler
         setup_reaction_handler
+        setup_close_handler
       end
 
       def setup_signal_handlers

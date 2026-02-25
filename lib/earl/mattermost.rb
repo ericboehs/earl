@@ -15,7 +15,7 @@ module Earl
     Connection = Struct.new(:ws, :channel_ids, keyword_init: true)
 
     # Groups event callbacks.
-    Callbacks = Struct.new(:on_message, :on_reaction, keyword_init: true)
+    Callbacks = Struct.new(:on_message, :on_reaction, :on_close, keyword_init: true)
 
     def initialize(config)
       @config = config
@@ -34,6 +34,10 @@ module Earl
 
     def on_reaction(&block)
       @callbacks.on_reaction = block
+    end
+
+    def on_close(&block)
+      @callbacks.on_close = block
     end
 
     def connect
@@ -172,6 +176,7 @@ module Earl
       def handle_websocket_close(event)
         log(:warn, "WebSocket closed: #{event&.code} #{event&.reason}")
         log(:warn, "EARL will exit — restart process to reconnect")
+        @callbacks.on_close&.call
         exit 1
       end
     end

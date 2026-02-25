@@ -24,6 +24,10 @@ module Earl
         begin_shutdown { restart }
       end
 
+      def setup_close_handler
+        @services.mattermost.on_close { handle_shutdown_signal }
+      end
+
       def shutdown
         log(:info, "Shutting down...")
         @app_state.idle_checker_thread&.kill

@@ -23,7 +23,7 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir.chdir(__dir__) do
     `git ls-files -z`.split("\x0").select { |f| File.exist?(f) }.reject do |f|
-      f.start_with?("test/", "docs/", ".github/", "bin/", ".") && !f.start_with?(".ruby-version")
+      f.start_with?("test/", "docs/", ".github/", ".") && !f.start_with?(".ruby-version")
     end
   end
   spec.bindir = "exe"

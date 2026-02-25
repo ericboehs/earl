@@ -649,21 +649,7 @@ module Earl
       assert_nothing_raised { scheduler.send(:disable_heartbeat, "ghost") }
     end
 
-    test "disable_heartbeat handles missing heartbeat name gracefully" do
-      tmp = Dir.mktmpdir("earl-scheduler-disable-test")
-      config_path = File.join(tmp, "heartbeats.yml")
-      File.write(config_path, YAML.dump("heartbeats" => {}))
-
-      scheduler = build_scheduler
-      scheduler.instance_variable_get(:@control).heartbeat_config_path = config_path
-
-      # Should not raise
-      assert_nothing_raised { scheduler.send(:disable_heartbeat, "nonexistent") }
-    ensure
-      FileUtils.rm_rf(tmp)
-    end
-
-    test "disable_heartbeat handles missing heartbeat name gracefully" do
+    test "disable_heartbeat handles missing heartbeat name in config gracefully" do
       tmp = Dir.mktmpdir("earl-scheduler-disable-test")
       config_path = File.join(tmp, "heartbeats.yml")
       File.write(config_path, YAML.dump("heartbeats" => {}))

@@ -95,10 +95,10 @@ module Earl
       config_dir = Earl.config_root
       FileUtils.mkdir_p(config_dir)
       path = File.join(config_dir, "restart_context.json")
-      data = { channel_id: ctx.channel_id, thread_id: ctx.thread_id, command: command }
+      data = ctx.deconstruct_keys(%i[channel_id thread_id]).merge(command: command)
       File.write(path, JSON.generate(data))
-    rescue StandardError
-      nil
+    rescue StandardError => error
+      log(:warn, "Failed to save restart context: #{error.message}")
     end
 
     def handle_permissions(ctx)

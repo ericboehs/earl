@@ -35,21 +35,21 @@ module Earl
       @mutex.synchronize { handle_text(text) }
     rescue StandardError => error
       log(:error, "Streaming error (thread #{short_id}): #{error.class}: #{error.message}")
-      log(:error, error.backtrace.first(5).join("\n"))
+      log(:error, error.backtrace&.first(5)&.join("\n"))
     end
 
     def on_tool_use(tool_use)
       @mutex.synchronize { handle_tool_use_display(tool_use) }
     rescue StandardError => error
       log(:error, "Tool use display error (thread #{short_id}): #{error.class}: #{error.message}")
-      log(:error, error.backtrace.first(5).join("\n"))
+      log(:error, error.backtrace&.first(5)&.join("\n"))
     end
 
     def on_complete(**)
       @mutex.synchronize { finalize }
     rescue StandardError => error
       log(:error, "Completion error (thread #{short_id}): #{error.class}: #{error.message}")
-      log(:error, error.backtrace.first(5).join("\n"))
+      log(:error, error.backtrace&.first(5)&.join("\n"))
     end
 
     def stop_typing
