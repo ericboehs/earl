@@ -3,7 +3,6 @@
 exclude_paths:
   - .bundle
   - .git-hooks
-  - db/migrate
   - test
 
 detectors:
