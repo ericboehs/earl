@@ -18,6 +18,10 @@ def run_step(name, command, steps, failures)
     failures << { name: name, output: output }
     steps << { name: name, status: :fail }
   end
+rescue Errno::ENOENT => e
+  puts "FAIL"
+  failures << { name: name, output: "Command not found: #{e.message}" }
+  steps << { name: name, status: :fail }
 end
 
 puts "Running CI pipeline..."
