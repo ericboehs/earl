@@ -1,0 +1,23 @@
+title: EARL Documentation
+description: Engineering Assistant Relay for LLMs
+remote_theme: just-the-docs/just-the-docs
+
+url: "https://ericboehs.github.io"
+baseurl: "/earl"
+
+permalink: pretty
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - plans/
+
+nav_enabled: true
+nav_sort: order
+
+back_to_top: true
+back_to_top_text: "Back to top"
+
+footer_content: "EARL is licensed under the <a href=\"https://github.com/ericboehs/earl/blob/main/LICENSE\">MIT License</a>."
+
+color_scheme: dark

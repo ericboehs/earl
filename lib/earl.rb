@@ -10,6 +10,7 @@ require "fileutils"
 require "tmpdir"
 require "time"
 
+require_relative "earl/version"
 require_relative "earl/logging"
 require_relative "earl/formatting"
 require_relative "earl/permission_config"
@@ -42,6 +43,13 @@ require_relative "earl/tmux"
 require_relative "earl/tmux_session_store"
 require_relative "earl/tmux_monitor"
 require_relative "earl/runner/thread_context_builder"
+require_relative "earl/runner/service_builder"
+require_relative "earl/runner/startup"
+require_relative "earl/runner/lifecycle"
+require_relative "earl/runner/message_handling"
+require_relative "earl/runner/reaction_handling"
+require_relative "earl/runner/response_lifecycle"
+require_relative "earl/runner/idle_management"
 require_relative "earl/runner"
 
 # Top-level module for EARL (Engineering Assistant Relay for LLMs), a Mattermost bot
@@ -52,7 +60,7 @@ module Earl
   def self.env
     @env ||= ENV.fetch("EARL_ENV", "production").tap do |value|
       unless VALID_ENVIRONMENTS.include?(value)
-        raise ArgumentError, "Invalid EARL_ENV=#{value.inspect}. Valid: #{VALID_ENVIRONMENTS.join(', ')}"
+        raise ArgumentError, "Invalid EARL_ENV=#{value.inspect}. Valid: #{VALID_ENVIRONMENTS.join(", ")}"
       end
     end
   end
@@ -68,7 +76,7 @@ module Earl
   def self.logger
     @logger ||= Logger.new($stdout, level: Logger::INFO).tap do |log|
       log.formatter = proc do |severity, datetime, _progname, msg|
-        "#{datetime.strftime('%H:%M:%S')} [#{severity}] #{msg}\n"
+        "#{datetime.strftime("%H:%M:%S")} [#{severity}] #{msg}\n"
       end
     end
   end

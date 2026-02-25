@@ -6,9 +6,7 @@ module Earl
     # input/nudge/approve/deny/kill.
     module SessionHandler
       PANE_STATUS_LABELS = {
-        active: "\u{1F7E2} Active",
-        permission: "\u{1F7E0} Waiting for permission",
-        idle: "\u{1F7E1} Idle"
+        active: "\u{1F7E2} Active", permission: "\u{1F7E0} Waiting for permission", idle: "\u{1F7E1} Idle"
       }.freeze
 
       private
@@ -21,23 +19,16 @@ module Earl
         return reply(ctx, "No tmux sessions running.") if panes.empty?
 
         claude_panes = panes.select { |pane| tmux.claude_on_tty?(pane[:tty]) }
-        if claude_panes.empty?
-          return reply(ctx, "No Claude sessions found across #{panes.size} tmux panes.")
-        end
+        return reply(ctx, "No Claude sessions found across #{panes.size} tmux panes.") if claude_panes.empty?
 
         reply(ctx, format_sessions_table(claude_panes))
       end
 
       def format_sessions_table(claude_panes)
         rows = claude_panes.map { |pane| format_claude_pane_row(pane) }
-        build_sessions_output(rows)
-      end
-
-      def build_sessions_output(rows)
         header = [
           "#### :computer: Claude Sessions (#{rows.size})",
-          "| Pane | Project | Status |",
-          "|------|---------|--------|"
+          "| Pane | Project | Status |", "|------|---------|--------|"
         ]
         (header + rows).join("\n")
       end
@@ -62,55 +53,41 @@ module Earl
       end
 
       def handle_session_show(ctx)
-        name = ctx.arg
         with_tmux_session(ctx) do
-          output = @deps.tmux.capture_pane(name)
-          truncated = truncate_output(output)
-          reply(ctx, "#### :computer: `#{name}` pane output\n```\n#{truncated}\n```")
+          target = ctx.arg
+          output = @deps.tmux.capture_pane(target)
+          reply(ctx, "#### :computer: `#{target}` pane output\n```\n#{truncate_output(output)}\n```")
         end
       end
 
       def handle_session_status(ctx)
-        name = ctx.arg
         with_tmux_session(ctx) do
-          output = @deps.tmux.capture_pane(name, lines: 200)
+          target = ctx.arg
+          output = @deps.tmux.capture_pane(target, lines: 200)
           truncated = truncate_output(output, 3000)
-          reply(ctx, "#### :mag: `#{name}` status\n```\n#{truncated}\n```\n_AI summary not yet implemented._")
+          reply(ctx, "#### :mag: `#{target}` status\n```\n#{truncated}\n```\n_AI summary not yet implemented._")
         end
       end
 
       def handle_session_input(ctx)
-        name = ctx.arg
-        text = ctx.args[1]
         with_tmux_session(ctx) do
-          @deps.tmux.send_keys(name, text)
-          reply(ctx, ":keyboard: Sent to `#{name}`: `#{text}`")
+          target = ctx.arg
+          text = ctx.args[1]
+          @deps.tmux.send_keys(target, text)
+          reply(ctx, ":keyboard: Sent to `#{target}`: `#{text}`")
         end
       end
 
       def handle_session_nudge(ctx)
-        name = ctx.arg
         with_tmux_session(ctx) do
-          @deps.tmux.send_keys(name, "Are you stuck? What's your current status?")
-          reply(ctx, ":wave: Nudged `#{name}`.")
+          target = ctx.arg
+          @deps.tmux.send_keys(target, "Are you stuck? What's your current status?")
+          reply(ctx, ":wave: Nudged `#{target}`.")
         end
       end
 
-      def handle_session_approve(ctx)
-        name = ctx.arg
-        with_tmux_session(ctx) do
-          @deps.tmux.send_keys_raw(name, "Enter")
-          reply(ctx, ":white_check_mark: Approved permission on `#{name}`.")
-        end
-      end
-
-      def handle_session_deny(ctx)
-        name = ctx.arg
-        with_tmux_session(ctx) do
-          @deps.tmux.send_keys_raw(name, "Escape")
-          reply(ctx, ":no_entry_sign: Denied permission on `#{name}`.")
-        end
-      end
+      def handle_session_approve(ctx) = send_tmux_key_action(ctx, "Enter", ":white_check_mark: Approved permission on")
+      def handle_session_deny(ctx) = send_tmux_key_action(ctx, "Escape", ":no_entry_sign: Denied permission on")
 
       def handle_session_kill(ctx)
         name = ctx.arg
@@ -135,6 +112,14 @@ module Earl
 
       def truncate_output(output, max_length = 3500)
         output.length > max_length ? "\u2026#{output[-max_length..]}" : output
+      end
+
+      def send_tmux_key_action(ctx, key, message_prefix)
+        with_tmux_session(ctx) do
+          target = ctx.arg
+          @deps.tmux.send_keys_raw(target, key)
+          reply(ctx, "#{message_prefix} `#{target}`.")
+        end
       end
     end
   end

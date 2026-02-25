@@ -8,18 +8,19 @@ module Earl
   # provides REST helpers for creating, updating posts and typing indicators.
   class Mattermost
     include Logging
+
     attr_reader :config
 
     # Groups WebSocket connection state.
     Connection = Struct.new(:ws, :channel_ids, keyword_init: true)
 
     # Groups event callbacks.
-    Callbacks = Struct.new(:on_message, :on_reaction, keyword_init: true)
+    Callbacks = Struct.new(:on_message, :on_reaction, :on_close, keyword_init: true)
 
     def initialize(config)
       @config = config
       @api = ApiClient.new(config)
-      @connection = Connection.new(ws: nil, channel_ids: Set.new([ config.channel_id ]))
+      @connection = Connection.new(ws: nil, channel_ids: Set.new([config.channel_id]))
       @callbacks = Callbacks.new
     end
 
@@ -33,6 +34,10 @@ module Earl
 
     def on_reaction(&block)
       @callbacks.on_reaction = block
+    end
+
+    def on_close(&block)
+      @callbacks.on_close = block
     end
 
     def connect
@@ -141,7 +146,7 @@ module Earl
         event = parse_ws_json(data)
         return unless event
 
-        log(:debug, "WS event: #{event['event'] || event.keys.first}")
+        log(:debug, "WS event: #{event["event"] || event.keys.first}")
         dispatch_event(event)
       end
 
@@ -171,6 +176,7 @@ module Earl
       def handle_websocket_close(event)
         log(:warn, "WebSocket closed: #{event&.code} #{event&.reason}")
         log(:warn, "EARL will exit — restart process to reconnect")
+        @callbacks.on_close&.call
         exit 1
       end
     end
@@ -189,16 +195,16 @@ module Earl
         return unless reaction_data
 
         reaction = JSON.parse(reaction_data)
-        user_id = reaction["user_id"]
-        return if user_id == config.bot_id
-
-        @callbacks.on_reaction&.call(
-          user_id: user_id,
-          post_id: reaction["post_id"],
-          emoji_name: reaction["emoji_name"]
-        )
+        dispatch_reaction(reaction)
       rescue JSON::ParserError => error
         log(:warn, "Failed to parse reaction data: #{error.message}")
+      end
+
+      def dispatch_reaction(reaction)
+        user_id, post_id, emoji_name = reaction.values_at("user_id", "post_id", "emoji_name")
+        return if user_id == config.bot_id
+
+        @callbacks.on_reaction&.call(user_id: user_id, post_id: post_id, emoji_name: emoji_name)
       end
 
       def parse_post_data(event)
@@ -213,7 +219,8 @@ module Earl
 
       def deliver_message(event, post)
         params = build_message_params(event, post)
-        log(:info, "Message from @#{params[:sender_name]} in thread #{params[:thread_id][0..7]}: #{params[:text][0..80]}")
+        log(:info,
+            "Message from @#{params[:sender_name]} in thread #{params[:thread_id][0..7]}: #{params[:text][0..80]}")
         @callbacks.on_message&.call(**params)
       end
 

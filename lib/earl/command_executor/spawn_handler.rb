@@ -18,9 +18,7 @@ module Earl
 
       def handle_spawn(ctx)
         prompt = ctx.arg
-        if prompt.to_s.strip.empty?
-          return reply(ctx, ':x: Usage: `!spawn "prompt" [--name N] [--dir D]`')
-        end
+        return reply(ctx, ':x: Usage: `!spawn "prompt" [--name N] [--dir D]`') if prompt.to_s.strip.empty?
 
         req = build_spawn_request(prompt, ctx.args[1].to_s)
         validate_and_spawn(ctx, req)
@@ -35,7 +33,7 @@ module Earl
       end
 
       def generate_session_name
-        "earl-#{Time.now.strftime('%Y%m%d%H%M%S')}"
+        "earl-#{Time.now.strftime("%Y%m%d%H%M%S")}"
       end
 
       def validate_and_spawn(ctx, req)

@@ -36,11 +36,11 @@ module Earl
         uri = URI.parse(@config.api_url(request.path))
         http_req = build_request(request.method_class, uri, request.body)
         response = send_request(uri, http_req)
-
         unless response.is_a?(Net::HTTPSuccess)
-          log(:error, "Mattermost API #{http_req.method} #{uri.path} failed: #{response.code} #{response.body[0..200]}")
+          log(:error,
+              "Mattermost API #{http_req.method} #{uri.path} failed: " \
+              "#{response.code} #{response.body[0..200]}")
         end
-
         response
       end
 
@@ -59,14 +59,13 @@ module Earl
 
       MAX_RETRIES = 2
       RETRY_DELAY = 1
+      private_constant :MAX_RETRIES, :RETRY_DELAY
 
       def send_request(uri, req)
         attempts = 0
         begin
           attempts += 1
-          Net::HTTP.start(uri.host, uri.port,
-                          use_ssl: @config.mattermost_url.start_with?("https"),
-                          open_timeout: 10, read_timeout: 15) { |http| http.request(req) }
+          http_start(uri.host, uri.port) { |http| http.request(req) }
         rescue Net::ReadTimeout, Net::OpenTimeout, Errno::ECONNRESET, Errno::ECONNREFUSED, IOError => error
           raise if attempts > MAX_RETRIES
 
@@ -74,6 +73,12 @@ module Earl
           sleep RETRY_DELAY
           retry
         end
+      end
+
+      def http_start(host, port, &)
+        Net::HTTP.start(host, port,
+                        use_ssl: @config.mattermost_url.start_with?("https"),
+                        open_timeout: 10, read_timeout: 15, &)
       end
     end
   end

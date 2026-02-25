@@ -27,7 +27,7 @@ module Earl
       end
 
       def tool_definitions
-        [ manage_heartbeat_definition ]
+        [manage_heartbeat_definition]
       end
 
       NAME_REQUIRED_ACTIONS = %w[create update delete].freeze
@@ -35,19 +35,30 @@ module Earl
       def call(name, arguments)
         return unless handles?(name)
 
-        action = arguments["action"]
-        return text_content("Error: action is required (list, create, update, delete)") unless action
-        return text_content("Error: unknown action '#{action}'. Valid: #{VALID_ACTIONS.join(', ')}") unless VALID_ACTIONS.include?(action)
+        error = validate_action(arguments)
+        return error if error
 
-        if NAME_REQUIRED_ACTIONS.include?(action)
-          hb_name = arguments["name"]
-          return text_content("Error: name is required") unless hb_name && !hb_name.empty?
-        end
-
-        send("handle_#{action}", arguments)
+        send("handle_#{arguments["action"]}", arguments)
       end
 
       private
+
+      def validate_action(arguments)
+        action = arguments["action"]
+        return text_content("Error: action is required (list, create, update, delete)") unless action
+        unless VALID_ACTIONS.include?(action)
+          return text_content("Error: unknown action '#{action}'. Valid: #{VALID_ACTIONS.join(", ")}")
+        end
+
+        text_content("Error: name is required") if name_required_but_missing?(action, arguments)
+      end
+
+      def name_required_but_missing?(action, arguments)
+        return false unless NAME_REQUIRED_ACTIONS.include?(action)
+
+        hb_name = arguments["name"]
+        !hb_name || hb_name.empty?
+      end
 
       # --- Action handlers ---
 
@@ -96,21 +107,28 @@ module Earl
 
       # --- YAML I/O ---
 
-      def load_yaml
-        return { "heartbeats" => {} } unless File.exist?(@config_path)
+      # YAML file persistence for heartbeat definitions.
+      module YamlPersistence
+        private
 
-        data = YAML.safe_load_file(@config_path)
-        data.is_a?(Hash) ? data : { "heartbeats" => {} }
-      end
+        def load_yaml
+          return { "heartbeats" => {} } unless File.exist?(@config_path)
 
-      def save_yaml(data)
-        FileUtils.mkdir_p(File.dirname(@config_path))
-        # Use file lock to coordinate with HeartbeatScheduler#disable_heartbeat
-        File.open(@config_path, File::CREAT | File::WRONLY | File::TRUNC) do |file|
-          file.flock(File::LOCK_EX)
-          file.write(YAML.dump(data))
+          data = YAML.safe_load_file(@config_path)
+          data.is_a?(Hash) ? data : { "heartbeats" => {} }
+        end
+
+        def save_yaml(data)
+          FileUtils.mkdir_p(File.dirname(@config_path))
+          # Use file lock to coordinate with HeartbeatScheduler#disable_heartbeat
+          File.open(@config_path, File::CREAT | File::WRONLY | File::TRUNC) do |file|
+            file.flock(File::LOCK_EX)
+            file.write(YAML.dump(data))
+          end
         end
       end
+
+      include YamlPersistence
 
       # Entry building: constructs and merges heartbeat configuration hashes.
       module EntryBuilder
@@ -129,7 +147,7 @@ module Earl
             "channel_id" => arguments["channel_id"] || @default_channel_id,
             "enabled" => arguments.fetch("enabled", true)
           ).merge(slice_present(arguments, OPTIONAL_STRING_KEYS))
-            .merge(slice_key(arguments, "persistent"))
+              .merge(slice_key(arguments, "persistent"))
         end
 
         def slice_present(hash, keys)
@@ -162,118 +180,131 @@ module Earl
 
       # --- Formatting ---
 
-      def format_heartbeat(name, config)
-        schedule, enabled, once, description = extract_display_fields(config, name)
-        schedule_str = format_schedule(schedule)
-        enabled_str = enabled ? "enabled" : "disabled"
-        once_badge = once ? ", once" : ""
-        "- **#{name}** (#{enabled_str}#{once_badge}, #{schedule_str})\n  #{description}"
-      end
+      # Human-readable heartbeat list formatting.
+      module Formatting
+        private
 
-      def extract_display_fields(config, name)
-        [
-          config["schedule"] || {},
-          config.fetch("enabled", true),
-          config.fetch("once", false),
-          config["description"] || name
-        ]
-      end
+        def format_heartbeat(name, config)
+          schedule, enabled, once, description = extract_display_fields(config, name)
+          schedule_str = format_schedule(schedule)
+          enabled_str = enabled ? "enabled" : "disabled"
+          once_badge = once ? ", once" : ""
+          "- **#{name}** (#{enabled_str}#{once_badge}, #{schedule_str})\n  #{description}"
+        end
 
-      def format_schedule(schedule)
-        cron = schedule["cron"]
-        interval = schedule["interval"]
-        run_at = schedule["run_at"]
+        def extract_display_fields(config, name)
+          [
+            config["schedule"] || {},
+            config.fetch("enabled", true),
+            config.fetch("once", false),
+            config["description"] || name
+          ]
+        end
 
-        if cron
-          "cron: `#{cron}`"
-        elsif interval
-          "interval: #{interval}s"
-        elsif run_at
-          "run_at: #{Time.at(run_at).strftime('%Y-%m-%d %H:%M:%S')}"
-        else
+        def format_schedule(schedule)
+          cron = schedule["cron"]
+          interval = schedule["interval"]
+          run_at = schedule["run_at"]
+
+          return "cron: `#{cron}`" if cron
+          return "interval: #{interval}s" if interval
+          return "run_at: #{Time.at(run_at).strftime("%Y-%m-%d %H:%M:%S")}" if run_at
+
           "no schedule"
         end
       end
 
+      include Formatting
+
       # --- MCP response helper ---
 
       def text_content(text)
-        { content: [ { type: "text", text: text } ] }
+        { content: [{ type: "text", text: text }] }
       end
 
-      # --- Tool definition ---
+      # Tool definition building: splits the large schema into composable property groups.
+      module ToolDefinitionBuilder
+        private
 
-      def manage_heartbeat_definition
-        {
-          name: "manage_heartbeat",
-          description: "Manage Earl's heartbeat schedules. " \
-                       "Create, update, delete, or list tasks that run on cron, interval, or one-shot (run_at) schedules.",
-          inputSchema: {
+        def manage_heartbeat_definition
+          {
+            name: "manage_heartbeat",
+            description: heartbeat_tool_description,
+            inputSchema: heartbeat_input_schema
+          }
+        end
+
+        def heartbeat_tool_description
+          "Manage Earl's heartbeat schedules. " \
+            "Create, update, delete, or list tasks that run on cron, interval, or one-shot (run_at) schedules."
+        end
+
+        def heartbeat_input_schema
+          {
             type: "object",
-            properties: {
-              action: {
-                type: "string",
-                enum: VALID_ACTIONS,
-                description: "Action to perform: list, create, update, or delete"
-              },
-              name: {
-                type: "string",
-                description: "Heartbeat name (required for create/update/delete)"
-              },
-              description: {
-                type: "string",
-                description: "Human-readable description of the heartbeat"
-              },
-              cron: {
-                type: "string",
-                description: "Cron expression (e.g. '0 9 * * 1-5' for weekdays at 9am)"
-              },
-              interval: {
-                type: "integer",
-                description: "Interval in seconds between runs (alternative to cron)"
-              },
-              channel_id: {
-                type: "string",
-                description: "Mattermost channel ID to post results (defaults to current channel)"
-              },
-              working_dir: {
-                type: "string",
-                description: "Working directory for the Claude session"
-              },
-              prompt: {
-                type: "string",
-                description: "The prompt to send to Claude when the heartbeat fires"
-              },
-              permission_mode: {
-                type: "string",
-                enum: %w[auto interactive],
-                description: "Permission mode: auto (no approval) or interactive (requires reaction approval)"
-              },
-              persistent: {
-                type: "boolean",
-                description: "Whether to reuse the same Claude session across runs"
-              },
-              timeout: {
-                type: "integer",
-                description: "Maximum seconds to wait for completion (default: 600)"
-              },
-              enabled: {
-                type: "boolean",
-                description: "Whether the heartbeat is active (default: true)"
-              },
-              once: {
-                type: "boolean",
-                description: "Run once then auto-disable. Combine with run_at for scheduled one-shots, or omit schedule to fire immediately."
-              },
-              run_at: {
-                type: "integer",
-                description: "Unix timestamp (seconds since epoch) for one-shot execution (alternative to cron/interval). Must be used with once: true to avoid repeated firing."
-              }
-            },
+            properties: heartbeat_properties,
             required: %w[action]
           }
-        }
+        end
+
+        def heartbeat_properties
+          {}.merge(action_properties)
+            .merge(schedule_properties)
+            .merge(session_properties)
+            .merge(behavior_properties)
+        end
+
+        def action_properties
+          {
+            action: {
+              type: "string", enum: VALID_ACTIONS,
+              description: "Action to perform: list, create, update, or delete"
+            },
+            name: { type: "string", description: "Heartbeat name (required for create/update/delete)" },
+            description: { type: "string", description: "Human-readable description of the heartbeat" }
+          }
+        end
+
+        def schedule_properties
+          {
+            cron: { type: "string", description: "Cron expression (e.g. '0 9 * * 1-5' for weekdays at 9am)" },
+            interval: { type: "integer", description: "Interval in seconds between runs (alternative to cron)" },
+            run_at: {
+              type: "integer",
+              description: "Unix timestamp for one-shot execution (alternative to cron/interval). " \
+                           "Must be used with once: true to avoid repeated firing."
+            }
+          }
+        end
+
+        def session_properties
+          {
+            channel_id: { type: "string",
+                          description: "Mattermost channel ID to post results (defaults to current channel)" },
+            working_dir: { type: "string", description: "Working directory for the Claude session" },
+            prompt: { type: "string", description: "The prompt to send to Claude when the heartbeat fires" },
+            permission_mode: {
+              type: "string", enum: %w[auto interactive],
+              description: "Permission mode: auto (no approval) or interactive (requires reaction approval)"
+            }
+          }
+        end
+
+        def behavior_properties
+          {
+            persistent: { type: "boolean", description: "Whether to reuse the same Claude session across runs" },
+            timeout: { type: "integer", description: "Maximum seconds to wait for completion (default: 600)" },
+            enabled: { type: "boolean", description: "Whether the heartbeat is active (default: true)" },
+            once: {
+              type: "boolean",
+              description: "Run once then auto-disable. Combine with run_at for scheduled one-shots, " \
+                           "or omit schedule to fire immediately."
+            }
+          }
+        end
       end
+
+      include ToolDefinitionBuilder
     end
   end
 end

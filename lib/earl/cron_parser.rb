@@ -31,7 +31,7 @@ module Earl
     private
 
     def extract_time_values(time)
-      [ time.min, time.hour, time.day, time.month, time.wday ]
+      [time.min, time.hour, time.day, time.month, time.wday]
     end
 
     def matches_values?(values)
@@ -42,8 +42,6 @@ module Earl
       Time.new(time.year, time.month, time.day, time.hour, time.min, 0) + 60
     end
 
-    FIELD_RANGES = [ 0..59, 0..23, 1..31, 1..12, 0..6 ].freeze
-
     def parse_expression(expression)
       fields = expression.strip.split(/\s+/)
       count = fields.size
@@ -51,6 +49,9 @@ module Earl
 
       fields.zip(FIELD_RANGES).map { |field, range| parse_field(field, range) }
     end
+
+    FIELD_RANGES = [0..59, 0..23, 1..31, 1..12, 0..6].freeze
+    private_constant :FIELD_RANGES
 
     def parse_field(field, range)
       values = field.split(",").flat_map { |token| PartParser.new(token.strip, range).parse }
@@ -68,7 +69,7 @@ module Earl
 
       def parse
         return @range.to_a if @part == "*"
-        return [ @part.to_i ] if @part.match?(/\A\d+\z/)
+        return [@part.to_i] if @part.match?(/\A\d+\z/)
         return parse_wildcard_step if @part.start_with?("*/")
         return parse_range_step if @part.include?("/")
         return parse_range if @part.include?("-")

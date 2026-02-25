@@ -1,6 +1,18 @@
 # EARL
 
-**Eric's Automated Response Line** — a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in configured channels, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
+**Engineering Assistant Relay for LLMs** — a Ruby CLI bot that connects to Mattermost via WebSocket, listens for messages in configured channels, spawns Claude Code CLI sessions, and streams responses back as threaded replies.
+
+## Installation
+
+```bash
+gem install earl-bot
+```
+
+Or add to your Gemfile:
+
+```ruby
+gem "earl-bot"
+```
 
 ## Quick Start
 
@@ -10,30 +22,23 @@ cp .envrc.example .envrc  # or use ~/.config/earl/env
 # Fill in MATTERMOST_URL, MATTERMOST_BOT_TOKEN, etc.
 
 # Run directly
-ruby bin/earl
+earl
 
-# Or install as a macOS service
-bin/earl-install
+# Or install dev + prod environments
+earl-install
 ```
 
-## Running as a Service (launchd)
+## Running as a Service
 
-EARL can run as a macOS launchd agent for automatic startup and crash recovery.
+EARL can run as a persistent service for automatic startup and crash recovery.
 
-**Prerequisite:** Claude CLI must be installed and authenticated so credentials are stored in the macOS Keychain.
+**Prerequisite:** [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) must be installed and authenticated.
 
 ```bash
-bin/earl-install
+earl-install
 ```
 
-On first run this creates `~/.config/earl/env` — fill in your secrets and re-run. On subsequent runs it copies default Claude config, installs the launchd plist, and starts the agent.
-
-```bash
-launchctl list | grep earl                          # Check status
-tail -f ~/.config/earl/logs/*.log                   # View logs
-launchctl kickstart -k gui/$(id -u)/com.boehs.earl  # Restart
-launchctl bootout gui/$(id -u)/com.boehs.earl       # Stop
-```
+On first run this creates `~/.config/earl/env` — fill in your secrets and re-run. On subsequent runs it sets up config dirs, clones the prod repo, and creates a wrapper script.
 
 ## Features
 
@@ -88,13 +93,13 @@ Users can send commands in Mattermost messages:
 ## Development
 
 ```bash
-bin/ci          # Full CI pipeline (rubocop + reek + tests + coverage)
-rubocop -A      # Auto-fix style violations
-bin/rails test  # Run test suite
+bin/ci                # Full CI pipeline (rubocop + reek + tests + coverage)
+rubocop -A            # Auto-fix style violations
+bundle exec rake test # Run test suite
 ```
 
 See [CLAUDE.md](CLAUDE.md) for detailed architecture documentation.
 
 ## License
 
-This project is licensed under the [MIT License](https://opensource.org/licenses/MIT).
+This project is licensed under the [MIT License](LICENSE).

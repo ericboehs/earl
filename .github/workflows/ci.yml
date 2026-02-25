@@ -19,26 +19,13 @@ jobs:
           ruby-version: .ruby-version
           bundler-cache: true
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y google-chrome-stable
+      - name: Install semgrep
+        run: pip install semgrep
 
       - name: Install actionlint
         run: |
           bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           sudo mv actionlint /usr/local/bin/
 
-      - name: Trust overcommit config
-        run: git config --local overcommit.verify false
-
       - name: Run CI pipeline
-        env:
-          RAILS_ENV: test
         run: bin/ci
-
-      - name: Keep screenshots from failed system tests
-        uses: actions/upload-artifact@v6
-        if: failure()
-        with:
-          name: screenshots
-          path: ${{ github.workspace }}/tmp/screenshots
-          if-no-files-found: ignore

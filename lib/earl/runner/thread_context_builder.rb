@@ -19,7 +19,8 @@ module Earl
         return text if prior_posts.empty?
 
         transcript = format_transcript(prior_posts)
-        "Here is the conversation so far in this Mattermost thread:\n\n#{transcript}\n\n---\n\nUser's latest message: #{text}"
+        "Here is the conversation so far in this Mattermost thread:\n\n#{transcript}\n\n" \
+          "---\n\nUser's latest message: #{text}"
       end
 
       private

@@ -1,3 +1,8 @@
+---
+title: Commands
+nav_order: 3
+---
+
 # Commands
 
 All commands start with `!` and are sent as regular messages in a Mattermost thread. Commands are handled directly by EARL without being forwarded to Claude.

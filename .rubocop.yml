@@ -1,8 +1,76 @@
-# Omakase Ruby styling for Rails
-inherit_gem: { rubocop-rails-omakase: rubocop.yml }
+AllCops:
+  TargetRubyVersion: 3.2
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "bin/**/*"
+    - "vendor/**/*"
 
-# Overwrite or add rules to create your own house style
-#
-# # Use `[a, [b, c]]` not `[ a, [ b, c ] ]`
-# Layout/SpaceInsideArrayLiteralBrackets:
-#   Enabled: false
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+Layout/LineLength:
+  Max: 120
+
+# Gemspec dev dependencies are fine — we use add_development_dependency
+Gemspec/DevelopmentDependencies:
+  Enabled: false
+
+# Allow predicate-style naming (is_*, has_*) — common Ruby convention
+Naming/PredicateMethod:
+  Enabled: false
+
+# Test files naturally have large classes/methods/blocks
+Metrics/ClassLength:
+  Exclude:
+    - "test/**/*"
+
+Metrics/MethodLength:
+  Exclude:
+    - "test/**/*"
+
+Metrics/BlockLength:
+  Exclude:
+    - "test/**/*"
+    - "earl-bot.gemspec"
+
+Metrics/AbcSize:
+  Exclude:
+    - "test/**/*"
+
+Metrics/ParameterLists:
+  Exclude:
+    - "test/**/*"
+
+# Test mocks commonly use empty blocks and unused arguments
+Lint/EmptyBlock:
+  Exclude:
+    - "test/**/*"
+
+Lint/UnusedBlockArgument:
+  Exclude:
+    - "test/**/*"
+
+Lint/UnusedMethodArgument:
+  Exclude:
+    - "test/**/*"
+
+Lint/UnderscorePrefixedVariableName:
+  Exclude:
+    - "test/**/*"
+
+# Test helper metaprogramming requires semicolons and class reopening
+Style/Semicolon:
+  Exclude:
+    - "test/test_helper.rb"
+
+Style/ClassAndModuleChildren:
+  Exclude:
+    - "test/test_helper.rb"
+
+# Use descriptive `error` instead of short `e` in rescue blocks (aligns with Reek)
+Naming/RescuedExceptionsVariableName:
+  PreferredName: error

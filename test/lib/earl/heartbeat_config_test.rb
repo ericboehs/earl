@@ -2,144 +2,151 @@
 
 require "test_helper"
 
-class Earl::HeartbeatConfigTest < ActiveSupport::TestCase
-  FIXTURE_DIR = File.expand_path("fixtures/heartbeats", __dir__)
+module Earl
+  class HeartbeatConfigTest < Minitest::Test
+    FIXTURE_DIR = File.expand_path("fixtures/heartbeats", __dir__)
 
-  setup do
-    Earl.logger = Logger.new(File::NULL)
-  end
+    setup do
+      Earl.logger = Logger.new(File::NULL)
+    end
 
-  teardown do
-    Earl.logger = nil
-  end
+    teardown do
+      Earl.logger = nil
+    end
 
-  test "loads valid heartbeat definitions" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "valid.yml"))
-    defs = config.definitions
+    test "loads valid heartbeat definitions" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "valid.yml"))
+      defs = config.definitions
 
-    assert_equal 2, defs.size
-    assert_equal "morning_briefing", defs[0].name
-    assert_equal "Morning briefing for Eric", defs[0].description
-    assert_equal "0 9 * * 1-5", defs[0].cron
-    assert_nil defs[0].interval
-    assert_equal "abc123def456", defs[0].channel_id
-    assert_equal "/tmp", defs[0].working_dir
-    assert_includes defs[0].prompt, "Summarize"
-    assert_equal :auto, defs[0].permission_mode
-    assert_equal false, defs[0].persistent
-    assert_equal 300, defs[0].timeout
+      assert_equal 2, defs.size
+      assert_equal "morning_briefing", defs[0].name
+      assert_equal "Morning briefing for Eric", defs[0].description
+      assert_equal "0 9 * * 1-5", defs[0].cron
+      assert_nil defs[0].interval
+      assert_equal "abc123def456", defs[0].channel_id
+      assert_equal "/tmp", defs[0].working_dir
+      assert_includes defs[0].prompt, "Summarize"
+      assert_equal :auto, defs[0].permission_mode
+      assert_equal false, defs[0].persistent
+      assert_equal 300, defs[0].timeout
 
-    assert_equal "repo_health", defs[1].name
-    assert_equal 604_800, defs[1].interval
-    assert_nil defs[1].cron
-    assert_equal :interactive, defs[1].permission_mode
-  end
+      assert_equal "repo_health", defs[1].name
+      assert_equal 604_800, defs[1].interval
+      assert_nil defs[1].cron
+      assert_equal :interactive, defs[1].permission_mode
+    end
 
-  test "returns empty array for missing file" do
-    config = Earl::HeartbeatConfig.new(path: "/nonexistent/heartbeats.yml")
-    assert_equal [], config.definitions
-  end
+    test "returns empty array for missing file" do
+      config = Earl::HeartbeatConfig.new(path: "/nonexistent/heartbeats.yml")
+      assert_equal [], config.definitions
+    end
 
-  test "returns empty array for malformed YAML" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "malformed.yml"))
-    assert_equal [], config.definitions
-  end
+    test "returns empty array for malformed YAML" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "malformed.yml"))
+      assert_equal [], config.definitions
+    end
 
-  test "filters out heartbeats without schedule" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "no_schedule.yml"))
-    assert_equal [], config.definitions
-  end
+    test "filters out heartbeats without schedule" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "no_schedule.yml"))
+      assert_equal [], config.definitions
+    end
 
-  test "filters out disabled heartbeats" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "disabled.yml"))
-    defs = config.definitions
+    test "filters out disabled heartbeats" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "disabled.yml"))
+      defs = config.definitions
 
-    assert_equal 1, defs.size
-    assert_equal "enabled_beat", defs[0].name
-  end
+      assert_equal 1, defs.size
+      assert_equal "enabled_beat", defs[0].name
+    end
 
-  test "expands tilde in working_dir" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "tilde.yml"))
-    defs = config.definitions
+    test "expands tilde in working_dir" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "tilde.yml"))
+      defs = config.definitions
 
-    assert_equal 1, defs.size
-    assert_not_includes defs[0].working_dir, "~"
-    assert defs[0].working_dir.start_with?("/")
-  end
+      assert_equal 1, defs.size
+      assert_not_includes defs[0].working_dir, "~"
+      assert defs[0].working_dir.start_with?("/")
+    end
 
-  test "defaults permission_mode to interactive" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "valid.yml"))
-    repo_health = config.definitions.find { |d| d.name == "repo_health" }
-    assert_equal :interactive, repo_health.permission_mode
-  end
+    test "defaults permission_mode to interactive" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "valid.yml"))
+      repo_health = config.definitions.find { |d| d.name == "repo_health" }
+      assert_equal :interactive, repo_health.permission_mode
+    end
 
-  test "defaults timeout to 600" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "disabled.yml"))
-    enabled = config.definitions.first
-    assert_equal 600, enabled.timeout
-  end
+    test "defaults timeout to 600" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "disabled.yml"))
+      enabled = config.definitions.first
+      assert_equal 600, enabled.timeout
+    end
 
-  test "defaults persistent to false" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "disabled.yml"))
-    enabled = config.definitions.first
-    assert_equal false, enabled.persistent
-  end
+    test "defaults persistent to false" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "disabled.yml"))
+      enabled = config.definitions.first
+      assert_equal false, enabled.persistent
+    end
 
-  test "filters out heartbeats missing channel_id or prompt" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "missing_required.yml"))
-    defs = config.definitions
-    assert_equal [], defs
-  end
+    test "filters out heartbeats missing channel_id or prompt" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "missing_required.yml"))
+      defs = config.definitions
+      assert_equal [], defs
+    end
 
-  test "filters out non-hash heartbeat configs" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "missing_required.yml"))
-    defs = config.definitions
-    # "not_a_hash" is a string value, should be filtered
-    names = defs.map(&:name)
-    assert_not_includes names, "not_a_hash"
-  end
+    test "filters out non-hash heartbeat configs" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "missing_required.yml"))
+      defs = config.definitions
+      # "not_a_hash" is a string value, should be filtered
+      names = defs.map(&:name)
+      assert_not_includes names, "not_a_hash"
+    end
 
-  test "returns empty array when heartbeats key is not a hash" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "bad_structure.yml"))
-    assert_equal [], config.definitions
-  end
+    test "returns empty array when heartbeats key is not a hash" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "bad_structure.yml"))
+      assert_equal [], config.definitions
+    end
 
-  test "reads once field correctly" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
-    defs = config.definitions
+    test "reads once field correctly" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
+      defs = config.definitions
 
-    scheduled = defs.find { |d| d.name == "scheduled_reminder" }
-    assert scheduled.once
-    assert_equal 1_739_559_600, scheduled.run_at
+      scheduled = defs.find { |d| d.name == "scheduled_reminder" }
+      assert scheduled.once
+      assert_equal 1_739_559_600, scheduled.run_at
 
-    recurring = defs.find { |d| d.name == "recurring_without_once" }
-    assert_not recurring.once
-  end
+      recurring = defs.find { |d| d.name == "recurring_without_once" }
+      assert_not recurring.once
+    end
 
-  test "run_at schedule is valid" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
-    defs = config.definitions
+    test "run_at schedule is valid" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
+      defs = config.definitions
 
-    names = defs.map(&:name)
-    assert_includes names, "scheduled_reminder"
-    assert_includes names, "immediate_task"
-  end
+      names = defs.map(&:name)
+      assert_includes names, "scheduled_reminder"
+      assert_includes names, "immediate_task"
+    end
 
-  test "definition with only run_at schedule loads" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
-    scheduled = config.definitions.find { |d| d.name == "scheduled_reminder" }
+    test "definition with only run_at schedule loads" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "once.yml"))
+      scheduled = config.definitions.find { |d| d.name == "scheduled_reminder" }
 
-    assert_not_nil scheduled
-    assert_nil scheduled.cron
-    assert_nil scheduled.interval
-    assert_equal 1_739_559_600, scheduled.run_at
-  end
+      assert_not_nil scheduled
+      assert_nil scheduled.cron
+      assert_nil scheduled.interval
+      assert_equal 1_739_559_600, scheduled.run_at
+    end
 
-  test "defaults once to false" do
-    config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "valid.yml"))
-    defs = config.definitions
-    defs.each do |d|
-      assert_equal false, d.once
+    test "returns empty array when YAML data is not a hash" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "non_hash.yml"))
+      assert_equal [], config.definitions
+    end
+
+    test "defaults once to false" do
+      config = Earl::HeartbeatConfig.new(path: File.join(FIXTURE_DIR, "valid.yml"))
+      defs = config.definitions
+      defs.each do |d|
+        assert_equal false, d.once
+      end
     end
   end
 end

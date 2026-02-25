@@ -38,7 +38,7 @@ module Earl
       end
 
       def tool_definitions
-        [ tool_definition ]
+        [tool_definition]
       end
 
       def call(name, arguments)
@@ -47,111 +47,169 @@ module Earl
         action = arguments["action"]
         actions_list = VALID_ACTIONS.join(", ")
         return text_content("Error: action is required (#{actions_list})") unless action
-        return text_content("Error: unknown action '#{action}'. Valid: #{actions_list}") unless VALID_ACTIONS.include?(action)
+        unless VALID_ACTIONS.include?(action)
+          return text_content("Error: unknown action '#{action}'. Valid: #{actions_list}")
+        end
 
         send("handle_#{action}", arguments)
       end
 
       private
 
-      # --- create ---
+      # --- helpers ---
 
-      def handle_create(arguments)
-        request = build_pat_request(arguments)
-        return request if error_response?(request)
-
-        execute_create(request)
+      def http_success?(response)
+        response.is_a?(Net::HTTPSuccess)
       end
 
-      def build_pat_request(arguments)
-        name = arguments["name"]
-        return text_content("Error: name is required for create") unless name.is_a?(String) && !name.strip.empty?
-
-        repo = arguments["repo"]
-        return text_content("Error: repo is required for create (e.g. 'owner/repo')") unless repo.is_a?(String) && !repo.strip.empty?
-        return text_content("Error: repo must be in 'owner/repo' format") unless repo.match?(%r{\A[\w.-]+/[\w.-]+\z})
-
-        permissions = validate_and_normalize_permissions(arguments["permissions"])
-        return permissions if error_response?(permissions)
-
-        expiration = parse_expiration(arguments["expiration_days"])
-        return expiration if error_response?(expiration)
-
-        PatRequest.new(name: name, repo: repo, permissions: permissions, expiration: expiration)
+      def error_response?(value)
+        value.is_a?(Hash) && value.key?(:content)
       end
 
-      def execute_create(request)
-        confirmation = request_create_confirmation(request)
-        case confirmation
-        when :approved then create_pat(request)
-        when :error then text_content("Error: confirmation failed (could not post or connect to Mattermost)")
-        else text_content("PAT creation denied by user.")
+      def text_content(text)
+        { content: [{ type: "text", text: text }] }
+      end
+
+      # Request building and validation.
+      module RequestValidation
+        private
+
+        def handle_create(arguments)
+          request = build_pat_request(arguments)
+          return request if error_response?(request)
+
+          execute_create(request)
+        end
+
+        def build_pat_request(arguments)
+          name_error = validate_name(arguments["name"])
+          return name_error if name_error
+
+          repo_error = validate_repo(arguments["repo"])
+          return repo_error if repo_error
+
+          build_validated_request(arguments)
+        end
+
+        def build_validated_request(arguments)
+          permissions = validate_and_normalize_permissions(arguments["permissions"])
+          return permissions if error_response?(permissions)
+
+          expiration = parse_expiration(arguments["expiration_days"])
+          return expiration if error_response?(expiration)
+
+          PatRequest.new(name: arguments["name"], repo: arguments["repo"],
+                         permissions: permissions, expiration: expiration)
+        end
+
+        def validate_name(name)
+          return nil if valid_string?(name)
+
+          text_content("Error: name is required for create")
+        end
+
+        def validate_repo(repo)
+          return text_content("Error: repo is required for create (e.g. 'owner/repo')") unless valid_string?(repo)
+          return nil if repo.match?(%r{\A[\w.-]+/[\w.-]+\z})
+
+          text_content("Error: repo must be in 'owner/repo' format")
+        end
+
+        def valid_string?(value)
+          value.is_a?(String) && !value.strip.empty?
+        end
+
+        def validate_and_normalize_permissions(permissions)
+          unless permissions.is_a?(Hash) && !permissions.empty?
+            return text_content("Error: permissions is required (e.g. {\"contents\": \"write\"})")
+          end
+
+          normalized = permissions.each_with_object({}) { |(perm, level), acc| acc[perm.to_s] = level.to_s.downcase }
+          error = check_permissions(normalized)
+          return text_content("Error: #{error}") if error
+
+          normalized
+        end
+
+        def check_permissions(permissions)
+          permissions.each do |perm, level|
+            unless Permissions::NAMES.include?(perm)
+              return "unknown permission '#{perm}'. Valid: #{Permissions::NAMES.join(", ")}"
+            end
+            unless Permissions::LEVELS.include?(level)
+              return "invalid access level '#{level}' for '#{perm}'. Valid: #{Permissions::LEVELS.join(", ")}"
+            end
+          end
+          nil
+        end
+
+        def parse_expiration(raw)
+          return 365 unless raw
+
+          value = raw.to_i
+          return text_content("Error: expiration_days must be a positive integer") unless value.positive?
+
+          value
         end
       end
 
-      # --- validation ---
+      include RequestValidation
 
-      def validate_and_normalize_permissions(permissions)
-        return text_content("Error: permissions is required (e.g. {\"contents\": \"write\"})") unless permissions.is_a?(Hash) && !permissions.empty?
+      # Safari automation execution.
+      module SafariExecution
+        private
 
-        normalized = permissions.each_with_object({}) { |(perm, level), acc| acc[perm.to_s] = level.to_s.downcase }
-        error = check_permissions(normalized)
-        return text_content("Error: #{error}") if error
-
-        normalized
-      end
-
-      def check_permissions(permissions)
-        permissions.each do |perm, level|
-          return "unknown permission '#{perm}'. Valid: #{Permissions::NAMES.join(', ')}" unless Permissions::NAMES.include?(perm)
-          return "invalid access level '#{level}' for '#{perm}'. Valid: #{Permissions::LEVELS.join(', ')}" unless Permissions::LEVELS.include?(level)
+        def execute_create(request)
+          confirmation = request_create_confirmation(request)
+          case confirmation
+          when :approved then create_pat(request)
+          when :error then text_content("Error: confirmation failed (could not post or connect to Mattermost)")
+          else text_content("PAT creation denied by user.")
+          end
         end
-        nil
+
+        def create_pat(request)
+          run_safari_automation(request)
+          token = @safari.extract_token
+          return token_extraction_error unless token && !token.empty?
+
+          text_content(format_success(request, token))
+        rescue SafariAutomation::Error => error
+          error_msg = error.message
+          log(:error, "Safari automation failed during PAT creation: #{error_msg}")
+          text_content("Error: Safari automation failed — #{error_msg}")
+        end
+
+        def token_extraction_error
+          text_content(
+            "Error: failed to extract token from page. " \
+            "Verify Safari is logged into GitHub and the page loaded correctly."
+          )
+        end
+
+        def run_safari_automation(request)
+          @safari.navigate("https://github.com/settings/personal-access-tokens/new")
+          sleep 2
+          @safari.fill_token_name(request.name)
+          @safari.apply_expiration(request.expiration)
+          @safari.select_repository(request.repo)
+          @safari.apply_permissions(request.permissions)
+          @safari.click_generate
+          @safari.confirm_generation
+        end
+
+        def format_success(request, token)
+          perms = request.permissions.map { |perm, level| "#{perm}:#{level}" }.join(", ")
+          "PAT created successfully.\n" \
+            "- **Name:** #{request.name}\n" \
+            "- **Repo:** #{request.repo}\n" \
+            "- **Permissions:** #{perms}\n" \
+            "- **Expires:** #{request.expiration} days\n" \
+            "- **Token:** `#{token}`"
+        end
       end
 
-      def parse_expiration(raw)
-        return 365 unless raw
-
-        value = raw.to_i
-        return text_content("Error: expiration_days must be a positive integer") unless value.positive?
-
-        value
-      end
-
-      # --- safari automation ---
-
-      def create_pat(request)
-        run_safari_automation(request)
-        token = @safari.extract_token
-        return text_content("Error: failed to extract token from page. Verify Safari is logged into GitHub and the page loaded correctly.") unless token && !token.empty?
-
-        text_content(format_success(request, token))
-      rescue SafariAutomation::Error => error
-        reason = error.message
-        log(:error, "Safari automation failed during PAT creation: #{reason}")
-        text_content("Error: Safari automation failed — #{reason}")
-      end
-
-      def run_safari_automation(request)
-        @safari.navigate("https://github.com/settings/personal-access-tokens/new")
-        sleep 2
-        @safari.fill_token_name(request.name)
-        @safari.set_expiration(request.expiration)
-        @safari.select_repository(request.repo)
-        @safari.set_permissions(request.permissions)
-        @safari.click_generate
-        @safari.confirm_generation
-      end
-
-      def format_success(request, token)
-        perms = request.permissions.map { |perm, level| "#{perm}:#{level}" }.join(", ")
-        "PAT created successfully.\n" \
-          "- **Name:** #{request.name}\n" \
-          "- **Repo:** #{request.repo}\n" \
-          "- **Permissions:** #{perms}\n" \
-          "- **Expires:** #{request.expiration} days\n" \
-          "- **Token:** `#{token}`"
-      end
+      include SafariExecution
 
       # WebSocket-based reaction polling for PAT confirmation.
       module ConfirmationFlow
@@ -169,21 +227,31 @@ module Earl
 
         def post_confirmation_request(request)
           message = format_confirmation_message(request)
-          response = @api.post("/posts", {
-            channel_id: @config.platform_channel_id,
-            message: message,
-            root_id: @config.platform_thread_id
-          })
-          unless http_success?(response)
-            status = response.is_a?(Net::HTTPResponse) ? response.code : "unknown"
-            log(:error, "PAT confirmation post failed (HTTP #{status})")
-            return
-          end
+          response = post_confirmation_to_channel(message)
+          return log_confirmation_failure(response) unless http_success?(response)
 
           JSON.parse(response.body)["id"]
         rescue IOError, JSON::ParserError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
           log(:error, "Failed to post PAT confirmation: #{error.message}")
           nil
+        end
+
+        def post_confirmation_to_channel(message)
+          @api.post("/posts", {
+                      channel_id: @config.platform_channel_id,
+                      message: message,
+                      root_id: @config.platform_thread_id
+                    })
+        end
+
+        def log_confirmation_failure(response)
+          status = extract_http_status(response)
+          log(:error, "PAT confirmation post failed (HTTP #{status})")
+          nil
+        end
+
+        def extract_http_status(response)
+          response.is_a?(Net::HTTPResponse) ? response.code : "unknown"
         end
 
         def format_confirmation_message(request)
@@ -200,71 +268,89 @@ module Earl
         def add_reaction_options(post_id)
           Reactions::ALL.each do |emoji|
             response = @api.post("/reactions", {
-              user_id: @config.platform_bot_id,
-              post_id: post_id,
-              emoji_name: emoji
-            })
+                                   user_id: @config.platform_bot_id,
+                                   post_id: post_id,
+                                   emoji_name: emoji
+                                 })
             log(:warn, "Failed to add reaction #{emoji} to post #{post_id}") unless http_success?(response)
           end
         rescue IOError, Errno::ECONNREFUSED, Errno::ECONNRESET => error
           log(:error, "Failed to add reaction options to post #{post_id}: #{error.message}")
         end
+      end
+
+      include ConfirmationFlow
+
+      # WebSocket polling for PAT confirmation reactions.
+      module ConfirmationPolling
+        private
 
         def wait_for_confirmation(post_id)
-          timeout_sec = @config.permission_timeout_ms / 1000.0
-          deadline = Time.now + timeout_sec
+          deadline = Time.now + (@config.permission_timeout_ms / 1000.0)
+          websocket = connect_websocket
+          return :error unless websocket
 
-          ws = connect_websocket
-          return :error unless ws
-
-          poll_confirmation(ws, post_id, deadline)
+          poll_confirmation(websocket, post_id, deadline)
         ensure
-          begin
-            ws&.close
-          rescue IOError, SocketError, Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EPIPE => error
-            log(:debug, "Failed to close PAT confirmation WebSocket: #{error.message}")
-          end
+          close_websocket(websocket)
+        end
+
+        def close_websocket(websocket)
+          websocket&.close
+        rescue IOError, SocketError, Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EPIPE => error
+          log(:debug, "Failed to close PAT confirmation WebSocket: #{error.message}")
         end
 
         def connect_websocket
-          ws = WebSocket::Client::Simple.connect(@config.websocket_url)
+          websocket = WebSocket::Client::Simple.connect(@config.websocket_url)
           token = @config.platform_token
-          ws_ref = ws
-          ws.on(:open) { ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } })) }
-          ws
+          ws_ref = websocket
+          websocket.on(:open) do
+            ws_ref.send(JSON.generate({ seq: 1, action: "authentication_challenge", data: { token: token } }))
+          end
+          websocket
         rescue IOError, SocketError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH => error
           log(:error, "PAT confirmation WebSocket failed: #{error.message}")
           nil
         end
 
-        def poll_confirmation(ws, post_id, deadline)
-          reaction_queue = Queue.new
-          target_post_id = post_id
-
-          ws.on(:message) do |msg|
-            data = msg.data
-            next unless data && !data.empty?
-
-            begin
-              event = JSON.parse(data)
-              if event["event"] == "reaction_added"
-                reaction_data = JSON.parse(event.dig("data", "reaction") || "{}")
-                reaction_queue.push(reaction_data) if reaction_data["post_id"] == target_post_id
-              end
-            rescue JSON::ParserError
-              log(:debug, "PAT confirmation: skipped unparsable WebSocket message")
-            end
-          end
-
-          poll_reaction_loop(deadline, reaction_queue)
+        def poll_confirmation(websocket, post_id, deadline)
+          queue = setup_reaction_listener(websocket, post_id)
+          poll_reaction_loop(deadline, queue)
         end
 
-        def poll_reaction_loop(deadline, reaction_queue)
-          loop do
-            remaining = deadline - Time.now
-            return :denied if remaining <= 0
+        def setup_reaction_listener(websocket, post_id)
+          queue = Queue.new
+          websocket.on(:message) do |msg|
+            reaction = extract_reaction(msg)
+            queue.push(reaction) if reaction_matches?(reaction, post_id)
+          end
+          queue
+        end
 
-            reaction = dequeue_reaction(reaction_queue)
+        def reaction_matches?(reaction, post_id)
+          reaction && reaction["post_id"] == post_id
+        end
+
+        def extract_reaction(msg)
+          raw = msg.data
+          return unless raw && !raw.empty?
+
+          parsed = JSON.parse(raw)
+          event_name, nested_data = parsed.values_at("event", "data")
+          return unless event_name == "reaction_added"
+
+          JSON.parse(nested_data&.dig("reaction") || "{}")
+        rescue JSON::ParserError
+          log(:debug, "PAT confirmation: skipped unparsable WebSocket message")
+          nil
+        end
+
+        def poll_reaction_loop(deadline, queue)
+          loop do
+            return :denied if (deadline - Time.now) <= 0
+
+            reaction = dequeue_reaction(queue)
             next unless reaction
 
             result = evaluate_reaction(reaction)
@@ -272,8 +358,8 @@ module Earl
           end
         end
 
-        def dequeue_reaction(reaction_queue)
-          reaction_queue.pop(true)
+        def dequeue_reaction(queue)
+          queue.pop(true)
         rescue ThreadError
           sleep 0.5
           nil
@@ -311,58 +397,54 @@ module Earl
         end
       end
 
-      include ConfirmationFlow
+      include ConfirmationPolling
 
-      # --- helpers ---
+      # Tool definition builder.
+      module ToolDefinitionBuilder
+        private
 
-      def http_success?(response)
-        response.is_a?(Net::HTTPSuccess)
-      end
+        def tool_definition
+          {
+            name: "manage_github_pats",
+            description: pat_tool_description,
+            inputSchema: pat_input_schema
+          }
+        end
 
-      def error_response?(value)
-        value.is_a?(Hash) && value.key?(:content)
-      end
+        def pat_tool_description
+          "Create fine-grained GitHub personal access tokens via Safari automation. " \
+            "Requires Mattermost approval before execution."
+        end
 
-      def text_content(text)
-        { content: [ { type: "text", text: text } ] }
-      end
-
-      def tool_definition
-        {
-          name: "manage_github_pats",
-          description: "Create fine-grained GitHub personal access tokens via Safari automation. " \
-                       "Requires Mattermost approval before execution.",
-          inputSchema: {
+        def pat_input_schema
+          {
             type: "object",
-            properties: {
-              action: {
-                type: "string",
-                enum: VALID_ACTIONS,
-                description: "Action to perform"
-              },
-              name: {
-                type: "string",
-                description: "Token name (required for create)"
-              },
-              repo: {
-                type: "string",
-                description: "Repository in 'owner/repo' format (required for create)"
-              },
-              permissions: {
-                type: "object",
-                description: "Permission map, e.g. {\"contents\": \"write\", \"issues\": \"read\"}. " \
-                             "Valid permissions: #{Permissions::NAMES.join(', ')}. Levels: read, write.",
-                additionalProperties: { type: "string", enum: Permissions::LEVELS }
-              },
-              expiration_days: {
-                type: "integer",
-                description: "Token expiration in days (default 365)"
-              }
-            },
+            properties: pat_properties,
             required: %w[action]
           }
-        }
+        end
+
+        def pat_properties
+          {
+            action: { type: "string", enum: VALID_ACTIONS, description: "Action to perform" },
+            name: { type: "string", description: "Token name (required for create)" },
+            repo: { type: "string", description: "Repository in 'owner/repo' format (required for create)" },
+            permissions: pat_permissions_property,
+            expiration_days: { type: "integer", description: "Token expiration in days (default 365)" }
+          }
+        end
+
+        def pat_permissions_property
+          {
+            type: "object",
+            description: "Permission map, e.g. {\"contents\": \"write\", \"issues\": \"read\"}. " \
+                         "Valid permissions: #{Permissions::NAMES.join(", ")}. Levels: read, write.",
+            additionalProperties: { type: "string", enum: Permissions::LEVELS }
+          }
+        end
       end
+
+      include ToolDefinitionBuilder
     end
   end
 end

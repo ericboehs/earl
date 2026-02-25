@@ -1,11 +1,12 @@
 # frozen_string_literal: true
 
+require_relative "claude_session/stats"
+
 module Earl
   # Manages a single Claude CLI subprocess, handling JSON-stream I/O
   # and emitting text/completion callbacks as responses arrive.
   class ClaudeSession
     include Logging
-    attr_reader :session_id
 
     def self.mcp_config_dir
       @mcp_config_dir ||= File.join(Earl.config_root, "mcp")
@@ -38,74 +39,14 @@ module Earl
     # Groups mutable runtime state: subprocess, callbacks, and mutex.
     RuntimeState = Struct.new(:process_state, :callbacks, :mutex, keyword_init: true)
 
-    # Tracks usage statistics, timing, and cost across the session.
-    Stats = Struct.new(
-      :total_cost, :total_input_tokens, :total_output_tokens,
-      :turn_input_tokens, :turn_output_tokens,
-      :cache_read_tokens, :cache_creation_tokens,
-      :context_window, :model_id,
-      :message_sent_at, :first_token_at, :complete_at,
-      keyword_init: true
-    ) do
-      def time_to_first_token
-        return nil unless message_sent_at && first_token_at
+    # Removes MCP config files that don't match any active session ID.
+    def self.cleanup_mcp_configs(active_session_ids: [])
+      return unless Dir.exist?(mcp_config_dir)
 
-        first_token_at - message_sent_at
-      end
-
-      def tokens_per_second
-        return nil unless first_token_at && complete_at && turn_output_tokens&.positive?
-
-        duration = complete_at - first_token_at
-        return nil unless duration.positive?
-
-        turn_output_tokens / duration
-      end
-
-      def context_percent
-        return nil unless context_window&.positive?
-
-        context_tokens = turn_input_tokens + cache_read_tokens + cache_creation_tokens
-        return nil unless context_tokens.positive?
-
-        (context_tokens.to_f / context_window * 100)
-      end
-
-      def reset_turn
-        self.turn_input_tokens = 0
-        self.turn_output_tokens = 0
-        self.cache_read_tokens = 0
-        self.cache_creation_tokens = 0
-        self.message_sent_at = nil
-        self.first_token_at = nil
-        self.complete_at = nil
-      end
-
-      def begin_turn
-        reset_turn
-        self.message_sent_at = Time.now
-      end
-
-      def format_summary(prefix)
-        parts = [ "#{prefix}:", format_token_stats, *format_timing_stats ]
-        parts << "model=#{model_id}" if model_id
-        parts.join(" | ")
-      end
-
-      def format_token_stats
-        total = total_input_tokens + total_output_tokens
-        "#{total} tokens (turn: in:#{turn_input_tokens} out:#{turn_output_tokens})"
-      end
-
-      def format_timing_stats
-        parts = []
-        pct = context_percent
-        parts << format("%.0f%% context", pct) if pct
-        ttft = time_to_first_token
-        parts << format("TTFT: %.1fs", ttft) if ttft
-        tps = tokens_per_second
-        parts << format("%.0f tok/s", tps) if tps
-        parts
+      active_set = Set.new(active_session_ids)
+      Dir.glob(File.join(mcp_config_dir, "earl-mcp-*.json")).each do |path|
+        session_id = File.basename(path).delete_prefix("earl-mcp-").delete_suffix(".json")
+        File.delete(path) unless active_set.include?(session_id)
       end
     end
 
@@ -118,16 +59,10 @@ module Earl
       @runtime = RuntimeState.new(
         process_state: ProcessState.new, callbacks: Callbacks.new, mutex: Mutex.new
       )
-      @stats = Stats.new(
-        total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
-        turn_input_tokens: 0, turn_output_tokens: 0,
-        cache_read_tokens: 0, cache_creation_tokens: 0
-      )
+      @stats = default_stats
     end
 
-    def stats
-      @stats
-    end
+    attr_reader :session_id, :stats
 
     def on_text(&block)
       @runtime.callbacks.on_text = block
@@ -146,10 +81,7 @@ module Earl
     end
 
     def send_message(text)
-      unless alive?
-        log(:warn, "Cannot send message to dead session #{short_id} — process not running")
-        return false
-      end
+      return warn_dead_session unless alive?
 
       write_to_stdin(text)
       @stats.begin_turn
@@ -162,8 +94,21 @@ module Earl
 
     private
 
+    def warn_dead_session
+      log(:warn, "Cannot send message to dead session #{short_id} — process not running")
+      false
+    end
+
+    def default_stats
+      Stats.new(
+        total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
+        turn_input_tokens: 0, turn_output_tokens: 0,
+        cache_read_tokens: 0, cache_creation_tokens: 0
+      )
+    end
+
     def write_to_stdin(text)
-      payload = JSON.generate({ type: "user", message: { role: "user", content: text } }) + "\n"
+      payload = "#{JSON.generate({ type: "user", message: { role: "user", content: text } })}\n"
       @runtime.mutex.synchronize { @runtime.process_state.write(payload) }
     end
 
@@ -223,6 +168,7 @@ module Earl
       def escalate_signal(pid)
         2.times do
           return unless @runtime.process_state.process.alive?
+
           sleep 1
         end
         Process.kill("TERM", pid)
@@ -238,7 +184,7 @@ module Earl
 
       def remove_mcp_config
         path = File.join(self.class.mcp_config_dir, "earl-mcp-#{@session_id}.json")
-        File.delete(path) if File.exist?(path)
+        FileUtils.rm_f(path)
       end
     end
 
@@ -247,24 +193,29 @@ module Earl
       private
 
       def cli_args
-        [ "claude", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-         *session_args, *permission_args, *system_prompt_args ]
+        ["claude", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+         *model_args, *session_args, *permission_args, *system_prompt_args]
+      end
+
+      def model_args
+        model = ENV.fetch("EARL_MODEL", nil)
+        model ? ["--model", model] : []
       end
 
       def session_args
-        @options.resume ? [ "--resume", @session_id ] : [ "--session-id", @session_id ]
+        @options.resume ? ["--resume", @session_id] : ["--session-id", @session_id]
       end
 
       def permission_args
-        return [ "--dangerously-skip-permissions" ] unless @options.permission_config
+        return ["--dangerously-skip-permissions"] unless @options.permission_config
 
-        [ "--permission-prompt-tool", "mcp__earl__permission_prompt",
-         "--mcp-config", mcp_config_path ]
+        ["--permission-prompt-tool", "mcp__earl__permission_prompt",
+         "--mcp-config", mcp_config_path]
       end
 
       def system_prompt_args
         prompt = Memory::PromptBuilder.new(store: Memory::Store.new).build
-        prompt ? [ "--append-system-prompt", prompt ] : []
+        prompt ? ["--append-system-prompt", prompt] : []
       end
 
       def mcp_config_path
@@ -280,7 +231,7 @@ module Earl
       def build_earl_server_entry
         {
           earl: {
-            command: File.expand_path("../../bin/earl-permission-server", __dir__),
+            command: File.expand_path("../../exe/earl-permission-server", __dir__),
             args: [],
             env: @options.permission_config.merge(
               "EARL_CURRENT_USERNAME" => @options.username || ""
@@ -408,6 +359,11 @@ module Earl
         tool_id, tool_name, tool_input = item.values_at("id", "name", "input")
         @runtime.callbacks.on_tool_use&.call(id: tool_id, name: tool_name, input: tool_input)
       end
+    end
+
+    # Processes result events and updates session statistics.
+    module ResultProcessing
+      private
 
       def handle_result_event(event)
         @stats.complete_at = Time.now
@@ -504,19 +460,9 @@ module Earl
       end
     end
 
-    # Removes MCP config files that don't match any active session ID.
-    def self.cleanup_mcp_configs(active_session_ids: [])
-      return unless Dir.exist?(mcp_config_dir)
-
-      active_set = Set.new(active_session_ids)
-      Dir.glob(File.join(mcp_config_dir, "earl-mcp-*.json")).each do |path|
-        session_id = File.basename(path).delete_prefix("earl-mcp-").delete_suffix(".json")
-        File.delete(path) unless active_set.include?(session_id)
-      end
-    end
-
     include ProcessManagement
     include CliArgBuilder
     include EventProcessing
+    include ResultProcessing
   end
 end

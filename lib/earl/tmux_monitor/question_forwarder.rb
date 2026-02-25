@@ -71,9 +71,9 @@ module Earl
 
       def gather_numbered_options(lines, question_idx)
         options = []
-        (question_idx + 1...lines.size).each do |idx|
+        ((question_idx + 1)...lines.size).each do |idx|
           line = lines[idx]
-          options << line.sub(/\A\s*\d+[\.\)]\s*/, "") if line.match?(/\A\s*\d+[\.\)]\s/)
+          options << line.sub(/\A\s*\d+[.)]\s*/, "") if line.match?(/\A\s*\d+[.)]\s/)
         end
         options
       end
@@ -91,7 +91,7 @@ module Earl
       end
 
       def build_question_message(name, parsed)
-        lines = [ ":question: **Tmux `#{name}`** is asking:", "```", parsed[:text], "```" ]
+        lines = [":question: **Tmux `#{name}`** is asking:", "```", parsed[:text], "```"]
         parsed[:options].each_with_index do |opt, idx|
           emoji = EMOJI_NUMBERS[idx]
           lines << ":#{emoji}: #{opt}" if emoji
@@ -112,7 +112,7 @@ module Earl
       end
 
       def add_emoji_reactions(post_id, count)
-        [ count, EMOJI_NUMBERS.size ].min.times do |idx|
+        [count, EMOJI_NUMBERS.size].min.times do |idx|
           emoji = EMOJI_NUMBERS[idx]
           @mattermost.add_reaction(post_id: post_id, emoji_name: emoji)
         rescue StandardError => error

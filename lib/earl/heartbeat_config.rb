@@ -22,11 +22,14 @@ module Earl
       def self.from_config(name, config, working_dir_resolver)
         schedule = config["schedule"] || {}
         new(
-          name: name,
-          description: config["description"] || name,
-          cron: schedule["cron"],
-          interval: schedule["interval"],
-          run_at: schedule["run_at"],
+          name: name, description: config["description"] || name,
+          cron: schedule["cron"], interval: schedule["interval"], run_at: schedule["run_at"],
+          **extract_options(config, working_dir_resolver)
+        )
+      end
+
+      def self.extract_options(config, working_dir_resolver)
+        {
           channel_id: config["channel_id"],
           working_dir: working_dir_resolver.call(config["working_dir"]),
           prompt: config["prompt"],
@@ -35,7 +38,7 @@ module Earl
           timeout: config.fetch("timeout", 600),
           enabled: config.fetch("enabled", true),
           once: config.fetch("once", false)
-        )
+        }
       end
 
       def active?

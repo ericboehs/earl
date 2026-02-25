@@ -1,3 +1,8 @@
+---
+title: Streaming
+nav_order: 9
+---
+
 # Streaming
 
 EARL streams Claude's responses to Mattermost in real time, creating and updating posts as text and tool-use events arrive.
