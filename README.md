@@ -66,6 +66,7 @@ On first run this creates `~/.config/earl/env` — fill in your secrets and re-r
 
 | Variable | Description |
 |----------|-------------|
+| `EARL_MODEL` | Override Claude model (e.g., `sonnet`, `opus`, `haiku`) |
 | `EARL_CHANNELS` | Multi-channel config (`channel_id:/working/dir` pairs) |
 | `EARL_SKIP_PERMISSIONS` | Set to `true` to skip permission prompts |
 | `EARL_CLAUDE_HOME` | Custom HOME for Claude subprocesses (default: `~/.config/earl/claude-home`) |
