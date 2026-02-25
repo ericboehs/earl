@@ -5,21 +5,17 @@ This directory contains scripts to help developers and AI assistants maintain co
 ## Key Scripts
 
 ### `ci`
-Comprehensive CI pipeline that runs all checks and tests. Use `./bin/ci --fix` to automatically fix formatting issues before running checks.
-
-- **Code formatting**: eclint and rubocop
-- **Security scanning**: brakeman
-- **Testing**: Rails unit and system tests
-- **Coverage reporting**: Automatically generates coverage reports when available
+Comprehensive CI pipeline that runs all checks and tests in sequence:
+RuboCop, Reek, Bundler audit, Semgrep, Actionlint, Minitest, and coverage reporting.
 
 ### `coverage`
 Generates test coverage reports to help identify untested code.
 
 ### `watch-ci`
-Continuously monitors files and runs CI checks on changes for rapid feedback during development.
+Monitors GitHub Actions CI status for the current branch, exiting on pass or fail.
 
-## Usage Tips
+### `rubocop`
+Wrapper that explicitly sets the config path for consistent behavior.
 
-- Run `./bin/ci --fix` to automatically resolve formatting issues
-- Use `./bin/watch-ci` during development for real-time feedback
-- Check `./bin/coverage` periodically to maintain good test coverage
+### `claude-context` / `claude-usage`
+Helpers spawned by `!context` and `!usage` bot commands.

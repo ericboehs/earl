@@ -1,8 +1,9 @@
 # Ignore bundler config
 /.bundle
 
-# Ignore all environment files
+# Ignore environment files (but not .envrc.example)
 /.env*
+!/.envrc.example
 
 # Ignore MCP config (contains env var references to secrets)
 /.mcp.json
@@ -10,7 +11,7 @@
 # Ignore SimpleCov coverage reports
 /coverage
 
-# Ignore runtime directories (leftover from Rails scaffold)
+# Ignore runtime directories
 /tmp/
 /storage/
 /log/

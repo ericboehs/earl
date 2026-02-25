@@ -1,0 +1,8 @@
+export GIT_MASTER_BRANCH=main
+export EARL_ENV=development
+
+# Source dev credentials from config dir
+dotenv ~/.config/earl-dev/env
+
+# Optional: skip permission approval (uses --dangerously-skip-permissions)
+# export EARL_SKIP_PERMISSIONS=true

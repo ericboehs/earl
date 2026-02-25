@@ -43,22 +43,13 @@ PostCheckout:
   BundleInstall:
     enabled: true
     quiet: true
-  MigrationCheck:
-    enabled: true
-    quiet: true
 
 PostMerge:
   BundleInstall:
     enabled: true
     quiet: true
-  MigrationCheck:
-    enabled: true
-    quiet: true
 
 PostRewrite:
   BundleInstall:
-    enabled: true
-    quiet: true
-  MigrationCheck:
     enabled: true
     quiet: true
