@@ -34,6 +34,9 @@ module Earl
     end
     # Holds text-streaming, tool-use, and completion callback procs.
     Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_system, keyword_init: true)
+    # Bundles MCP server env with permission mode to avoid boolean parameters.
+    McpConfig = Data.define(:env, :skip_permissions)
+
     # Groups session launch options to keep instance variable count low.
     Options = Struct.new(:permission_config, :resume, :working_dir, :username, :mcp_config_path, keyword_init: true)
     # Groups mutable runtime state: subprocess, callbacks, and mutex.
@@ -207,10 +210,15 @@ module Earl
       end
 
       def permission_args
-        return ["--dangerously-skip-permissions"] unless @options.permission_config
+        mcp_config = @options.permission_config
+        return ["--dangerously-skip-permissions"] unless mcp_config
 
-        ["--permission-prompt-tool", "mcp__earl__permission_prompt",
-         "--mcp-config", mcp_config_path]
+        args = ["--mcp-config", mcp_config_path]
+        if mcp_config.skip_permissions
+          ["--dangerously-skip-permissions", *args]
+        else
+          ["--permission-prompt-tool", "mcp__earl__permission_prompt", *args]
+        end
       end
 
       def system_prompt_args
@@ -233,7 +241,7 @@ module Earl
           earl: {
             command: File.expand_path("../../exe/earl-permission-server", __dir__),
             args: [],
-            env: @options.permission_config.merge(
+            env: @options.permission_config.env.merge(
               "EARL_CURRENT_USERNAME" => @options.username || ""
             )
           }

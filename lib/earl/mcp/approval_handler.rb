@@ -162,8 +162,10 @@ module Earl
 
       # WebSocket-based reaction polling for permission decisions.
       module ReactionPolling
-        # Bundles poll_for_reaction parameters into a single context object.
+        # Bundles poll parameters into a single context object.
         PollContext = Data.define(:ws, :post_id, :request, :deadline)
+        # Bundles WebSocket message handler dependencies.
+        MessageHandlerContext = Data.define(:ws, :post_id, :extractor, :queue)
 
         private
 
@@ -175,14 +177,10 @@ module Earl
 
           context = PollContext.new(ws: websocket, post_id: post_id, request: request, deadline: deadline)
           poll_for_reaction(context) || deny_result("Timed out waiting for approval")
+        rescue StandardError => error
+          deny_result("Error waiting for approval: #{error.message}")
         ensure
-          close_websocket(websocket)
-        end
-
-        def close_websocket(websocket)
           websocket&.close
-        rescue StandardError
-          nil
         end
 
         def connect_websocket
@@ -205,11 +203,24 @@ module Earl
         end
 
         def register_reaction_listener(context, reaction_queue)
-          websocket, target_post_id = context.deconstruct
-          websocket&.on(:message) do |msg|
-            reaction_data = extract_reaction_data(msg.data)
-            reaction_queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == target_post_id
+          ws_ref, target_post_id = context.deconstruct
+          handler_ctx = build_handler_context(ws_ref, target_post_id, reaction_queue)
+          enqueue = method(:enqueue_reaction)
+          ws_ref&.on(:message) do |msg|
+            msg.type == :ping ? ws_ref.send(nil, type: :pong) : enqueue.call(handler_ctx, msg.data)
           end
+        end
+
+        def build_handler_context(ws_ref, target_post_id, reaction_queue)
+          MessageHandlerContext.new(
+            ws: ws_ref, post_id: target_post_id,
+            extractor: method(:extract_reaction_data), queue: reaction_queue
+          )
+        end
+
+        def enqueue_reaction(ctx, msg_data)
+          reaction_data = ctx.extractor.call(msg_data)
+          ctx.queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == ctx.post_id
         end
 
         def extract_reaction_data(data)

@@ -61,7 +61,7 @@ module Earl
       def heartbeat_session_opts(definition)
         auto, channel_id, working_dir = definition.base_session_opts.values_at(:auto_permission, :channel_id,
                                                                                :working_dir)
-        { working_dir: working_dir, permission_config: auto ? nil : heartbeat_permission_env(channel_id) }
+        { working_dir: working_dir, permission_config: auto ? nil : heartbeat_mcp_config(channel_id) }
       end
 
       def apply_resume_opts(opts, state)
@@ -72,8 +72,8 @@ module Earl
         opts[:mode] = :resume
       end
 
-      def heartbeat_permission_env(channel_id)
-        @deps.config.permission_env(channel_id: channel_id)
+      def heartbeat_mcp_config(channel_id)
+        @deps.config.build_mcp_config(channel_id: channel_id)
       end
 
       def setup_heartbeat_callbacks(session, response)

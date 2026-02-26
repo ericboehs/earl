@@ -389,19 +389,20 @@ module Earl
       assert saved.first[:paused], "Expected session to be saved as paused"
     end
 
-    test "build_permission_config returns config hash when skip_permissions is false" do
+    test "build_permission_config returns McpConfig when config present" do
       ENV["EARL_SKIP_PERMISSIONS"] = nil
       ENV.delete("EARL_SKIP_PERMISSIONS")
       config = Earl::Config.new
       manager = Earl::SessionManager.new(config: config)
 
       result = manager.send(:build_permission_config, "thread-123", "channel-456")
-      assert_not_nil result
-      assert_equal "https://mattermost.example.com", result["PLATFORM_URL"]
-      assert_equal "test-token", result["PLATFORM_TOKEN"]
-      assert_equal "channel-456", result["PLATFORM_CHANNEL_ID"]
-      assert_equal "thread-123", result["PLATFORM_THREAD_ID"]
-      assert_equal "bot-123", result["PLATFORM_BOT_ID"]
+      assert_instance_of Earl::ClaudeSession::McpConfig, result
+      assert_not result.skip_permissions
+      assert_equal "https://mattermost.example.com", result.env["PLATFORM_URL"]
+      assert_equal "test-token", result.env["PLATFORM_TOKEN"]
+      assert_equal "channel-456", result.env["PLATFORM_CHANNEL_ID"]
+      assert_equal "thread-123", result.env["PLATFORM_THREAD_ID"]
+      assert_equal "bot-123", result.env["PLATFORM_BOT_ID"]
     end
 
     test "claude_session_id_for returns active session id" do
