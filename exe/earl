@@ -27,8 +27,21 @@ when "exec"
     puts dir
     exit 0
   end
+  unless Dir.exist?(dir)
+    warn "Claude home directory not found: #{dir}"
+    warn "Run 'earl-install' to set up, or set EARL_CLAUDE_HOME"
+    exit 1
+  end
   Dir.chdir(dir)
-  Kernel.exec(*cmd)
+  begin
+    Kernel.exec(*cmd)
+  rescue Errno::ENOENT
+    warn "Command not found: #{cmd.first}"
+    exit 127
+  rescue Errno::EACCES
+    warn "Permission denied: #{cmd.first}"
+    exit 126
+  end
 when "restart"
   unless File.exist?(pid_file)
     warn "No PID file found at #{pid_file} — is EARL running?"
