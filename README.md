@@ -28,6 +28,32 @@ earl
 earl-install
 ```
 
+## CLI Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `earl` | Start the bot (default) |
+| `earl home` | Print the claude-home directory path |
+| `earl exec <cmd> [args...]` | Run a command inside the claude-home directory |
+| `earl restart` | Send SIGHUP to a running EARL instance |
+| `earl update` | Pull latest code and bundle install |
+
+**Examples:**
+
+```bash
+# Jump into EARL's Claude project directory
+cd $(earl home)
+
+# Launch Claude CLI in EARL's project context
+earl exec claude
+
+# Resume a specific Claude session
+earl exec claude --resume <session-id>
+
+# List EARL's Claude project config
+earl exec ls -la .claude/
+```
+
 ## Running as a Service
 
 EARL can run as a persistent service for automatic startup and crash recovery.
