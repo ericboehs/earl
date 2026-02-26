@@ -80,6 +80,32 @@ class EarlTest < Minitest::Test
     assert_equal File.join(Dir.home, ".config", "earl"), Earl.config_root
   end
 
+  # --- claude_home ---
+
+  test "claude_home defaults to config_root/claude-home" do
+    Earl.instance_variable_set(:@env, nil)
+    Earl.instance_variable_set(:@config_root, nil)
+    ENV.delete("EARL_CLAUDE_HOME")
+    assert_equal File.join(Earl.config_root, "claude-home"), Earl.claude_home
+  end
+
+  test "claude_home reads EARL_CLAUDE_HOME when set" do
+    ENV["EARL_CLAUDE_HOME"] = "/tmp/custom-claude-home"
+    assert_equal "/tmp/custom-claude-home", Earl.claude_home
+  ensure
+    ENV.delete("EARL_CLAUDE_HOME")
+  end
+
+  test "claude_home respects environment" do
+    Earl.instance_variable_set(:@env, nil)
+    Earl.instance_variable_set(:@config_root, nil)
+    ENV.delete("EARL_CLAUDE_HOME")
+    ENV["EARL_ENV"] = "development"
+    assert_equal File.join(Dir.home, ".config", "earl-dev", "claude-home"), Earl.claude_home
+  ensure
+    ENV.delete("EARL_ENV")
+  end
+
   # --- Integration: downstream classes derive paths from config_root ---
 
   test "SessionStore.default_path derives from Earl.config_root" do

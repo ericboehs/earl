@@ -73,6 +73,10 @@ module Earl
     @config_root ||= File.join(Dir.home, ".config", development? ? "earl-dev" : "earl")
   end
 
+  def self.claude_home
+    ENV.fetch("EARL_CLAUDE_HOME", File.join(config_root, "claude-home"))
+  end
+
   def self.logger
     @logger ||= Logger.new($stdout, level: Logger::INFO).tap do |log|
       log.formatter = proc do |severity, datetime, _progname, msg|

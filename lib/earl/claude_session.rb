@@ -149,7 +149,7 @@ module Earl
       end
 
       def earl_project_dir
-        ENV.fetch("EARL_CLAUDE_HOME", File.join(Earl.config_root, "claude-home"))
+        Earl.claude_home
       end
 
       def join_threads

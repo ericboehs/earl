@@ -17,6 +17,31 @@ require_relative "../lib/earl"
 pid_file = File.join(Earl.config_root, "earl.pid")
 
 case ARGV[0]
+when "home"
+  puts Earl.claude_home
+  exit 0
+when "exec"
+  dir = Earl.claude_home
+  cmd = ARGV.drop(1)
+  if cmd.empty?
+    puts dir
+    exit 0
+  end
+  unless Dir.exist?(dir)
+    warn "Claude home directory not found: #{dir}"
+    warn "Run 'earl-install' to set up, or set EARL_CLAUDE_HOME"
+    exit 1
+  end
+  Dir.chdir(dir)
+  begin
+    Kernel.exec(*cmd)
+  rescue Errno::ENOENT
+    warn "Command not found: #{cmd.first}"
+    exit 127
+  rescue Errno::EACCES
+    warn "Permission denied: #{cmd.first}"
+    exit 126
+  end
 when "restart"
   unless File.exist?(pid_file)
     warn "No PID file found at #{pid_file} — is EARL running?"
