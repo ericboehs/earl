@@ -285,7 +285,12 @@ module Earl
       # to avoid NoMethodError on our handler methods.
       module RunPolling
         # Bundles WebSocket message handler dependencies for ping/pong and reaction parsing.
-        MessageHandlerContext = Data.define(:ws, :post_id, :extractor, :queue)
+        MessageHandlerContext = Data.define(:ws, :post_id, :extractor, :queue) do
+          def enqueue(msg)
+            reaction_data = extractor.call(msg)
+            queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == post_id
+          end
+        end
 
         private
 
@@ -350,8 +355,9 @@ module Earl
         end
 
         def enqueue_reaction(ctx, msg)
-          reaction_data = ctx.extractor.call(msg)
-          ctx.queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == ctx.post_id
+          ctx.enqueue(msg)
+        rescue StandardError => error
+          log(:debug, "PEARL confirmation: error processing WebSocket message: #{error.message}")
         end
 
         def parse_reaction_event(msg)
@@ -386,6 +392,11 @@ module Earl
           sleep 0.5
           nil
         end
+      end
+
+      # Reaction classification and user validation for run confirmations.
+      module ReactionClassification
+        private
 
         def classify_reaction(reaction)
           user_id = reaction["user_id"]
@@ -464,6 +475,7 @@ module Earl
       include AgentRunner
       include RunConfirmation
       include RunPolling
+      include ReactionClassification
       include ToolDefinitionBuilder
       include PearlBinResolver
     end

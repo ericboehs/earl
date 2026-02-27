@@ -168,7 +168,12 @@ module Earl
         # Bundles poll parameters into a single context object.
         PollContext = Data.define(:ws, :post_id, :request, :deadline)
         # Bundles WebSocket message handler dependencies.
-        MessageHandlerContext = Data.define(:ws, :post_id, :extractor, :queue)
+        MessageHandlerContext = Data.define(:ws, :post_id, :extractor, :queue) do
+          def enqueue(msg_data)
+            reaction_data = extractor.call(msg_data)
+            queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == post_id
+          end
+        end
 
         private
 
@@ -183,7 +188,13 @@ module Earl
         rescue StandardError => error
           deny_result("Error waiting for approval: #{error.message}")
         ensure
+          safe_close(websocket)
+        end
+
+        def safe_close(websocket)
           websocket&.close
+        rescue IOError, Errno::ECONNRESET
+          nil
         end
 
         def connect_websocket
@@ -222,8 +233,9 @@ module Earl
         end
 
         def enqueue_reaction(ctx, msg_data)
-          reaction_data = ctx.extractor.call(msg_data)
-          ctx.queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == ctx.post_id
+          ctx.enqueue(msg_data)
+        rescue StandardError => error
+          log(:debug, "MCP approval: error processing WebSocket message: #{error.message}")
         end
 
         def extract_reaction_data(data)
@@ -250,18 +262,23 @@ module Earl
           end
         end
 
-        def valid_user_reaction?(reaction)
-          return false unless reaction
-
-          user_id = reaction["user_id"]
-          user_id != @config.platform_bot_id && allowed_reactor?(user_id)
-        end
-
         def dequeue_reaction(reaction_queue)
           reaction_queue.pop(true)
         rescue ThreadError
           sleep 0.5
           nil
+        end
+      end
+
+      # Reaction classification and user validation for permission decisions.
+      module ReactionClassification
+        private
+
+        def valid_user_reaction?(reaction)
+          return false unless reaction
+
+          user_id = reaction["user_id"]
+          user_id != @config.platform_bot_id && allowed_reactor?(user_id)
         end
 
         def allowed_reactor?(user_id)
@@ -312,6 +329,7 @@ module Earl
 
       include PermissionPosting
       include ReactionPolling
+      include ReactionClassification
       include AllowedToolsPersistence
     end
   end
