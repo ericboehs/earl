@@ -77,6 +77,19 @@ module Earl
       parse_post_response(@api.get("/channels/#{channel_id}"))
     end
 
+    # File operations extracted to keep class method count under threshold.
+    module FileHandling
+      def download_file(file_id)
+        @api.get("/files/#{file_id}")
+      end
+
+      def get_file_info(file_id)
+        parse_post_response(@api.get("/files/#{file_id}/info"))
+      end
+    end
+
+    include FileHandling
+
     # Fetches all posts in a thread, ordered oldest-first.
     # Returns an array of hashes with :sender, :message, :is_bot.
     def get_thread_posts(thread_id)
@@ -225,16 +238,20 @@ module Earl
       end
 
       def build_message_params(event, post)
-        post_id = post["id"]
-        root_id = post["root_id"]
-        sender = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
+        post_id, root_id, message, channel_id, file_ids =
+          post.values_at("id", "root_id", "message", "channel_id", "file_ids")
         {
-          sender_name: sender,
+          sender_name: extract_sender(event),
           thread_id: root_id.to_s.empty? ? post_id : root_id,
-          text: post["message"] || "",
+          text: message || "",
           post_id: post_id,
-          channel_id: post["channel_id"]
+          channel_id: channel_id,
+          file_ids: file_ids || []
         }
+      end
+
+      def extract_sender(event)
+        event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
       end
     end
 

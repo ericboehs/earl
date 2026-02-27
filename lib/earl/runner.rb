@@ -13,7 +13,11 @@ module Earl
                           :idle_checker_thread, keyword_init: true)
 
     # Bundles user message parameters that travel together through message routing.
-    UserMessage = Data.define(:thread_id, :text, :channel_id, :sender_name)
+    UserMessage = Data.define(:thread_id, :text, :channel_id, :sender_name, :file_ids) do
+      def initialize(thread_id:, text:, channel_id:, sender_name:, file_ids: [])
+        super
+      end
+    end
 
     # Groups injected service dependencies to keep ivar count low.
     Services = Struct.new(:config, :session_store, :session_manager, :mattermost,

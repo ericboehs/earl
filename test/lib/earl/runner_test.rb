@@ -1132,7 +1132,7 @@ module Earl
       assert_not thread_posts_called, "Should not fetch thread posts for existing sessions"
     end
 
-    test "build_contextual_message excludes current message from transcript" do
+    test "build_contextual_text excludes current message from transcript" do
       runner = Earl::Runner.new
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
@@ -1144,7 +1144,7 @@ module Earl
         ]
       end
 
-      result = runner.send(:build_contextual_message, "thread-12345678", "thanks")
+      result = runner.send(:build_contextual_text, "thread-12345678", "thanks")
 
       assert_includes result, "User: !help"
       assert_includes result, "EARL: Available commands: ..."

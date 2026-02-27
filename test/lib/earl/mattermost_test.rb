@@ -701,6 +701,69 @@ module Earl
       assert_equal "channel-456", received[:channel_id]
     end
 
+    # --- file_ids in message params ---
+
+    test "connect includes file_ids in message params when present" do
+      fake_ws = build_fake_ws
+      install_fake_ws(fake_ws)
+
+      mm = Earl::Mattermost.new(@config)
+      received = nil
+      mm.on_message { |**kwargs| received = kwargs }
+      mm.connect
+
+      post_data = {
+        "id" => "post-abc", "user_id" => "user-999",
+        "channel_id" => "channel-456", "root_id" => "", "message" => "See image",
+        "file_ids" => %w[file-1 file-2]
+      }
+      event = { "event" => "posted", "data" => { "post" => JSON.generate(post_data), "sender_name" => "@alice" } }
+
+      fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+      assert_not_nil received
+      assert_equal %w[file-1 file-2], received[:file_ids]
+    end
+
+    test "connect returns empty file_ids when post has no file_ids" do
+      fake_ws = build_fake_ws
+      install_fake_ws(fake_ws)
+
+      mm = Earl::Mattermost.new(@config)
+      received = nil
+      mm.on_message { |**kwargs| received = kwargs }
+      mm.connect
+
+      post_data = {
+        "id" => "post-abc", "user_id" => "user-999",
+        "channel_id" => "channel-456", "root_id" => "", "message" => "No files"
+      }
+      event = { "event" => "posted", "data" => { "post" => JSON.generate(post_data), "sender_name" => "@alice" } }
+
+      fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+      assert_not_nil received
+      assert_equal [], received[:file_ids]
+    end
+
+    # --- file download and info tests ---
+
+    test "download_file sends GET to files endpoint" do
+      @mattermost.download_file("file-123")
+
+      req = @requests.last
+      assert_equal :get, req[:method]
+      assert_equal "/files/file-123", req[:path]
+    end
+
+    test "get_file_info sends GET to file info endpoint" do
+      @mattermost.get_file_info("file-123")
+
+      req = @requests.last
+      assert_equal :get, req[:method]
+      assert_equal "/files/file-123/info", req[:path]
+    end
+
     # --- API client GET test ---
 
     test "api_client get builds correct HTTP request without body" do

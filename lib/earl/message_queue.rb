@@ -23,10 +23,10 @@ module Earl
       end
     end
 
-    def enqueue(thread_id, text)
+    def enqueue(thread_id, message)
       @mutex.synchronize do
         queue = (@pending_messages[thread_id] ||= [])
-        queue << text
+        queue << message
         log(:debug, "Queued message for busy thread #{thread_id[0..7]}")
       end
     end

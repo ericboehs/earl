@@ -83,12 +83,12 @@ module Earl
       @runtime.callbacks.on_system = block
     end
 
-    def send_message(text)
+    def send_message(content)
       return warn_dead_session unless alive?
 
-      write_to_stdin(text)
+      write_to_stdin(content)
       @stats.begin_turn
-      log(:debug, "Sent message to Claude #{short_id}: #{text[0..60]}")
+      log(:debug, "Sent message to Claude #{short_id}: #{content_preview(content)}")
       true
     rescue IOError, Errno::EPIPE => error
       log(:error, "Failed to write to Claude #{short_id}: #{error.message}")
@@ -110,9 +110,15 @@ module Earl
       )
     end
 
-    def write_to_stdin(text)
-      payload = "#{JSON.generate({ type: "user", message: { role: "user", content: text } })}\n"
+    def write_to_stdin(content)
+      payload = "#{JSON.generate({ type: "user", message: { role: "user", content: content } })}\n"
       @runtime.mutex.synchronize { @runtime.process_state.write(payload) }
+    end
+
+    def content_preview(content)
+      return content[0..60] if content.is_a?(String)
+
+      "[#{content.size} content blocks]"
     end
 
     def short_id
