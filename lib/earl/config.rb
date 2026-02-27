@@ -50,8 +50,7 @@ module Earl
       {
         "PLATFORM_URL" => url, "PLATFORM_TOKEN" => token,
         "PLATFORM_CHANNEL_ID" => channel_id, "PLATFORM_THREAD_ID" => thread_id,
-        "PLATFORM_BOT_ID" => bot_id, "ALLOWED_USERS" => allowed_users.join(","),
-        "PLATFORM_TEAM_NAME" => ENV.fetch("PLATFORM_TEAM_NAME", "default")
+        "PLATFORM_BOT_ID" => bot_id, "ALLOWED_USERS" => allowed_users.join(",")
       }
     end
 

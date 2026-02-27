@@ -35,6 +35,7 @@ pearl_handler = Earl::Mcp::PearlHandler.new(
 github_pat_handler = Earl::Mcp::GithubPatHandler.new(
   config: config, api_client: api_client
 )
+
 server = Earl::Mcp::Server.new(handlers: [approval_handler, memory_handler, heartbeat_handler, tmux_handler,
                                           pearl_handler, github_pat_handler])
 
