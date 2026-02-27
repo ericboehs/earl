@@ -74,13 +74,19 @@ module Earl
 
     def handle_text(text)
       @segments << text
-      @post_state.full_text = @segments.join("\n\n")
       stop_typing
 
+      return if hold_for_notification_post?
+
+      @post_state.full_text = @segments.join("\n\n")
       return if @post_state.create_failed
       return create_initial_post(@post_state.full_text) unless posted?
 
       schedule_update
+    end
+
+    def hold_for_notification_post?
+      @segments.any? { |segment| tool_segment?(segment) }
     end
 
     def posted?
@@ -155,7 +161,7 @@ module Earl
           post_state.full_text = final_text
           update_post if post_state.reply_post_id
         else
-          remove_last_text_from_streamed_post
+          remove_trailing_text_from_streamed_post
           create_notification_post(final_text)
         end
       end
@@ -169,13 +175,13 @@ module Earl
         last_text || @post_state.full_text
       end
 
-      def remove_last_text_from_streamed_post
+      def remove_trailing_text_from_streamed_post
         return unless posted?
 
-        last_text_index = @segments.rindex { |segment| !tool_segment?(segment) }
-        return unless last_text_index
+        last_tool_index = @segments.rindex { |segment| tool_segment?(segment) }
+        return unless last_tool_index
 
-        @segments.delete_at(last_text_index)
+        @segments.select!.with_index { |_segment, index| index <= last_tool_index }
         @post_state.full_text = @segments.join("\n\n")
         update_post unless @post_state.full_text.empty?
       end
