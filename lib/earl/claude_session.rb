@@ -147,7 +147,7 @@ module Earl
 
       def open_process
         working_dir = @options.working_dir || earl_project_dir
-        env = { "TMUX" => nil, "TMUX_PANE" => nil }
+        env = { "TMUX" => nil, "TMUX_PANE" => nil, "CLAUDECODE" => nil }
         Open3.popen3(env, *cli_args, chdir: working_dir)
       end
 
