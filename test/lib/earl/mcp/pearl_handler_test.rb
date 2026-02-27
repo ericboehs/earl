@@ -28,6 +28,7 @@ module Earl
         schema = @handler.tool_definitions.first[:inputSchema]
         assert_equal "object", schema[:type]
         assert_includes schema[:required], "action"
+        assert schema[:properties].key?(:target), "Expected target property in schema"
       end
 
       # --- handles? ---
@@ -253,8 +254,69 @@ module Earl
                                    "action" => "run", "agent" => "code", "prompt" => "fix tests"
                                  })
           text = result[:content].first[:text]
-          assert_includes text, "manage_tmux_sessions"
+          assert_includes text, "manage_pearl_agents"
+          assert_includes text, "status"
+          assert_includes text, "Log"
           assert_includes text, "Monitor"
+        end
+      end
+
+      # --- status ---
+
+      test "status returns error when target is missing" do
+        result = @handler.call("manage_pearl_agents", { "action" => "status" })
+        text = result[:content].first[:text]
+        assert_includes text, "target is required"
+      end
+
+      test "status returns error when target is blank" do
+        result = @handler.call("manage_pearl_agents", { "action" => "status", "target" => "  " })
+        text = result[:content].first[:text]
+        assert_includes text, "target is required"
+      end
+
+      test "status captures tmux pane output" do
+        @tmux.capture_pane_result = "Hello from the agent"
+        result = @handler.call("manage_pearl_agents", {
+                                 "action" => "status", "target" => "pearl-agents:code-ab12"
+                               })
+        text = result[:content].first[:text]
+        assert_includes text, "pearl-agents:code-ab12"
+        assert_includes text, "Hello from the agent"
+      end
+
+      test "status falls back to log file when pane not found" do
+        @tmux.capture_pane_error = Earl::Tmux::NotFound.new("not found")
+
+        Dir.mktmpdir do |tmpdir|
+          log_dir = File.join(tmpdir, "pearl-logs")
+          FileUtils.mkdir_p(log_dir)
+          File.write(File.join(log_dir, "code-ab12.log"), "Log output here")
+          @handler.define_singleton_method(:pearl_log_dir) { log_dir }
+
+          result = @handler.call("manage_pearl_agents", {
+                                   "action" => "status", "target" => "pearl-agents:code-ab12"
+                                 })
+          text = result[:content].first[:text]
+          assert_includes text, "Log output here"
+          assert_includes text, "pane closed"
+        end
+      end
+
+      test "status returns error when pane not found and no log file" do
+        @tmux.capture_pane_error = Earl::Tmux::NotFound.new("not found")
+
+        Dir.mktmpdir do |tmpdir|
+          log_dir = File.join(tmpdir, "pearl-logs")
+          FileUtils.mkdir_p(log_dir)
+          @handler.define_singleton_method(:pearl_log_dir) { log_dir }
+
+          result = @handler.call("manage_pearl_agents", {
+                                   "action" => "status", "target" => "pearl-agents:code-ab12"
+                                 })
+          text = result[:content].first[:text]
+          assert_includes text, "not found"
+          assert_includes text, "no log file"
         end
       end
 
@@ -263,7 +325,7 @@ module Earl
       test "post_confirmation_request posts to correct channel and thread" do
         handler = build_handler_with_api(post_success: true)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "fix tests", window_name: "code-ab12"
+          agent: "code", prompt: "fix tests", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
         )
         post_id = handler.send(:post_confirmation_request, request)
         assert_equal "spawn-post-1", post_id
@@ -272,7 +334,7 @@ module Earl
       test "post_confirmation_request returns nil when API fails" do
         handler = build_handler_with_api(post_success: false)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "fix tests", window_name: "code-ab12"
+          agent: "code", prompt: "fix tests", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
         )
         post_id = handler.send(:post_confirmation_request, request)
         assert_nil post_id
@@ -281,7 +343,7 @@ module Earl
       test "confirmation message includes agent and prompt" do
         handler = build_handler_with_api(post_success: true)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "fix tests", window_name: "code-ab12"
+          agent: "code", prompt: "fix tests", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
         )
         message = handler.send(:build_confirmation_message, request)
         assert_includes message, "code"
@@ -408,7 +470,7 @@ module Earl
       test "request_run_confirmation returns error when post fails" do
         handler = build_handler_with_api(post_success: false)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "hi", window_name: "code-ab12"
+          agent: "code", prompt: "hi", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
         )
         result = handler.send(:request_run_confirmation, request)
         assert_equal :error, result
@@ -418,28 +480,40 @@ module Earl
 
       test "RunRequest target returns session:window format" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "hello", window_name: "code-ab12"
+          agent: "code", prompt: "hello", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
         )
         assert_equal "pearl-agents:code-ab12", request.target
       end
 
       test "RunRequest pearl_command builds correct command" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "fix the bug", window_name: "code-ab12"
+          agent: "code", prompt: "fix the bug", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
         )
         command = request.pearl_command("/usr/local/bin/pearl")
         assert_includes command, "/usr/local/bin/pearl"
         assert_includes command, "code"
         assert_includes command, "-p"
         assert_includes command, "fix\\ the\\ bug"
+        assert_includes command, "tee"
+        assert_includes command, "sleep"
       end
 
       test "RunRequest pearl_command escapes pearl_bin path" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "hello", window_name: "code-ab12"
+          agent: "code", prompt: "hello", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
         )
         command = request.pearl_command("/path with spaces/pearl")
         assert_includes command, '/path\\ with\\ spaces/pearl'
+      end
+
+      test "RunRequest pearl_command includes log path and keep-alive" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12", log_path: "/tmp/pearl-logs/code-ab12.log"
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_includes command, "tee /tmp/pearl-logs/code-ab12.log"
+        assert_includes command, "PEARL agent exited"
+        assert_includes command, "sleep 300"
       end
 
       # --- Mock helpers ---
@@ -447,13 +521,15 @@ module Earl
       private
 
       class MockTmuxAdapter
-        attr_accessor :session_exists_result
+        attr_accessor :session_exists_result, :capture_pane_result, :capture_pane_error
         attr_reader :created_sessions, :created_windows
 
         def initialize
           @session_exists_result = false
           @created_sessions = []
           @created_windows = []
+          @capture_pane_result = nil
+          @capture_pane_error = nil
         end
 
         def session_exists?(_name) = @session_exists_result
@@ -464,6 +540,12 @@ module Earl
 
         def create_window(session:, name: nil, command: nil, working_dir: nil)
           @created_windows << { session: session, name: name, command: command, working_dir: working_dir }
+        end
+
+        def capture_pane(target, lines: 100)
+          raise @capture_pane_error if @capture_pane_error
+
+          @capture_pane_result || "output for #{target} (#{lines} lines)"
         end
       end
 

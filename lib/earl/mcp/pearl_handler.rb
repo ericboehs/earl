@@ -12,23 +12,28 @@ module Earl
     # Actions:
     #   list_agents — discover available agent profiles
     #   run         — spawn a PEARL agent in the pearl-agents tmux session
+    #   status      — check agent output (tmux capture or log file fallback)
     class PearlHandler
       include Logging
       include HandlerBase
 
       TOOL_NAME = "manage_pearl_agents"
       TOOL_NAMES = [TOOL_NAME].freeze
-      VALID_ACTIONS = %w[list_agents run].freeze
+      VALID_ACTIONS = %w[list_agents run status].freeze
       TMUX_SESSION = "pearl-agents"
+      KEEP_ALIVE_SECONDS = 300
 
       # Bundles run parameters that travel together through the confirmation and creation flow.
-      RunRequest = Data.define(:agent, :prompt, :window_name) do
+      RunRequest = Data.define(:agent, :prompt, :window_name, :log_path) do
         def target
           "#{TMUX_SESSION}:#{window_name}"
         end
 
         def pearl_command(pearl_bin)
-          "#{Shellwords.shellescape(pearl_bin)} #{Shellwords.shellescape(agent)} -p #{Shellwords.shellescape(prompt)}"
+          base = [pearl_bin, agent, "-p", prompt].map { |arg| Shellwords.shellescape(arg) }.join(" ")
+          escaped_log = Shellwords.shellescape(log_path)
+          trailer = "echo '--- PEARL agent exited ---' | tee -a #{escaped_log}"
+          "#{base} 2>&1 | tee #{escaped_log}; #{trailer}; sleep #{KEEP_ALIVE_SECONDS}"
         end
       end
 
@@ -160,10 +165,10 @@ module Earl
         end
 
         def build_run_request(arguments)
-          agent = arguments["agent"]
-          prompt = arguments["prompt"]
+          agent, prompt = arguments.values_at("agent", "prompt")
           window_name = "#{agent}-#{SecureRandom.hex(2)}"
-          RunRequest.new(agent: agent, prompt: prompt, window_name: window_name)
+          log_path = File.join(pearl_log_dir, "#{window_name}.log")
+          RunRequest.new(agent: agent, prompt: prompt, window_name: window_name, log_path: log_path)
         end
 
         def execute_run(request)
@@ -176,10 +181,11 @@ module Earl
 
         def create_pearl_session(request)
           ensure_tmux_session
+          ensure_log_dir
           command = request.pearl_command(resolve_pearl_bin)
           @tmux.create_window(session: TMUX_SESSION, name: request.window_name, command: command)
           persist_session_info(request)
-          format_run_result(request.agent, request.target, request.prompt)
+          format_run_result(request)
         end
 
         def ensure_tmux_session
@@ -197,12 +203,60 @@ module Earl
           @tmux_store.save(info)
         end
 
-        def format_run_result(agent, target, prompt)
+        def format_run_result(request)
+          agent, prompt, window_name, log_path = request.deconstruct
+          target = "#{TMUX_SESSION}:#{window_name}"
           text_content(
             "Spawned PEARL agent `#{agent}` in tmux window `#{target}`.\n" \
             "- **Prompt:** #{prompt}\n" \
-            "- **Monitor:** Use `manage_tmux_sessions` with target `#{target}` to capture output or check status."
+            "- **Log:** `#{log_path}`\n" \
+            "- **Monitor:** Use `manage_pearl_agents` with action `status` and target `#{target}` to check output."
           )
+        end
+
+        def ensure_log_dir
+          FileUtils.mkdir_p(pearl_log_dir)
+        end
+
+        def pearl_log_dir
+          File.join(Earl.config_root, "pearl-logs")
+        end
+      end
+
+      # Checks PEARL agent output by capturing the tmux pane or reading the log file.
+      module AgentStatus
+        private
+
+        def handle_status(arguments)
+          target = arguments["target"]
+          return text_content("Error: target is required for status") unless target && !target.strip.empty?
+
+          capture_agent_output(target)
+        end
+
+        def capture_agent_output(target)
+          output = @tmux.capture_pane(target, lines: 200)
+          text_content("**`#{target}` output:**\n```\n#{output}\n```")
+        rescue Tmux::NotFound
+          read_log_fallback(target)
+        rescue Tmux::Error => error
+          text_content("Error: #{error.message}")
+        end
+
+        def read_log_fallback(target)
+          log_file = find_log_for_target(target)
+          return text_content("Error: pane '#{target}' not found and no log file available") unless log_file
+
+          content = File.read(log_file)
+          text_content("**`#{target}` log** (pane closed):\n```\n#{content}\n```")
+        end
+
+        def find_log_for_target(target)
+          window_name = target.split(":").last
+          return unless window_name
+
+          log_file = File.join(pearl_log_dir, "#{window_name}.log")
+          log_file if File.exist?(log_file)
         end
       end
 
@@ -435,7 +489,7 @@ module Earl
 
         def pearl_tool_description
           "Manage PEARL (Protected EARL) Docker-isolated Claude agents. " \
-            "List available agent profiles or spawn an agent in the pearl-agents tmux session."
+            "List available agent profiles, spawn an agent, or check agent output."
         end
 
         def pearl_input_schema
@@ -446,7 +500,11 @@ module Earl
           {
             action: action_property,
             agent: { type: "string", description: "Agent profile name (e.g., 'code'). Required for run." },
-            prompt: { type: "string", description: "Prompt for the PEARL agent session. Required for run." }
+            prompt: { type: "string", description: "Prompt for the PEARL agent session. Required for run." },
+            target: {
+              type: "string",
+              description: "Tmux target (e.g., 'pearl-agents:code-ab12'). Required for status."
+            }
           }
         end
 
@@ -473,6 +531,7 @@ module Earl
 
       include AgentDiscovery
       include AgentRunner
+      include AgentStatus
       include RunConfirmation
       include RunPolling
       include ReactionClassification
