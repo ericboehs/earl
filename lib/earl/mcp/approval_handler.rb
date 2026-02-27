@@ -161,6 +161,9 @@ module Earl
       end
 
       # WebSocket-based reaction polling for permission decisions.
+      # NOTE: websocket-client-simple uses instance_exec for on() callbacks,
+      # changing self to the WebSocket object. Capture method refs as closures
+      # to avoid NoMethodError on our handler methods.
       module ReactionPolling
         # Bundles poll parameters into a single context object.
         PollContext = Data.define(:ws, :post_id, :request, :deadline)

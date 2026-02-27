@@ -301,7 +301,7 @@ module Earl
 
       # --- WebSocket polling ---
 
-      test "poll_confirmation returns approved on thumbsup reaction" do
+      test "polling returns approved on thumbsup reaction" do
         handler = build_handler_with_api(post_success: true)
         mock_ws = build_mock_websocket
 
@@ -311,11 +311,12 @@ module Earl
         end
 
         deadline = Time.now + 5
-        result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+        queue = handler.send(:build_reaction_queue, mock_ws, "post-123")
+        result = handler.send(:await_reaction, queue, deadline)
         assert_equal :approved, result
       end
 
-      test "poll_confirmation returns denied on thumbsdown" do
+      test "polling returns denied on thumbsdown" do
         handler = build_handler_with_api(post_success: true)
         mock_ws = build_mock_websocket
 
@@ -325,20 +326,22 @@ module Earl
         end
 
         deadline = Time.now + 5
-        result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+        queue = handler.send(:build_reaction_queue, mock_ws, "post-123")
+        result = handler.send(:await_reaction, queue, deadline)
         assert_equal :denied, result
       end
 
-      test "poll_confirmation returns denied on timeout" do
+      test "polling returns denied on timeout" do
         handler = build_handler_with_api(post_success: true)
         mock_ws = build_mock_websocket
 
         deadline = Time.now + 0.2
-        result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+        queue = handler.send(:build_reaction_queue, mock_ws, "post-123")
+        result = handler.send(:await_reaction, queue, deadline)
         assert_equal :denied, result
       end
 
-      test "poll_confirmation ignores bot reactions" do
+      test "polling ignores bot reactions" do
         handler = build_handler_with_api(post_success: true)
         mock_ws = build_mock_websocket
 
@@ -350,11 +353,12 @@ module Earl
         end
 
         deadline = Time.now + 5
-        result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+        queue = handler.send(:build_reaction_queue, mock_ws, "post-123")
+        result = handler.send(:await_reaction, queue, deadline)
         assert_equal :denied, result
       end
 
-      test "poll_confirmation ignores reactions on other posts" do
+      test "polling ignores reactions on other posts" do
         handler = build_handler_with_api(post_success: true)
         mock_ws = build_mock_websocket
 
@@ -366,7 +370,8 @@ module Earl
         end
 
         deadline = Time.now + 5
-        result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+        queue = handler.send(:build_reaction_queue, mock_ws, "post-123")
+        result = handler.send(:await_reaction, queue, deadline)
         assert_equal :approved, result
       end
 
@@ -374,6 +379,30 @@ module Earl
         @handler.define_singleton_method(:connect_websocket) { nil }
         result = @handler.send(:wait_for_confirmation, "post-123")
         assert_equal :error, result
+      end
+
+      test "polling responds to ping frames with pong" do
+        handler = build_handler_with_api(post_success: true)
+        mock_ws = build_mock_websocket
+
+        pong_sent = false
+        mock_ws.define_singleton_method(:send) do |_data, **kwargs|
+          pong_sent = true if kwargs[:type] == :pong
+        end
+
+        Thread.new do
+          sleep 0.05
+          mock_ws.fire_message(nil, type: :ping)
+          sleep 0.05
+          emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "user-42")
+        end
+
+        deadline = Time.now + 5
+        queue = handler.send(:build_reaction_queue, mock_ws, "post-123")
+        result = handler.send(:await_reaction, queue, deadline)
+
+        assert pong_sent, "Expected pong to be sent in response to ping"
+        assert_equal :approved, result
       end
 
       test "request_run_confirmation returns error when post fails" do
@@ -403,6 +432,14 @@ module Earl
         assert_includes command, "code"
         assert_includes command, "-p"
         assert_includes command, "fix\\ the\\ bug"
+      end
+
+      test "RunRequest pearl_command escapes pearl_bin path" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12"
+        )
+        command = request.pearl_command("/path with spaces/pearl")
+        assert_includes command, '/path\\ with\\ spaces/pearl'
       end
 
       # --- Mock helpers ---
@@ -553,11 +590,14 @@ module Earl
           @handlers[event] = block
         end
         ws.define_singleton_method(:close) {}
-        ws.define_singleton_method(:fire_message) do |data|
+        ws.define_singleton_method(:send) { |*_args, **_kwargs| nil }
+        ws.define_singleton_method(:fire_message) do |data, type: :text|
           handler = @handlers[:message]
           return unless handler
 
+          msg_type = type
           msg = Object.new
+          msg.define_singleton_method(:type) { msg_type }
           msg.define_singleton_method(:data) { data }
           msg.define_singleton_method(:empty?) { data.nil? || data.empty? }
           handler.call(msg)

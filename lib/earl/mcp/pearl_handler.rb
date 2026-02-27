@@ -28,7 +28,7 @@ module Earl
         end
 
         def pearl_command(pearl_bin)
-          "#{pearl_bin} #{Shellwords.shellescape(agent)} -p #{Shellwords.shellescape(prompt)}"
+          "#{Shellwords.shellescape(pearl_bin)} #{Shellwords.shellescape(agent)} -p #{Shellwords.shellescape(prompt)}"
         end
       end
 
@@ -72,7 +72,11 @@ module Earl
 
         def handle_list_agents(_arguments)
           agents_dir = find_agents_dir
-          return text_content("Error: pearl-agents repo not found. Set PEARL_AGENTS_REPO.") unless agents_dir
+          unless agents_dir
+            return text_content(
+              "Error: pearl-agents repo not found. Set PEARL_BIN or add pearl to PATH."
+            )
+          end
 
           agents = discover_agents(agents_dir)
           return text_content("No agent profiles found in #{agents_dir}") if agents.empty?
@@ -238,17 +242,21 @@ module Earl
         end
 
         def post_to_channel(message)
-          channel_id = @config.platform_channel_id
-          thread_id = @config.platform_thread_id
-          response = @api.post("/posts", {
-                                 channel_id: channel_id,
-                                 message: message,
-                                 root_id: thread_id
-                               })
-
-          return unless response.is_a?(Net::HTTPSuccess)
+          response = @api.post("/posts", confirmation_post_body(message))
+          return log_post_failure(response) unless response.is_a?(Net::HTTPSuccess)
 
           JSON.parse(response.body)["id"]
+        end
+
+        def confirmation_post_body(message)
+          { channel_id: @config.platform_channel_id,
+            message: message,
+            root_id: @config.platform_thread_id }
+        end
+
+        def log_post_failure(response)
+          log(:warn, "Failed to post PEARL confirmation (HTTP #{response.class})")
+          nil
         end
 
         def add_reaction_options(post_id)
@@ -272,30 +280,42 @@ module Earl
       end
 
       # WebSocket-based polling for run confirmation reactions.
+      # NOTE: websocket-client-simple uses instance_exec for on() callbacks,
+      # changing self to the WebSocket object. Capture method refs as closures
+      # to avoid NoMethodError on our handler methods.
       module RunPolling
+        # Bundles WebSocket message handler dependencies for ping/pong and reaction parsing.
+        MessageHandlerContext = Data.define(:ws, :post_id, :extractor, :queue)
+
         private
 
         def wait_for_confirmation(post_id)
-          timeout_sec = @config.permission_timeout_ms / 1000.0
-          deadline = Time.now + timeout_sec
+          deadline = confirmation_deadline
 
           websocket = connect_websocket
           return :error unless websocket
 
-          poll_confirmation(websocket, post_id, deadline)
+          queue = build_reaction_queue(websocket, post_id)
+          await_reaction(queue, deadline)
+        rescue StandardError => error
+          log(:error, "PEARL confirmation error: #{error.message}")
+          :error
         ensure
           close_websocket(websocket)
         end
 
+        def confirmation_deadline
+          Time.now + (@config.permission_timeout_ms / 1000.0)
+        end
+
         def close_websocket(websocket)
           websocket&.close
-        rescue IOError, Errno::ECONNRESET => error
-          log(:debug, "Failed to close PEARL confirmation WebSocket: #{error.message}")
+        rescue IOError, Errno::ECONNRESET
+          nil
         end
 
         def connect_websocket
-          url = @config.websocket_url
-          websocket = WebSocket::Client::Simple.connect(url)
+          websocket = WebSocket::Client::Simple.connect(@config.websocket_url)
           authenticate_websocket(websocket)
           websocket
         rescue IOError, SocketError, Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH => error
@@ -311,22 +331,27 @@ module Earl
           end
         end
 
-        def poll_confirmation(websocket, post_id, deadline)
-          queue = build_reaction_queue(websocket, post_id)
-          await_reaction(queue, deadline)
-        end
-
         def build_reaction_queue(websocket, target_post_id)
           queue = Queue.new
-          websocket.on(:message) do |msg|
-            reaction_data = parse_reaction_event(msg)
-            queue.push(reaction_data) if reaction_matches?(reaction_data, target_post_id)
+          ws_ref = websocket
+          handler_ctx = build_handler_context(ws_ref, target_post_id, queue)
+          enqueue = method(:enqueue_reaction)
+          ws_ref.on(:message) do |msg|
+            msg.type == :ping ? ws_ref.send(nil, type: :pong) : enqueue.call(handler_ctx, msg)
           end
           queue
         end
 
-        def reaction_matches?(reaction_data, target_post_id)
-          reaction_data && reaction_data["post_id"] == target_post_id
+        def build_handler_context(ws_ref, target_post_id, queue)
+          MessageHandlerContext.new(
+            ws: ws_ref, post_id: target_post_id,
+            extractor: method(:parse_reaction_event), queue: queue
+          )
+        end
+
+        def enqueue_reaction(ctx, msg)
+          reaction_data = ctx.extractor.call(msg)
+          ctx.queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == ctx.post_id
         end
 
         def parse_reaction_event(msg)
@@ -345,8 +370,7 @@ module Earl
 
         def await_reaction(queue, deadline)
           loop do
-            remaining = deadline - Time.now
-            return :denied if remaining <= 0
+            return :denied if (deadline - Time.now) <= 0
 
             reaction = dequeue_reaction(queue)
             next unless reaction
