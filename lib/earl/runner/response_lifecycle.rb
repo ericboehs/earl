@@ -95,24 +95,40 @@ module Earl
 
       # Detects analysis responses missing a "## Suggested Fixes" section and
       # automatically sends a follow-up prompt to the same Claude session.
+      # Requires a markdown heading (## Root Cause, ## What Happened, etc.) plus
+      # analysis keywords to avoid false positives on normal conversation.
       module AnalysisFollowup
+        ANALYSIS_HEADINGS = /^##\s+(?:Root Cause|What (?:Went Wrong|Happened)|Analysis|Investigation)/im
         ANALYSIS_KEYWORDS = /went wrong|root cause|should have|the problem|misunderstood|misinterpreted|what happened/i
-        SUGGESTED_FIXES_HEADING = /^##\s+Suggested Fixes/m
+        SUGGESTED_FIXES_HEADING = /^##\s+(?:Suggested|Recommended)\s+Fix(?:es)?/im
         MIN_ANALYSIS_LENGTH = 300
 
         private
 
         def send_analysis_followup_if_needed(bundle)
           session, response, thread_id = bundle.deconstruct
+          return if @followup_sent&.include?(thread_id)
           return unless needs_fixes_followup?(response.full_text)
 
-          log(:info, "Analysis response in thread #{thread_id[0..7]} missing ## Suggested Fixes — sending follow-up")
+          dispatch_followup(session, response, thread_id)
+        rescue StandardError => error
+          short_id = thread_id[0..7]
+          log(:error, "Analysis follow-up failed for thread #{short_id}: #{error.message}")
+          log(:error, error.backtrace&.first(5)&.join("\n"))
+        end
+
+        def dispatch_followup(session, response, thread_id)
+          short_id = thread_id[0..7]
+          log(:info, "Analysis response in thread #{short_id} missing ## Suggested Fixes — sending follow-up")
+          (@followup_sent ||= Set.new) << thread_id
           prepare_response(session, thread_id, response.channel_id)
-          session.send_message(followup_prompt)
+          sent = session.send_message(followup_prompt)
+          log(:warn, "Follow-up send failed for thread #{short_id} (session dead)") unless sent
         end
 
         def needs_fixes_followup?(text)
-          return false if text.length < MIN_ANALYSIS_LENGTH
+          return false if text.to_s.length < MIN_ANALYSIS_LENGTH
+          return false unless ANALYSIS_HEADINGS.match?(text)
           return false unless ANALYSIS_KEYWORDS.match?(text)
 
           !SUGGESTED_FIXES_HEADING.match?(text)

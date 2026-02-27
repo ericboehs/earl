@@ -37,10 +37,15 @@ module Earl
         thread_id = resolve_thread_id(post_id)
         return text_content("Error: could not fetch post #{post_id}") unless thread_id
 
-        posts = fetch_thread(thread_id)
-        return text_content("No messages found in thread #{post_id}") if posts.empty?
+        fetch_thread_transcript(thread_id, post_id)
+      end
 
-        text_content(format_transcript(posts))
+      def fetch_thread_transcript(thread_id, post_id)
+        result = fetch_thread(thread_id)
+        return text_content(result) if result.is_a?(String)
+        return text_content("No messages found in thread #{post_id}") if result.empty?
+
+        text_content(format_transcript(result))
       end
 
       # Fetches a single post to find its root thread ID.
@@ -51,7 +56,8 @@ module Earl
 
         root_id = JSON.parse(body)["root_id"]
         root_id.to_s.empty? ? post_id : root_id
-      rescue JSON::ParserError
+      rescue JSON::ParserError => error
+        log(:warn, "Failed to parse post #{post_id}: #{error.message}")
         nil
       end
 
@@ -65,7 +71,9 @@ module Earl
 
       def fetch_thread(thread_id)
         response = @api.get("/posts/#{thread_id}/thread")
-        return [] unless response.is_a?(Net::HTTPSuccess)
+        unless response.is_a?(Net::HTTPSuccess)
+          return "Error: failed to fetch thread #{thread_id} (HTTP #{response.code})"
+        end
 
         data = JSON.parse(response.body)
         posts, order = data.values_at("posts", "order")
