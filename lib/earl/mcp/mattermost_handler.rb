@@ -31,8 +31,8 @@ module Earl
       private
 
       def handle_get_thread(arguments)
-        post_id = arguments["post_id"]
-        return text_content("Error: post_id is required") unless post_id && !post_id.empty?
+        post_id = arguments["post_id"].to_s.strip
+        return text_content("Error: post_id is required") if post_id.empty?
 
         thread_id = resolve_thread_id(post_id)
         return text_content("Error: could not fetch post #{post_id}") unless thread_id

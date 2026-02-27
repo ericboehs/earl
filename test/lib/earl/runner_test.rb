@@ -1656,6 +1656,69 @@ module Earl
       assert_match(/Follow-up send failed/, logs)
     end
 
+    test "send_analysis_followup_if_needed returns true when follow-up sent" do
+      runner = Earl::Runner.new
+
+      mock_session = build_mock_session(on_send: ->(_text) {})
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { analysis_text }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-ret-true"
+      )
+
+      result = runner.send(:send_analysis_followup_if_needed, bundle)
+      assert_equal true, result
+    end
+
+    test "send_analysis_followup_if_needed returns false when no follow-up needed" do
+      runner = Earl::Runner.new
+
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { "Short text" }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: build_mock_session, response: mock_response, thread_id: "thread-ret-false"
+      )
+
+      result = runner.send(:send_analysis_followup_if_needed, bundle)
+      assert_equal false, result
+    end
+
+    test "send_analysis_followup_if_needed returns false on error" do
+      runner = Earl::Runner.new
+
+      mock_session = build_mock_session
+      mock_session.define_singleton_method(:send_message) { |_text| raise "boom" }
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { analysis_text }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-err-false"
+      )
+
+      result = nil
+      capture_logs { result = runner.send(:send_analysis_followup_if_needed, bundle) }
+      assert_equal false, result
+    end
+
     test "send_analysis_followup_if_needed rescues errors without crashing" do
       runner = Earl::Runner.new
 

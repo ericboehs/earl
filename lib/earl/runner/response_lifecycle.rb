@@ -46,16 +46,22 @@ module Earl
       def handle_response_complete(thread_id)
         response = @responses.active_responses.delete(thread_id)
         session = @services.session_manager.get(thread_id)
+        followup_sent = complete_response(thread_id, session, response)
 
-        if session && response
-          bundle = ResponseBundle.new(session: session, response: response, thread_id: thread_id)
-          finalize_response(bundle)
-          send_analysis_followup_if_needed(bundle)
-        else
+        # Skip queue release when a follow-up is streaming — its own
+        # on_complete callback will call handle_response_complete again.
+        process_next_queued(thread_id) unless followup_sent
+      end
+
+      def complete_response(thread_id, session, response)
+        unless session && response
           log_missing_completion(thread_id, response)
+          return false
         end
 
-        process_next_queued(thread_id)
+        bundle = ResponseBundle.new(session: session, response: response, thread_id: thread_id)
+        finalize_response(bundle)
+        send_analysis_followup_if_needed(bundle)
       end
 
       def finalize_response(bundle)
@@ -107,14 +113,16 @@ module Earl
 
         def send_analysis_followup_if_needed(bundle)
           session, response, thread_id = bundle.deconstruct
-          return if @followup_sent&.include?(thread_id)
-          return unless needs_fixes_followup?(response.full_text)
+          return false if @followup_sent&.include?(thread_id)
+          return false unless needs_fixes_followup?(response.full_text)
 
           dispatch_followup(session, response, thread_id)
+          true
         rescue StandardError => error
           short_id = thread_id[0..7]
           log(:error, "Analysis follow-up failed for thread #{short_id}: #{error.message}")
           log(:error, error.backtrace&.first(5)&.join("\n"))
+          false
         end
 
         def dispatch_followup(session, response, thread_id)

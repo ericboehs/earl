@@ -50,6 +50,23 @@ module Earl
         assert_includes text, "Error: post_id is required"
       end
 
+      test "call returns error when post_id is whitespace only" do
+        result = @handler.call("get_thread_content", { "post_id" => "   " })
+        text = result[:content].first[:text]
+        assert_includes text, "Error: post_id is required"
+      end
+
+      test "call coerces non-string post_id to string" do
+        stub_post_response("12345", root_id: "")
+        stub_thread_response("12345", build_thread_data("12345"))
+
+        result = @handler.call("get_thread_content", { "post_id" => 12_345 })
+        text = result[:content].first[:text]
+
+        assert_includes text, "Thread transcript"
+        @api.verify
+      end
+
       test "call returns nil for unknown tool name" do
         result = @handler.call("unknown_tool", {})
         assert_nil result
