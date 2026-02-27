@@ -213,7 +213,7 @@ module Earl
         mcp_config = @options.permission_config
         return ["--dangerously-skip-permissions"] unless mcp_config
 
-        args = ["--mcp-config", mcp_config_path]
+        args = ["--mcp-config", mcp_config_path, "--strict-mcp-config"]
         if mcp_config.skip_permissions
           ["--dangerously-skip-permissions", *args]
         else
