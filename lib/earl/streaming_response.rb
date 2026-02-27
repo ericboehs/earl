@@ -27,6 +27,10 @@ module Earl
       @context.channel_id
     end
 
+    def full_text
+      @post_state.full_text
+    end
+
     def start_typing
       @post_state.typing_thread = Thread.new { typing_loop }
     end

@@ -50,6 +50,7 @@ module Earl
         if session && response
           bundle = ResponseBundle.new(session: session, response: response, thread_id: thread_id)
           finalize_response(bundle)
+          send_analysis_followup_if_needed(bundle)
         else
           log_missing_completion(thread_id, response)
         end
@@ -91,6 +92,39 @@ module Earl
         response&.stop_typing
         @app_state.message_queue.release(thread_id)
       end
+
+      # Detects analysis responses missing a "## Suggested Fixes" section and
+      # automatically sends a follow-up prompt to the same Claude session.
+      module AnalysisFollowup
+        ANALYSIS_KEYWORDS = /went wrong|root cause|should have|the problem|misunderstood|misinterpreted|what happened/i
+        SUGGESTED_FIXES_HEADING = /^##\s+Suggested Fixes/m
+        MIN_ANALYSIS_LENGTH = 300
+
+        private
+
+        def send_analysis_followup_if_needed(bundle)
+          session, response, thread_id = bundle.deconstruct
+          return unless needs_fixes_followup?(response.full_text)
+
+          log(:info, "Analysis response in thread #{thread_id[0..7]} missing ## Suggested Fixes — sending follow-up")
+          prepare_response(session, thread_id, response.channel_id)
+          session.send_message(followup_prompt)
+        end
+
+        def needs_fixes_followup?(text)
+          return false if text.length < MIN_ANALYSIS_LENGTH
+          return false unless ANALYSIS_KEYWORDS.match?(text)
+
+          !SUGGESTED_FIXES_HEADING.match?(text)
+        end
+
+        def followup_prompt
+          "Now add a `## Suggested Fixes` section with numbered fixes. " \
+            "Each fix must name a specific file path and include a fenced code block with the exact change."
+        end
+      end
+
+      include AnalysisFollowup
     end
   end
 end
