@@ -548,6 +548,20 @@ module Earl
       assert_equal "ch-99", response.channel_id
     end
 
+    test "full_text returns accumulated text after on_text calls" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      assert_equal "", response.full_text
+
+      response.on_text("First chunk")
+      assert_equal "First chunk", response.full_text
+
+      sleep 0.05
+      response.on_text("Second chunk")
+      assert_equal "First chunk\n\nSecond chunk", response.full_text
+    end
+
     test "on_complete with text-only but no reply_post_id due to create_failed" do
       mock_mm = build_mock_mattermost
       mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No id — failure

@@ -1503,6 +1503,246 @@ module Earl
       FileUtils.rm_f(store.instance_variable_get(:@path)) if store
     end
 
+    # -- AnalysisFollowup tests --
+
+    test "needs_fixes_followup? returns true for long analysis text without Suggested Fixes" do
+      runner = Earl::Runner.new
+      text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong because of a misunderstood requirement."
+      assert runner.send(:needs_fixes_followup?, text)
+    end
+
+    test "needs_fixes_followup? returns false when Suggested Fixes heading is present" do
+      runner = Earl::Runner.new
+      text = "## Root Cause\n\n#{"x" * 300}\n\nSomething went wrong here.\n\n## Suggested Fixes\n\n1. Fix this"
+      assert_not runner.send(:needs_fixes_followup?, text)
+    end
+
+    test "needs_fixes_followup? returns false when Recommended Fix heading is present" do
+      runner = Earl::Runner.new
+      text = "## Root Cause\n\n#{"x" * 300}\n\nSomething went wrong here.\n\n## Recommended Fix\n\n1. Fix this"
+      assert_not runner.send(:needs_fixes_followup?, text)
+    end
+
+    test "needs_fixes_followup? returns false for short responses" do
+      runner = Earl::Runner.new
+      text = "## Root Cause\n\nSomething went wrong here."
+      assert_not runner.send(:needs_fixes_followup?, text)
+    end
+
+    test "needs_fixes_followup? returns false for non-analysis content" do
+      runner = Earl::Runner.new
+      text = "#{"x" * 400}\n\nHere is a normal response with no analysis keywords."
+      assert_not runner.send(:needs_fixes_followup?, text)
+    end
+
+    test "needs_fixes_followup? returns false when analysis keywords present but no heading" do
+      runner = Earl::Runner.new
+      text = "#{"x" * 400}\n\nThe problem went wrong because of a misunderstood requirement."
+      assert_not runner.send(:needs_fixes_followup?, text)
+    end
+
+    test "needs_fixes_followup? returns false for nil text" do
+      runner = Earl::Runner.new
+      assert_not runner.send(:needs_fixes_followup?, nil)
+    end
+
+    test "needs_fixes_followup? returns true at exactly MIN_ANALYSIS_LENGTH boundary" do
+      runner = Earl::Runner.new
+      padding = "x" * (300 - "## Root Cause\n\nThe problem went wrong.".length)
+      text = "## Root Cause\n\n#{padding}The problem went wrong."
+      assert_equal 300, text.length
+      assert runner.send(:needs_fixes_followup?, text)
+    end
+
+    test "needs_fixes_followup? recognizes case-insensitive headings" do
+      runner = Earl::Runner.new
+      text = "## WHAT WENT WRONG\n\n#{"x" * 300}\n\nThe problem went wrong here."
+      assert runner.send(:needs_fixes_followup?, text)
+    end
+
+    test "send_analysis_followup_if_needed sends follow-up when fixes are missing" do
+      runner = Earl::Runner.new
+
+      sent_messages = []
+      mock_session = build_mock_session(on_send: ->(text) { sent_messages << text })
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { analysis_text }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-12345678"
+      )
+
+      runner.send(:send_analysis_followup_if_needed, bundle)
+
+      assert_equal 1, sent_messages.size
+      assert_includes sent_messages.first, "## Suggested Fixes"
+    end
+
+    test "send_analysis_followup_if_needed does not send follow-up when fixes are present" do
+      runner = Earl::Runner.new
+
+      sent_messages = []
+      mock_session = build_mock_session(on_send: ->(text) { sent_messages << text })
+
+      text_with_fixes = "## Root Cause\n\n#{"x" * 300}\n\nSomething went wrong.\n\n## Suggested Fixes\n\n1. Fix it"
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { text_with_fixes }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-12345678"
+      )
+
+      runner.send(:send_analysis_followup_if_needed, bundle)
+
+      assert_empty sent_messages
+    end
+
+    test "send_analysis_followup_if_needed only sends follow-up once per thread" do
+      runner = Earl::Runner.new
+
+      sent_messages = []
+      mock_session = build_mock_session(on_send: ->(text) { sent_messages << text })
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { analysis_text }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-12345678"
+      )
+
+      runner.send(:send_analysis_followup_if_needed, bundle)
+      runner.send(:send_analysis_followup_if_needed, bundle)
+
+      assert_equal 1, sent_messages.size
+    end
+
+    test "send_analysis_followup_if_needed logs when send_message fails" do
+      runner = Earl::Runner.new
+
+      mock_session = build_mock_session
+      mock_session.define_singleton_method(:send_message) { |_text| false }
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { analysis_text }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-12345678"
+      )
+
+      logs = capture_logs { runner.send(:send_analysis_followup_if_needed, bundle) }
+      assert_match(/Follow-up send failed/, logs)
+    end
+
+    test "send_analysis_followup_if_needed returns true when follow-up sent" do
+      runner = Earl::Runner.new
+
+      mock_session = build_mock_session(on_send: ->(_text) {})
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { analysis_text }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-ret-true"
+      )
+
+      result = runner.send(:send_analysis_followup_if_needed, bundle)
+      assert_equal true, result
+    end
+
+    test "send_analysis_followup_if_needed returns false when no follow-up needed" do
+      runner = Earl::Runner.new
+
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { "Short text" }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: build_mock_session, response: mock_response, thread_id: "thread-ret-false"
+      )
+
+      result = runner.send(:send_analysis_followup_if_needed, bundle)
+      assert_equal false, result
+    end
+
+    test "send_analysis_followup_if_needed returns false on error" do
+      runner = Earl::Runner.new
+
+      mock_session = build_mock_session
+      mock_session.define_singleton_method(:send_message) { |_text| raise "boom" }
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { analysis_text }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-err-false"
+      )
+
+      result = nil
+      capture_logs { result = runner.send(:send_analysis_followup_if_needed, bundle) }
+      assert_equal false, result
+    end
+
+    test "send_analysis_followup_if_needed rescues errors without crashing" do
+      runner = Earl::Runner.new
+
+      mock_session = build_mock_session
+      mock_session.define_singleton_method(:send_message) { |_text| raise "boom" }
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      mock_response.define_singleton_method(:full_text) { analysis_text }
+      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-12345678"
+      )
+
+      logs = capture_logs { runner.send(:send_analysis_followup_if_needed, bundle) }
+      assert_match(/Analysis follow-up failed.*boom/, logs)
+    end
+
     private
 
     def build_mock_session(on_send: nil)
@@ -1540,6 +1780,16 @@ module Earl
         cache_read_tokens: cache_read_tokens, cache_creation_tokens: cache_creation_tokens,
         context_window: context_window
       )
+    end
+
+    def capture_logs
+      output = StringIO.new
+      original = Earl.logger
+      Earl.logger = Logger.new(output)
+      yield
+      output.string
+    ensure
+      Earl.logger = original
     end
   end
 end
