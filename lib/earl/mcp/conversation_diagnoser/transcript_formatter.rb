@@ -2,7 +2,7 @@
 
 module Earl
   module Mcp
-    class ConversationHandler
+    class ConversationDiagnoser
       # Fetches and formats Mattermost thread posts into a readable transcript.
       module TranscriptFormatter
         MAX_POSTS = 100

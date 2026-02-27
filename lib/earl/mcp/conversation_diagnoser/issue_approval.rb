@@ -2,7 +2,7 @@
 
 module Earl
   module Mcp
-    class ConversationHandler
+    class ConversationDiagnoser
       # Reaction-based approval flow before GitHub issue creation.
       # Posts the analysis to the Mattermost thread with 👍/👎 reactions,
       # then polls via WebSocket for a user decision.

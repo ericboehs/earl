@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-require_relative "conversation_handler/transcript_formatter"
-require_relative "conversation_handler/analysis_prompt"
-require_relative "conversation_handler/subprocess"
-require_relative "conversation_handler/issue_approval"
-require_relative "conversation_handler/github_issue"
+require_relative "conversation_diagnoser/transcript_formatter"
+require_relative "conversation_diagnoser/analysis_prompt"
+require_relative "conversation_diagnoser/subprocess"
+require_relative "conversation_diagnoser/issue_approval"
+require_relative "conversation_diagnoser/github_issue"
 
 module Earl
   module Mcp
@@ -13,7 +13,7 @@ module Earl
     # posts the analysis for user review, and optionally creates a GitHub issue
     # on approval. Conforms to the Server handler interface: tool_definitions,
     # handles?, call.
-    class ConversationHandler
+    class ConversationDiagnoser
       include Logging
       include HandlerBase
 

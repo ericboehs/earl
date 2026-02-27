@@ -4,11 +4,11 @@ require "test_helper"
 
 module Earl
   module Mcp
-    class ConversationHandlerTest < Minitest::Test
+    class ConversationDiagnoserTest < Minitest::Test
       setup do
         @config = build_mock_config
         @api = build_mock_api
-        @handler = Earl::Mcp::ConversationHandler.new(config: @config, api_client: @api)
+        @handler = Earl::Mcp::ConversationDiagnoser.new(config: @config, api_client: @api)
       end
 
       teardown do
@@ -326,27 +326,27 @@ module Earl
       end
 
       def build_handler_with_mock_claude(api, output)
-        handler = Earl::Mcp::ConversationHandler.new(config: @config, api_client: api)
+        handler = Earl::Mcp::ConversationDiagnoser.new(config: @config, api_client: api)
         status = build_exit_status(0)
         handler.define_singleton_method(:execute_claude) { |_prompt| [output, status] }
         handler
       end
 
       def build_handler_with_failed_claude(api, exit_status:)
-        handler = Earl::Mcp::ConversationHandler.new(config: @config, api_client: api)
+        handler = Earl::Mcp::ConversationDiagnoser.new(config: @config, api_client: api)
         status = build_exit_status(exit_status)
         handler.define_singleton_method(:execute_claude) { |_prompt| ["", status] }
         handler
       end
 
       def build_handler_with_timeout(api)
-        handler = Earl::Mcp::ConversationHandler.new(config: @config, api_client: api)
+        handler = Earl::Mcp::ConversationDiagnoser.new(config: @config, api_client: api)
         handler.define_singleton_method(:execute_claude) { |_prompt| raise Timeout::Error, "execution expired" }
         handler
       end
 
       def build_handler_capturing_prompt(api, &block)
-        handler = Earl::Mcp::ConversationHandler.new(config: @config, api_client: api)
+        handler = Earl::Mcp::ConversationDiagnoser.new(config: @config, api_client: api)
         status = build_exit_status(0)
         handler.define_singleton_method(:run_analysis) do |prompt, transcript|
           block.call(prompt, transcript)
@@ -358,7 +358,7 @@ module Earl
 
       def build_handler_for_parsing
         ENV["PLATFORM_TEAM_NAME"] = "myteam"
-        Earl::Mcp::ConversationHandler.new(config: @config, api_client: @api)
+        Earl::Mcp::ConversationDiagnoser.new(config: @config, api_client: @api)
       end
 
       def stub_approval(handler, decision)

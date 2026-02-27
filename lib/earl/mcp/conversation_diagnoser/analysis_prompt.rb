@@ -2,7 +2,7 @@
 
 module Earl
   module Mcp
-    class ConversationHandler
+    class ConversationDiagnoser
       # Single EARL-focused diagnostic prompt for conversation analysis.
       # Produces two-part output separated by "---": a detailed Mattermost
       # analysis (PART 1) and a sanitized GitHub issue body (PART 2).

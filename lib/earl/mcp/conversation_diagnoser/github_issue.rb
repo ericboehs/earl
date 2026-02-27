@@ -4,7 +4,7 @@ require "open3"
 
 module Earl
   module Mcp
-    class ConversationHandler
+    class ConversationDiagnoser
       # Creates sanitized GitHub issues via `gh issue create`.
       # Parses PART 2 of the analysis output to extract title, labels, and body,
       # then appends a Mattermost thread permalink.

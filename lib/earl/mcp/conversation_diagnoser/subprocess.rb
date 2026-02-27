@@ -4,7 +4,7 @@ require "timeout"
 
 module Earl
   module Mcp
-    class ConversationHandler
+    class ConversationDiagnoser
       # Spawns a one-shot `claude --print` subprocess for conversation analysis.
       module Subprocess
         TIMEOUT_SECONDS = 120
