@@ -49,8 +49,10 @@ module Earl
         @app_state.shutdown_thread&.join
         cmd = [RbConfig.ruby, $PROGRAM_NAME]
         log(:info, "Exec: #{cmd.join(" ")}")
-        ENV.delete("CLAUDECODE")
-        Bundler.with_unbundled_env { Kernel.exec(*cmd) }
+        Bundler.with_unbundled_env do
+          ENV.delete("CLAUDECODE")
+          Kernel.exec(*cmd)
+        end
       end
 
       def pull_latest
