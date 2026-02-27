@@ -437,6 +437,32 @@ module Earl
         assert_equal "allow", result[:behavior]
       end
 
+      test "poll_for_reaction responds to ping frames with pong" do
+        handler = build_handler
+        mock_ws = build_mock_websocket
+        request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
+
+        pong_sent = false
+        mock_ws.define_singleton_method(:send) do |_data, **kwargs|
+          pong_sent = true if kwargs[:type] == :pong
+        end
+
+        Thread.new do
+          sleep 0.05
+          mock_ws.fire_message(nil, type: :ping)
+          sleep 0.05
+          emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "user-42")
+        end
+
+        deadline = Time.now + 5
+        context = Earl::Mcp::ApprovalHandler::ReactionPolling::PollContext.new(ws: mock_ws, post_id: "post-123",
+                                                                               request: request, deadline: deadline)
+        result = handler.send(:poll_for_reaction, context)
+
+        assert pong_sent, "Expected pong to be sent in response to ping"
+        assert_equal "allow", result[:behavior]
+      end
+
       private
 
       def build_handler(post_success: true)
@@ -559,13 +585,15 @@ module Earl
           @handlers[event] = block
         end
         ws.define_singleton_method(:close) {}
-        ws.define_singleton_method(:fire_message) do |data|
+        ws.define_singleton_method(:send) { |*_args, **_kwargs| nil }
+        ws.define_singleton_method(:fire_message) do |data, type: :text|
           handler = @handlers[:message]
           return unless handler
 
+          msg_type = type
           msg = Object.new
+          msg.define_singleton_method(:type) { msg_type }
           msg.define_singleton_method(:data) { data }
-          msg.define_singleton_method(:empty?) { data.nil? || data.empty? }
           handler.call(msg)
         end
         ws

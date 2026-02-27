@@ -161,9 +161,19 @@ module Earl
       end
 
       # WebSocket-based reaction polling for permission decisions.
+      # NOTE: websocket-client-simple uses instance_exec for on() callbacks,
+      # changing self to the WebSocket object. Capture method refs as closures
+      # to avoid NoMethodError on our handler methods.
       module ReactionPolling
-        # Bundles poll_for_reaction parameters into a single context object.
+        # Bundles poll parameters into a single context object.
         PollContext = Data.define(:ws, :post_id, :request, :deadline)
+        # Bundles WebSocket message handler dependencies.
+        MessageHandlerContext = Data.define(:ws, :post_id, :extractor, :queue) do
+          def enqueue(msg_data)
+            reaction_data = extractor.call(msg_data)
+            queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == post_id
+          end
+        end
 
         private
 
@@ -175,13 +185,15 @@ module Earl
 
           context = PollContext.new(ws: websocket, post_id: post_id, request: request, deadline: deadline)
           poll_for_reaction(context) || deny_result("Timed out waiting for approval")
+        rescue StandardError => error
+          deny_result("Error waiting for approval: #{error.message}")
         ensure
-          close_websocket(websocket)
+          safe_close(websocket)
         end
 
-        def close_websocket(websocket)
+        def safe_close(websocket)
           websocket&.close
-        rescue StandardError
+        rescue IOError, Errno::ECONNRESET
           nil
         end
 
@@ -205,11 +217,25 @@ module Earl
         end
 
         def register_reaction_listener(context, reaction_queue)
-          websocket, target_post_id = context.deconstruct
-          websocket&.on(:message) do |msg|
-            reaction_data = extract_reaction_data(msg.data)
-            reaction_queue.push(reaction_data) if reaction_data && reaction_data["post_id"] == target_post_id
+          ws_ref, target_post_id = context.deconstruct
+          handler_ctx = build_handler_context(ws_ref, target_post_id, reaction_queue)
+          enqueue = method(:enqueue_reaction)
+          ws_ref&.on(:message) do |msg|
+            msg.type == :ping ? ws_ref.send(nil, type: :pong) : enqueue.call(handler_ctx, msg.data)
           end
+        end
+
+        def build_handler_context(ws_ref, target_post_id, reaction_queue)
+          MessageHandlerContext.new(
+            ws: ws_ref, post_id: target_post_id,
+            extractor: method(:extract_reaction_data), queue: reaction_queue
+          )
+        end
+
+        def enqueue_reaction(ctx, msg_data)
+          ctx.enqueue(msg_data)
+        rescue StandardError => error
+          log(:debug, "MCP approval: error processing WebSocket message: #{error.message}")
         end
 
         def extract_reaction_data(data)
@@ -236,18 +262,23 @@ module Earl
           end
         end
 
-        def valid_user_reaction?(reaction)
-          return false unless reaction
-
-          user_id = reaction["user_id"]
-          user_id != @config.platform_bot_id && allowed_reactor?(user_id)
-        end
-
         def dequeue_reaction(reaction_queue)
           reaction_queue.pop(true)
         rescue ThreadError
           sleep 0.5
           nil
+        end
+      end
+
+      # Reaction classification and user validation for permission decisions.
+      module ReactionClassification
+        private
+
+        def valid_user_reaction?(reaction)
+          return false unless reaction
+
+          user_id = reaction["user_id"]
+          user_id != @config.platform_bot_id && allowed_reactor?(user_id)
         end
 
         def allowed_reactor?(user_id)
@@ -298,6 +329,7 @@ module Earl
 
       include PermissionPosting
       include ReactionPolling
+      include ReactionClassification
       include AllowedToolsPersistence
     end
   end

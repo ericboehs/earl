@@ -83,7 +83,8 @@ module Earl
         return nil unless @config
 
         resolved = [channel_id, @config.channel_id].compact.first
-        build_permission_env(@config, channel_id: resolved, thread_id: thread_id)
+        mcp_config = @config.build_mcp_config(channel_id: resolved, thread_id: thread_id)
+        merge_mcp_config_env(mcp_config)
       end
 
       def build_persisted(session, persist_ctx)

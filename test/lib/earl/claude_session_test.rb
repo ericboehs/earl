@@ -12,6 +12,10 @@ module Earl
       Earl.logger = nil
     end
 
+    def stub_mcp_config(env: { "PLATFORM_URL" => "http://localhost" }, skip_permissions: false)
+      Earl::ClaudeSession::McpConfig.new(env: env, skip_permissions: skip_permissions)
+    end
+
     test "initializes with generated session_id" do
       session = Earl::ClaudeSession.new
       assert_match(/\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/, session.session_id)
@@ -634,12 +638,27 @@ module Earl
     end
 
     test "cli_args includes --permission-prompt-tool with permission_config" do
-      session = Earl::ClaudeSession.new(permission_config: { "PLATFORM_URL" => "http://localhost" })
+      mcp_config = Earl::ClaudeSession::McpConfig.new(
+        env: { "PLATFORM_URL" => "http://localhost" }, skip_permissions: false
+      )
+      session = Earl::ClaudeSession.new(permission_config: mcp_config)
       args = session.send(:cli_args)
 
       assert_includes args, "--permission-prompt-tool"
       assert_includes args, "mcp__earl__permission_prompt"
       assert_not_includes args, "--dangerously-skip-permissions"
+    end
+
+    test "cli_args includes both --dangerously-skip-permissions and --mcp-config when skip_permissions" do
+      mcp_config = Earl::ClaudeSession::McpConfig.new(
+        env: { "PLATFORM_URL" => "http://localhost" }, skip_permissions: true
+      )
+      session = Earl::ClaudeSession.new(permission_config: mcp_config)
+      args = session.send(:cli_args)
+
+      assert_includes args, "--dangerously-skip-permissions"
+      assert_includes args, "--mcp-config"
+      assert_not_includes args, "--permission-prompt-tool"
     end
 
     test "cli_args uses --session-id by default" do
@@ -805,7 +824,7 @@ module Earl
     test "write_mcp_config includes EARL_CURRENT_USERNAME in env" do
       with_mcp_config_dir do
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" },
+          permission_config: stub_mcp_config,
           username: "ericboehs"
         )
         path = session.send(:write_mcp_config)
@@ -819,7 +838,7 @@ module Earl
     test "write_mcp_config uses earl as server name" do
       with_mcp_config_dir do
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" }
+          permission_config: stub_mcp_config
         )
         path = session.send(:write_mcp_config)
         config = JSON.parse(File.read(path))
@@ -832,7 +851,7 @@ module Earl
     test "write_mcp_config creates file with 0600 permissions" do
       with_mcp_config_dir do
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" }
+          permission_config: stub_mcp_config
         )
         path = session.send(:write_mcp_config)
 
@@ -844,7 +863,7 @@ module Earl
     test "write_mcp_config writes to ~/.config/earl/mcp/ directory" do
       with_mcp_config_dir do |mcp_dir|
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" }
+          permission_config: stub_mcp_config
         )
         path = session.send(:write_mcp_config)
 
@@ -864,7 +883,7 @@ module Earl
         File.write(Earl::ClaudeSession.user_mcp_servers_path, JSON.generate(user_servers))
 
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" }
+          permission_config: stub_mcp_config
         )
         path = session.send(:write_mcp_config)
         config = JSON.parse(File.read(path))
@@ -886,7 +905,7 @@ module Earl
         File.write(Earl::ClaudeSession.user_mcp_servers_path, JSON.generate(user_servers))
 
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" }
+          permission_config: stub_mcp_config
         )
         path = session.send(:write_mcp_config)
         config = JSON.parse(File.read(path))
@@ -900,7 +919,7 @@ module Earl
     test "write_mcp_config handles missing mcp_servers.json gracefully" do
       with_mcp_config_dir do
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" }
+          permission_config: stub_mcp_config
         )
         path = session.send(:write_mcp_config)
         config = JSON.parse(File.read(path))
@@ -915,7 +934,7 @@ module Earl
         File.write(Earl::ClaudeSession.user_mcp_servers_path, "not valid json{{{")
 
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" }
+          permission_config: stub_mcp_config
         )
         path = session.send(:write_mcp_config)
         config = JSON.parse(File.read(path))
@@ -930,7 +949,7 @@ module Earl
         File.write(Earl::ClaudeSession.user_mcp_servers_path, JSON.generate({ "other" => "data" }))
 
         session = Earl::ClaudeSession.new(
-          permission_config: { "PLATFORM_URL" => "http://localhost" }
+          permission_config: stub_mcp_config
         )
         path = session.send(:write_mcp_config)
         config = JSON.parse(File.read(path))

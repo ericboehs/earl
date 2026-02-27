@@ -143,14 +143,15 @@ module Earl
       assert_nil opts[:permission_config]
     end
 
-    test "permission_config returns hash for interactive mode" do
+    test "permission_config returns McpConfig for interactive mode" do
       ENV["EARL_SKIP_PERMISSIONS"] = "false"
       scheduler = build_scheduler
       definition = build_definition(permission_mode: :interactive)
       opts = scheduler.send(:heartbeat_session_opts, definition)
       config = opts[:permission_config]
-      assert_equal "https://mattermost.example.com", config["PLATFORM_URL"]
-      assert_equal "test-token", config["PLATFORM_TOKEN"]
+      assert_instance_of Earl::ClaudeSession::McpConfig, config
+      assert_equal "https://mattermost.example.com", config.env["PLATFORM_URL"]
+      assert_equal "test-token", config.env["PLATFORM_TOKEN"]
     end
 
     test "start initializes states and starts scheduler thread" do

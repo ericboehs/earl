@@ -42,17 +42,22 @@ module Earl
       @channels ||= parse_channels
     end
 
-    # Builds the env hash for the MCP permission server.
-    # Returns nil when permissions are globally skipped.
-    def permission_env(channel_id:, thread_id: "")
-      return nil if skip_permissions?
-
+    # Builds the env hash for the MCP server subprocess.
+    # Always returns the env hash — MCP tools are needed regardless
+    # of whether permission prompts are skipped.
+    def mcp_server_env(channel_id:, thread_id: "")
       url, token, bot_id = credentials.to_h.values_at(:url, :bot_token, :bot_id)
       {
         "PLATFORM_URL" => url, "PLATFORM_TOKEN" => token,
         "PLATFORM_CHANNEL_ID" => channel_id, "PLATFORM_THREAD_ID" => thread_id,
         "PLATFORM_BOT_ID" => bot_id, "ALLOWED_USERS" => allowed_users.join(",")
       }
+    end
+
+    # Builds a complete McpConfig for a Claude session, bundling env and permission mode.
+    def build_mcp_config(channel_id:, thread_id: "")
+      env = mcp_server_env(channel_id: channel_id, thread_id: thread_id)
+      ClaudeSession::McpConfig.new(env: env, skip_permissions: skip_permissions?)
     end
 
     private
