@@ -533,6 +533,34 @@ module Earl
       assert_equal "Can u approve 4", posts[2][:message]
     end
 
+    test "get_thread_posts includes file_ids from posts" do
+      mm = Earl::Mattermost.new(@config)
+      api = mm.instance_variable_get(:@api)
+
+      thread_data = {
+        "posts" => {
+          "post-1" => { "id" => "post-1", "user_id" => "user-999", "message" => "see this",
+                        "props" => {}, "file_ids" => %w[file-a file-b] },
+          "post-2" => { "id" => "post-2", "user_id" => "bot-123", "message" => "I see it",
+                        "props" => { "from_bot" => "true" } }
+        },
+        "order" => %w[post-2 post-1]
+      }
+
+      api.define_singleton_method(:get) do |_path|
+        response = Object.new
+        response.define_singleton_method(:body) { JSON.generate(thread_data) }
+        response.define_singleton_method(:is_a?) do |klass|
+          klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+        end
+        response
+      end
+
+      posts = mm.get_thread_posts("post-1")
+      assert_equal %w[file-a file-b], posts[0][:file_ids]
+      assert_equal [], posts[1][:file_ids]
+    end
+
     test "get_thread_posts returns empty array on API failure" do
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)

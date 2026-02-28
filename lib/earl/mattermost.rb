@@ -128,7 +128,8 @@ module Earl
       from_bot = post.dig("props", "from_bot") == "true"
       message = post["message"] || ""
       user_id = post["user_id"]
-      { sender: from_bot ? "EARL" : "user", message: message, is_bot: user_id == bot_id }
+      file_ids = post["file_ids"] || []
+      { sender: from_bot ? "EARL" : "user", message: message, is_bot: user_id == bot_id, file_ids: file_ids }
     end
 
     # WebSocket lifecycle methods extracted to reduce class method count.

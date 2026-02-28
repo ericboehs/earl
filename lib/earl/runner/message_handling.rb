@@ -75,18 +75,34 @@ module Earl
       end
 
       def build_contextual_text(thread_id, text)
-        ThreadContextBuilder.new(mattermost: @services.mattermost).build(thread_id, text)
+        ThreadContextBuilder.new(mattermost: @services.mattermost, content_builder: content_builder)
+                            .build(thread_id, text)
       end
 
-      def attach_images(text, file_ids)
-        return text if file_ids.empty?
+      # Image content assembly: attaches and merges image blocks with text.
+      module ContentAssembly
+        private
 
-        content_builder.build(text, file_ids)
+        def attach_images(content, file_ids)
+          return content if file_ids.empty?
+          return merge_image_blocks(content, file_ids) if content.is_a?(Array)
+
+          content_builder.build(content, file_ids)
+        end
+
+        def merge_image_blocks(blocks, file_ids)
+          new_blocks = content_builder.build("", file_ids)
+          return blocks unless new_blocks.is_a?(Array)
+
+          blocks.concat(new_blocks)
+        end
+
+        def content_builder
+          @content_builder ||= ImageSupport::ContentBuilder.new(mattermost: @services.mattermost)
+        end
       end
 
-      def content_builder
-        @content_builder ||= ImageSupport::ContentBuilder.new(mattermost: @services.mattermost)
-      end
+      include ContentAssembly
 
       def send_and_touch(session, thread_id, message)
         sent = session.send_message(message)
