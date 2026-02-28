@@ -147,7 +147,7 @@ module Earl
         assert_equal 0, image_blocks.size
       end
 
-      test "skips image blocks for posts with nil file_ids" do
+      test "builds image blocks only from posts that have file_ids, skipping posts with missing file_ids" do
         posts = [
           { sender: "user", message: "has image", is_bot: false, file_ids: ["file-1"] },
           { sender: "EARL", message: "reply", is_bot: true }

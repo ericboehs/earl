@@ -754,7 +754,11 @@ module Earl
       stub_singleton(mock_mm, :create_post) { |**_args| raise error }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
-      assert_nothing_raised { response.on_text_with_images("text", []) }
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: "/tmp/test.png", media_type: "image/png", filename: "test.png"
+      )
+      assert_nothing_raised { response.on_text_with_images("text", [ref]) }
     end
 
     # --- add_image_refs tests ---
