@@ -12,13 +12,13 @@ module Earl
 
     # Holds the Mattermost thread and channel context for posting.
     Context = Struct.new(:thread_id, :mattermost, :channel_id, keyword_init: true)
-    # Tracks the reply post lifecycle: ID, failure state, text, debounce timing, and typing thread.
+    # Tracks the reply post lifecycle: ID, failure state, text, debounce timing, typing thread, and image refs.
     PostState = Struct.new(:reply_post_id, :create_failed, :full_text, :last_update_at,
-                           :debounce_timer, :typing_thread, keyword_init: true)
+                           :debounce_timer, :typing_thread, :image_refs, keyword_init: true)
 
     def initialize(thread_id:, mattermost:, channel_id:)
       @context = Context.new(thread_id: thread_id, mattermost: mattermost, channel_id: channel_id)
-      @post_state = PostState.new(create_failed: false, full_text: "", last_update_at: Time.now)
+      @post_state = PostState.new(create_failed: false, full_text: "", last_update_at: Time.now, image_refs: [])
       @segments = []
       @mutex = Mutex.new
     end
@@ -49,6 +49,16 @@ module Earl
       @mutex.synchronize { finalize }
     rescue StandardError => error
       log(:error, "Completion error (thread #{short_id}): #{error.class}: #{error.message}")
+      log(:error, error.backtrace&.first(5)&.join("\n"))
+    end
+
+    def on_text_with_images(text, image_refs)
+      @mutex.synchronize do
+        handle_text(text)
+        @post_state.image_refs.concat(image_refs)
+      end
+    rescue StandardError => error
+      log(:error, "Streaming error (thread #{short_id}): #{error.class}: #{error.message}")
       log(:error, error.backtrace&.first(5)&.join("\n"))
     end
 
@@ -150,6 +160,7 @@ module Earl
 
         final_text = build_final_text
         apply_final_text(ps, final_text)
+        upload_collected_images
       end
 
       def finalize_empty?(post_state)
@@ -196,27 +207,81 @@ module Earl
     include PostUpdating
     include Finalization
 
-    def handle_tool_use_display(tool_use)
-      return if tool_use[:name] == "AskUserQuestion"
+    # Uploads detected images to Mattermost and posts them as file attachments.
+    module ImageAttachment
+      private
 
-      @segments << format_tool_use(tool_use)
-      @post_state.full_text = @segments.join("\n\n")
-      stop_typing
+      def upload_collected_images
+        refs = @post_state.image_refs
+        return if refs.empty?
 
-      return if @post_state.create_failed
-      return create_initial_post(@post_state.full_text) unless posted?
+        file_ids = refs.filter_map { |ref| upload_image_ref(ref) }
+        post_image_attachments(file_ids) unless file_ids.empty?
+      end
 
-      schedule_update
+      def upload_image_ref(ref)
+        content = read_image_content(ref)
+        return nil unless content
+
+        upload = Mattermost::ApiClient::FileUpload.new(
+          channel_id: @context.channel_id, filename: ref.filename,
+          content: content, content_type: ref.media_type
+        )
+        result = @context.mattermost.upload_file(upload)
+        extract_file_id(result)
+      end
+
+      def read_image_content(ref)
+        source, data, _media_type, filename = ref.deconstruct
+        source == :file_path ? File.binread(data) : Base64.decode64(data)
+      rescue StandardError => error
+        log(:warn, "Failed to read image #{filename}: #{error.message}")
+        nil
+      end
+
+      def extract_file_id(result)
+        result.dig("file_infos", 0, "id")
+      end
+
+      def post_image_attachments(file_ids)
+        file_post = Mattermost::FileHandling::FilePost.new(
+          channel_id: @context.channel_id, message: "",
+          root_id: @context.thread_id, file_ids: file_ids
+        )
+        @context.mattermost.create_post_with_files(file_post)
+      end
     end
 
-    def format_tool_use(tool_use)
-      name, input = tool_use.values_at(:name, :input)
-      format_tool_display(name, input)
+    include ImageAttachment
+
+    # Tool use display formatting and segment classification.
+    module ToolDisplay
+      private
+
+      def handle_tool_use_display(tool_use)
+        return if tool_use[:name] == "AskUserQuestion"
+
+        @segments << format_tool_use(tool_use)
+        @post_state.full_text = @segments.join("\n\n")
+        stop_typing
+
+        return if @post_state.create_failed
+        return create_initial_post(@post_state.full_text) unless posted?
+
+        schedule_update
+      end
+
+      def format_tool_use(tool_use)
+        name, input = tool_use.values_at(:name, :input)
+        format_tool_display(name, input)
+      end
+
+      def tool_segment?(segment)
+        TOOL_PREFIXES.any? { |prefix| segment.start_with?(prefix) }
+      end
     end
 
-    def tool_segment?(segment)
-      TOOL_PREFIXES.any? { |prefix| segment.start_with?(prefix) }
-    end
+    include ToolDisplay
 
     def short_id
       @context.thread_id[0..7]

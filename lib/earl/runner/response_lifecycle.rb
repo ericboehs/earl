@@ -21,7 +21,8 @@ module Earl
       def wire_all_callbacks(bundle)
         session, response, thread_id = bundle.deconstruct
         resp_channel_id = response.channel_id
-        wire_text_callbacks(session, response)
+        wire_text_callback(session, response)
+        wire_system_callback(session, response)
         session.on_complete { |_| handle_response_complete(thread_id) }
         session.on_tool_use do |tool_use|
           response.on_tool_use(tool_use)
@@ -29,9 +30,20 @@ module Earl
         end
       end
 
-      def wire_text_callbacks(session, response)
-        session.on_text { |text| response.on_text(text) }
+      def wire_text_callback(session, response)
+        detector = output_detector
+        session.on_text do |text|
+          refs = detector.detect_in_text(text)
+          response.on_text_with_images(text, refs)
+        end
+      end
+
+      def wire_system_callback(session, response)
         session.on_system { |event| response.on_text(event[:message]) }
+      end
+
+      def output_detector
+        @output_detector ||= ImageSupport::OutputDetector.new
       end
 
       def handle_tool_use(thread_id:, tool_use:, channel_id:)

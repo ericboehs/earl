@@ -79,12 +79,23 @@ module Earl
 
     # File operations extracted to keep class method count under threshold.
     module FileHandling
+      # Bundles parameters for creating a post with file attachments.
+      FilePost = Data.define(:channel_id, :message, :root_id, :file_ids)
+
       def download_file(file_id)
         @api.get("/files/#{file_id}")
       end
 
       def get_file_info(file_id)
         parse_post_response(@api.get("/files/#{file_id}/info"))
+      end
+
+      def upload_file(upload)
+        parse_post_response(@api.post_multipart("/files", upload))
+      end
+
+      def create_post_with_files(file_post)
+        parse_post_response(@api.post("/posts", file_post.to_h))
       end
     end
 

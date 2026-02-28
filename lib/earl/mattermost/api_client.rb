@@ -10,6 +10,9 @@ module Earl
       # Encapsulates an HTTP request's method, path, and body.
       Request = Struct.new(:method_class, :path, :body, keyword_init: true)
 
+      # Bundles file upload parameters to avoid long parameter lists.
+      FileUpload = Data.define(:channel_id, :filename, :content, :content_type)
+
       def initialize(config)
         @config = config
       end
@@ -28,6 +31,17 @@ module Earl
 
       def delete(path)
         execute(Request.new(method_class: Net::HTTP::Delete, path: path, body: nil))
+      end
+
+      def post_multipart(path, upload)
+        uri = URI.parse(@config.api_url(path))
+        req = build_multipart_request(uri, upload)
+        response = send_request(uri, req)
+        unless response.is_a?(Net::HTTPSuccess)
+          log(:error, "Mattermost API POST #{uri.path} multipart failed: " \
+                      "#{response.code} #{response.body[0..200]}")
+        end
+        response
       end
 
       private
@@ -80,6 +94,44 @@ module Earl
                         use_ssl: @config.mattermost_url.start_with?("https"),
                         open_timeout: 10, read_timeout: 15, &)
       end
+
+      # Multipart form-data encoding for file uploads.
+      module MultipartEncoding
+        BOUNDARY_PREFIX = "EarlUpload"
+
+        private
+
+        def build_multipart_request(uri, upload)
+          boundary = "#{BOUNDARY_PREFIX}#{SecureRandom.hex(16)}"
+          req = build_request(Net::HTTP::Post, uri, nil)
+          req["Content-Type"] = "multipart/form-data; boundary=#{boundary}"
+          req.body = encode_multipart_body(boundary, upload)
+          req
+        end
+
+        def encode_multipart_body(boundary, upload)
+          parts = [
+            field_part(boundary, "channel_id", upload.channel_id),
+            file_part(boundary, upload)
+          ]
+          "#{parts.join}\r\n--#{boundary}--\r\n"
+        end
+
+        def field_part(boundary, name, value)
+          "--#{boundary}\r\n" \
+            "Content-Disposition: form-data; name=\"#{name}\"\r\n\r\n" \
+            "#{value}\r\n"
+        end
+
+        def file_part(boundary, upload)
+          "--#{boundary}\r\n" \
+            "Content-Disposition: form-data; name=\"files\"; filename=\"#{upload.filename}\"\r\n" \
+            "Content-Type: #{upload.content_type}\r\n\r\n" \
+            "#{upload.content}\r\n"
+        end
+      end
+
+      include MultipartEncoding
     end
   end
 end
