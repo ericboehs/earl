@@ -48,10 +48,15 @@ module Earl
       def wire_tool_result_callback(bundle)
         detector = output_detector
         session, response, _thread_id = bundle.deconstruct
+        work_dir = session.working_dir
         session.on_tool_result do |tool_result|
-          refs = detector.detect_inline_images(tool_result[:images])
+          refs = detect_inline(detector, tool_result, work_dir)
           response.add_image_refs(refs) unless refs.empty?
         end
+      end
+
+      def detect_inline(detector, tool_result, work_dir)
+        detector.detect_inline_images(tool_result[:images], texts: tool_result[:texts], working_dir: work_dir)
       end
 
       def detect_images(detector, text, tool_name)

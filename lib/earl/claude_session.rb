@@ -67,25 +67,12 @@ module Earl
 
     attr_reader :session_id, :stats
 
-    def on_text(&block)
-      @runtime.callbacks.on_text = block
-    end
-
-    def on_complete(&block)
-      @runtime.callbacks.on_complete = block
-    end
-
-    def on_tool_use(&block)
-      @runtime.callbacks.on_tool_use = block
-    end
-
-    def on_system(&block)
-      @runtime.callbacks.on_system = block
-    end
-
-    def on_tool_result(&block)
-      @runtime.callbacks.on_tool_result = block
-    end
+    def working_dir = @options.working_dir
+    def on_text(&block) = @runtime.callbacks.on_text = block
+    def on_complete(&block) = @runtime.callbacks.on_complete = block
+    def on_tool_use(&block) = @runtime.callbacks.on_tool_use = block
+    def on_system(&block) = @runtime.callbacks.on_system = block
+    def on_tool_result(&block) = @runtime.callbacks.on_tool_result = block
 
     def send_message(content)
       return warn_dead_session unless alive?
@@ -393,14 +380,18 @@ module Earl
       end
 
       def emit_images_from_result(item)
-        images = extract_image_blocks(item["content"])
-        @runtime.callbacks.on_tool_result&.call(images: images) unless images.empty?
+        nested = item["content"]
+        return unless nested.is_a?(Array)
+
+        images = nested.select { |block| block["type"] == "image" }
+        texts = extract_text_content(nested)
+        return if images.empty? && texts.empty?
+
+        @runtime.callbacks.on_tool_result&.call(images: images, texts: texts)
       end
 
-      def extract_image_blocks(nested)
-        return [] unless nested.is_a?(Array)
-
-        nested.select { |block| block["type"] == "image" }
+      def extract_text_content(nested)
+        nested.filter_map { |block| block["text"] if block["type"] == "text" }
       end
     end
 

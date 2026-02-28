@@ -20,6 +20,11 @@ module Earl
         ".gif" => "image/gif", ".webp" => "image/webp"
       }.freeze
       IMAGE_PATH_PATTERN = %r{(?:^|[\s`*\[("])(/[^\s`*\])"',]+(?:\.png|\.jpe?g|\.gif|\.webp))(?:[\s`*\])",.:;!?]|$)}i
+      RELATIVE_IMAGE_PATTERN = %r{
+        (?:^|[\s`*\[("]) # leading context
+        (\.?[a-zA-Z0-9_.-]+/[^\s`*\])"',]+(?:\.png|\.jpe?g|\.gif|\.webp)) # relative path
+        (?:[\s`*\])",.:;!?]|$) # trailing context
+      }ix
 
       BASE64_SIGNATURES = [
         Base64Signature.new(pattern: %r{iVBOR[A-Za-z0-9+/=]{100,}}, media_type: "image/png",
@@ -36,25 +41,44 @@ module Earl
         refs
       end
 
-      def detect_in_text(text)
-        return [] unless text.is_a?(String)
+      def detect_in_text(text) = text.is_a?(String) ? detect_file_paths(text) : []
 
-        detect_file_paths(text)
-      end
+      def detect_inline_images(image_blocks, texts: [], working_dir: nil)
+        return [] unless image_blocks.is_a?(Array) || texts.is_a?(Array)
 
-      def detect_inline_images(image_blocks)
-        return [] unless image_blocks.is_a?(Array)
+        file_refs = scan_texts_for_paths(Array(texts), working_dir)
+        unless file_refs.empty?
+          log_image_count(file_refs.size)
+          return file_refs
+        end
 
-        refs = image_blocks.filter_map { |block| build_inline_reference(block) }
-        log(:info, "Detected #{refs.size} inline images from tool result") unless refs.empty?
+        refs = Array(image_blocks).filter_map { |block| build_inline_reference(block) }
+        log_image_count(refs.size) unless refs.empty?
         refs
       end
 
       private
 
       def detect_file_paths(text)
-        text.scan(IMAGE_PATH_PATTERN).filter_map do |match|
-          build_file_reference(match[0])
+        text.scan(IMAGE_PATH_PATTERN).filter_map { |match| build_file_reference(match[0]) }
+      end
+
+      def scan_texts_for_paths(texts, working_dir)
+        texts.flat_map { |text| detect_paths_with_resolve(text, working_dir) }
+      end
+
+      def detect_paths_with_resolve(text, working_dir)
+        abs_refs = detect_file_paths(text)
+        rel_refs = resolve_relative_paths(text, working_dir)
+        abs_refs.concat(rel_refs)
+      end
+
+      def resolve_relative_paths(text, working_dir)
+        return [] unless working_dir
+
+        text.scan(RELATIVE_IMAGE_PATTERN).filter_map do |match|
+          resolved = File.expand_path(match[0], working_dir)
+          build_file_reference(resolved)
         end
       end
 
@@ -95,19 +119,17 @@ module Earl
       end
 
       def infer_media_type(base64_data)
-        return "image/png" if base64_data.start_with?("iVBOR")
         return "image/jpeg" if base64_data.start_with?("/9j/")
 
         "image/png"
       end
 
-      def inline_filename(media_type)
-        ext = MEDIA_TYPES.key(media_type) || ".png"
-        "screenshot#{ext}"
-      end
+      def inline_filename(media_type) = "screenshot#{MEDIA_TYPES.key(media_type) || ".png"}"
 
-      def media_type_for(path)
-        MEDIA_TYPES.fetch(File.extname(path).downcase, "application/octet-stream")
+      def media_type_for(path) = MEDIA_TYPES.fetch(File.extname(path).downcase, "application/octet-stream")
+
+      def log_image_count(count)
+        log(:info, "Detected #{count} image(s) in tool result")
       end
 
       def log_skip(path, reason)

@@ -92,6 +92,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
       mock_session.define_singleton_method(:total_cost) { 0.05 }
       mock_session.define_singleton_method(:stats) { stats }
@@ -160,6 +161,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&_block| }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
@@ -225,6 +227,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
       mock_session.define_singleton_method(:total_cost) { 0.0 }
       mock_session.define_singleton_method(:stats) { stats }
@@ -266,6 +269,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&_block| }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
@@ -349,6 +353,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
       mock_session.define_singleton_method(:total_cost) { 0.0 }
       mock_session.define_singleton_method(:stats) { stats }
@@ -410,6 +415,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
       mock_session.define_singleton_method(:total_cost) { 0.0 }
       mock_session.define_singleton_method(:stats) { stats }
@@ -509,6 +515,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&_block| }
       mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
@@ -536,6 +543,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&_block| }
       mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
@@ -622,6 +630,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
       mock_session.define_singleton_method(:stats) { stats }
 
@@ -665,6 +674,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
       mock_session.define_singleton_method(:stats) { stats }
 
@@ -789,6 +799,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&_block| }
       mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
@@ -862,6 +873,7 @@ module Earl
       mock_session.define_singleton_method(:on_complete) { |&_block| }
       mock_session.define_singleton_method(:on_tool_use) { |&_block| }
       mock_session.define_singleton_method(:on_tool_result) { |&_block| }
+      mock_session.define_singleton_method(:working_dir) { nil }
       mock_session.define_singleton_method(:send_message) { |_text| false } # Dead session
       mock_session.define_singleton_method(:stats) do
         Earl::ClaudeSession::Stats.new(
@@ -1524,6 +1536,7 @@ module Earl
       mock.define_singleton_method(:on_complete) { |&_block| }
       mock.define_singleton_method(:on_tool_use) { |&_block| }
       mock.define_singleton_method(:on_tool_result) { |&_block| }
+      mock.define_singleton_method(:working_dir) { nil }
       mock.define_singleton_method(:send_message) { |text| on_send&.call(text) }
       mock.define_singleton_method(:total_cost) { 0.0 }
       mock.define_singleton_method(:stats) do

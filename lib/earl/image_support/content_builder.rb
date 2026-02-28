@@ -23,6 +23,7 @@ module Earl
         image_blocks = file_ids.filter_map { |fid| build_image_block(fid) }
         return text if image_blocks.empty?
 
+        log(:info, "Built #{image_blocks.size} image block(s) from #{file_ids.size} file(s)")
         assemble_content(image_blocks, text)
       end
 
@@ -41,7 +42,8 @@ module Earl
         return log_skip(file_id, "download failed") unless response.is_a?(Net::HTTPSuccess)
 
         body = response.body
-        return log_skip(file_id, "exceeds 5MB (#{body.bytesize} bytes)") if body.bytesize > MAX_IMAGE_BYTES
+        size = body.bytesize
+        return log_skip(file_id, "exceeds 5MB (#{size} bytes)") if size > MAX_IMAGE_BYTES
 
         encode_block(body, mime_type)
       end

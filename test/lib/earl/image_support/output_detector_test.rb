@@ -286,6 +286,92 @@ module Earl
         assert_equal "image/png", refs[0].media_type
         assert_equal "image/jpeg", refs[1].media_type
       end
+
+      # --- File-path preference over inline base64 ---
+
+      test "detect_inline_images prefers file paths from texts over inline base64" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "page-screenshot.png")
+          File.write(path, "high-res png data")
+
+          blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } }]
+
+          refs = @detector.detect_inline_images(blocks, texts: [path.to_s], working_dir: nil)
+
+          assert_equal 1, refs.size
+          assert_equal :file_path, refs[0].source
+          assert_equal path, refs[0].data
+        end
+      end
+
+      test "detect_inline_images resolves relative paths with working_dir" do
+        Dir.mktmpdir do |dir|
+          subdir = File.join(dir, ".playwright-mcp")
+          FileUtils.mkdir_p(subdir)
+          path = File.join(subdir, "page-1.png")
+          File.write(path, "screenshot data")
+
+          blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } }]
+
+          refs = @detector.detect_inline_images(blocks, texts: [".playwright-mcp/page-1.png"], working_dir: dir)
+
+          assert_equal 1, refs.size
+          assert_equal :file_path, refs[0].source
+          assert_equal path, refs[0].data
+          assert_equal "page-1.png", refs[0].filename
+        end
+      end
+
+      test "detect_inline_images ignores relative paths without working_dir" do
+        blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } }]
+
+        refs = @detector.detect_inline_images(blocks, texts: [".playwright-mcp/page-1.png"], working_dir: nil)
+
+        assert_equal 1, refs.size
+        assert_equal :base64, refs[0].source
+      end
+
+      test "detect_inline_images falls back to base64 when texts have no valid paths" do
+        blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } }]
+
+        refs = @detector.detect_inline_images(blocks, texts: ["no image paths here"], working_dir: "/tmp")
+
+        assert_equal 1, refs.size
+        assert_equal :base64, refs[0].source
+      end
+
+      test "detect_inline_images handles absolute paths in texts" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "output.png")
+          File.write(path, "png data")
+
+          blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } }]
+
+          refs = @detector.detect_inline_images(blocks, texts: ["Saved to #{path} successfully"], working_dir: nil)
+
+          assert_equal 1, refs.size
+          assert_equal :file_path, refs[0].source
+          assert_equal path, refs[0].data
+        end
+      end
+
+      test "detect_inline_images with empty texts falls back to base64" do
+        blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } }]
+
+        refs = @detector.detect_inline_images(blocks, texts: [], working_dir: "/tmp")
+
+        assert_equal 1, refs.size
+        assert_equal :base64, refs[0].source
+      end
+
+      test "detect_inline_images with nil texts falls back to base64" do
+        blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } }]
+
+        refs = @detector.detect_inline_images(blocks, texts: nil)
+
+        assert_equal 1, refs.size
+        assert_equal :base64, refs[0].source
+      end
     end
   end
 end
