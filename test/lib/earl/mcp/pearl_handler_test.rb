@@ -906,6 +906,102 @@ module Earl
         end
       end
 
+      # --- file_ids support ---
+
+      test "tool_definitions includes file_ids property" do
+        schema = @handler.tool_definitions.first[:inputSchema]
+        assert schema[:properties].key?(:file_ids), "Expected file_ids property in schema"
+        assert_equal "array", schema[:properties][:file_ids][:type]
+      end
+
+      test "resolve_image_data prefers explicit image_data over file_ids" do
+        images = [{ "filename" => "a.png", "base64_data" => "abc" }]
+        args = { "image_data" => images, "file_ids" => ["fid-1"] }
+        result = @handler.send(:resolve_image_data, args)
+        assert_equal images, result
+      end
+
+      test "resolve_image_data downloads from Mattermost when no image_data" do
+        api = Object.new
+        info_body = JSON.generate({ "name" => "photo.png", "mime_type" => "image/png" })
+        file_body = "raw png bytes"
+        stub_singleton(api, :get) do |path|
+          response = Object.new
+          body = path.end_with?("/info") ? info_body : file_body
+          stub_singleton(response, :body) { body }
+          stub_singleton(response, :is_a?) do |klass|
+            klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api, tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:resolve_image_data, { "file_ids" => ["fid-1"] })
+
+        assert_equal 1, result.size
+        assert_equal "photo.png", result.first["filename"]
+        assert_equal Base64.strict_encode64("raw png bytes"), result.first["base64_data"]
+        assert_equal "image/png", result.first["media_type"]
+      end
+
+      test "resolve_image_data returns empty array when neither provided" do
+        result = @handler.send(:resolve_image_data, {})
+        assert_equal [], result
+      end
+
+      test "download_single_file returns nil when info request fails" do
+        result = @handler.send(:download_single_file, "bad-fid")
+        assert_nil result
+      end
+
+      test "download_single_file returns nil when data request fails" do
+        api = Object.new
+        call_count = 0
+        stub_singleton(api, :get) do |_path|
+          call_count += 1
+          response = Object.new
+          if call_count == 1
+            stub_singleton(response, :body) { '{"name":"x.png","mime_type":"image/png"}' }
+            stub_singleton(response, :is_a?) do |klass|
+              klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+            end
+          else
+            stub_singleton(response, :is_a?) { |_klass| false }
+          end
+          response
+        end
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api, tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:download_single_file, "fid-1")
+        assert_nil result
+      end
+
+      test "build_file_data uses defaults when name and mime_type are nil" do
+        result = @handler.send(:build_file_data, {}, "raw bytes")
+        assert_equal "image.png", result["filename"]
+        assert_equal "image/png", result["media_type"]
+        assert_equal Base64.strict_encode64("raw bytes"), result["base64_data"]
+      end
+
+      test "download_single_file returns nil on JSON parse error" do
+        api = Object.new
+        stub_singleton(api, :get) do |_path|
+          response = Object.new
+          stub_singleton(response, :body) { "not json" }
+          stub_singleton(response, :is_a?) do |klass|
+            klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api, tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:download_single_file, "fid-1")
+        assert_nil result
+      end
+
       # --- ApiClientAdapter ---
 
       test "ApiClientAdapter upload_file delegates to api post_multipart" do

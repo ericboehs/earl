@@ -1927,6 +1927,23 @@ module Earl
       assert_equal existing_blocks, result
     end
 
+    # --- annotate_file_metadata ---
+
+    test "annotate_file_metadata returns text unchanged when file_ids empty" do
+      runner = Earl::Runner.new
+      result = runner.send(:annotate_file_metadata, "hello", [])
+      assert_equal "hello", result
+    end
+
+    test "annotate_file_metadata appends file_ids to text" do
+      runner = Earl::Runner.new
+      result = runner.send(:annotate_file_metadata, "describe this", %w[fid-abc fid-def])
+      assert_includes result, "describe this"
+      assert_includes result, "fid-abc"
+      assert_includes result, "fid-def"
+      assert_includes result, "Attached Mattermost file IDs"
+    end
+
     # --- callback_wiring detect_images tests ---
 
     test "wire_text_callback passes image refs via on_text_with_images" do

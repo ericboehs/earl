@@ -177,7 +177,7 @@ module Earl
           agent, prompt = arguments.values_at("agent", "prompt")
           window_name = "#{agent}-#{SecureRandom.hex(2)}"
           log_path = File.join(pearl_log_dir, "#{window_name}.log")
-          image_dir = write_inbound_images(arguments["image_data"], window_name)
+          image_dir = write_inbound_images(resolve_image_data(arguments), window_name)
           RunRequest.new(agent: agent, prompt: prompt, window_name: window_name,
                          log_path: log_path, image_dir: image_dir)
         end
@@ -568,12 +568,14 @@ module Earl
             action: action_property,
             agent: { type: "string", description: "Agent profile name (e.g., 'code'). Required for run." },
             prompt: { type: "string", description: "Prompt for the PEARL agent session. Required for run." },
-            target: {
-              type: "string",
-              description: "Tmux target (e.g., 'pearl-agents:code-ab12'). Required for status."
-            },
-            image_data: image_data_property
+            target: target_property,
+            image_data: image_data_property,
+            file_ids: file_ids_property
           }
+        end
+
+        def target_property
+          { type: "string", description: "Tmux target (e.g., 'pearl-agents:code-ab12'). Required for status." }
         end
 
         def action_property
@@ -597,6 +599,54 @@ module Earl
               media_type: { type: "string", description: "MIME type (e.g., 'image/png')" }
             },
             required: %w[base64_data]
+          }
+        end
+
+        def file_ids_property
+          {
+            type: "array",
+            description: "Mattermost file IDs to download and pass as images to the agent. " \
+                         "Alternative to image_data — the handler downloads files automatically.",
+            items: { type: "string" }
+          }
+        end
+      end
+
+      # Downloads Mattermost files by ID, converting them to the image_data format
+      # used by write_inbound_images.
+      module MattermostDownload
+        private
+
+        def resolve_image_data(arguments)
+          image_data, file_ids = arguments.values_at("image_data", "file_ids")
+          explicit = Array(image_data)
+          return explicit unless explicit.empty?
+
+          download_mattermost_files(Array(file_ids))
+        end
+
+        def download_mattermost_files(file_ids)
+          file_ids.filter_map { |fid| download_single_file(fid) }
+        end
+
+        def download_single_file(file_id)
+          info_response = @api.get("/files/#{file_id}/info")
+          return unless info_response.is_a?(Net::HTTPSuccess)
+
+          data_response = @api.get("/files/#{file_id}")
+          return unless data_response.is_a?(Net::HTTPSuccess)
+
+          info = JSON.parse(info_response.body)
+          build_file_data(info, data_response.body)
+        rescue JSON::ParserError
+          nil
+        end
+
+        def build_file_data(info, body)
+          {
+            "filename" => info["name"] || "image.png",
+            "base64_data" => Base64.strict_encode64(body),
+            "media_type" => info["mime_type"] || "image/png"
           }
         end
       end
@@ -655,6 +705,7 @@ module Earl
       include RunPolling
       include ReactionClassification
       include ToolDefinitionBuilder
+      include MattermostDownload
       include PearlBinResolver
     end
   end
