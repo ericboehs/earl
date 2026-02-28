@@ -68,6 +68,12 @@ module Earl
       @post_state.typing_thread = nil
     end
 
+    def add_image_refs(refs)
+      @mutex.synchronize { @post_state.image_refs.concat(refs) }
+    rescue StandardError => error
+      log(:error, "Image ref error (thread #{short_id}): #{error.class}: #{error.message}")
+    end
+
     private
 
     def typing_loop

@@ -348,7 +348,7 @@ module Earl
       ENV["PATH"] = "#{fake_bin}:#{original_path}"
 
       session.start
-      sleep 0.3
+      sleep 0.5
 
       assert_not session.alive?
     ensure

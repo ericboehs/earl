@@ -33,7 +33,7 @@ module Earl
       end
     end
     # Holds text-streaming, tool-use, and completion callback procs.
-    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_system, keyword_init: true)
+    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_tool_result, :on_system, keyword_init: true)
     # Bundles MCP server env with permission mode to avoid boolean parameters.
     McpConfig = Data.define(:env, :skip_permissions)
 
@@ -81,6 +81,10 @@ module Earl
 
     def on_system(&block)
       @runtime.callbacks.on_system = block
+    end
+
+    def on_tool_result(&block)
+      @runtime.callbacks.on_tool_result = block
     end
 
     def send_message(content)
@@ -336,6 +340,7 @@ module Earl
         case event["type"]
         when "system" then handle_system_event(event)
         when "assistant" then handle_assistant_event(event)
+        when "user" then handle_user_event(event)
         when "result" then handle_result_event(event)
         end
       end
@@ -372,6 +377,30 @@ module Earl
       def emit_single_tool_use(item)
         tool_id, tool_name, tool_input = item.values_at("id", "name", "input")
         @runtime.callbacks.on_tool_use&.call(id: tool_id, name: tool_name, input: tool_input)
+      end
+
+      def handle_user_event(event)
+        content = event.dig("message", "content")
+        return unless content.is_a?(Array)
+
+        emit_tool_result_images(content)
+      end
+
+      def emit_tool_result_images(content)
+        content.each do |item|
+          emit_images_from_result(item) if item["type"] == "tool_result"
+        end
+      end
+
+      def emit_images_from_result(item)
+        images = extract_image_blocks(item["content"])
+        @runtime.callbacks.on_tool_result&.call(images: images) unless images.empty?
+      end
+
+      def extract_image_blocks(nested)
+        return [] unless nested.is_a?(Array)
+
+        nested.select { |block| block["type"] == "image" }
       end
     end
 

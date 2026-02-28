@@ -42,6 +42,14 @@ module Earl
         detect_file_paths(text)
       end
 
+      def detect_inline_images(image_blocks)
+        return [] unless image_blocks.is_a?(Array)
+
+        refs = image_blocks.filter_map { |block| build_inline_reference(block) }
+        log(:info, "Detected #{refs.size} inline images from tool result") unless refs.empty?
+        refs
+      end
+
       private
 
       def detect_file_paths(text)
@@ -72,6 +80,30 @@ module Earl
 
       def screenshot_tool?(tool_name)
         tool_name&.include?("screenshot") || tool_name&.include?("browser_take_screenshot")
+      end
+
+      def build_inline_reference(block)
+        source = block["source"] || {}
+        base64_data = source["data"]
+        return nil unless base64_data.is_a?(String) && base64_data.size > 100
+
+        media_type = source["media_type"] || infer_media_type(base64_data)
+        ImageReference.new(
+          source: :base64, data: base64_data,
+          media_type: media_type, filename: inline_filename(media_type)
+        )
+      end
+
+      def infer_media_type(base64_data)
+        return "image/png" if base64_data.start_with?("iVBOR")
+        return "image/jpeg" if base64_data.start_with?("/9j/")
+
+        "image/png"
+      end
+
+      def inline_filename(media_type)
+        ext = MEDIA_TYPES.key(media_type) || ".png"
+        "screenshot#{ext}"
       end
 
       def media_type_for(path)

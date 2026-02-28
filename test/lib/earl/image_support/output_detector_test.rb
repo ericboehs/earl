@@ -208,6 +208,84 @@ module Earl
           assert_equal path, refs[0].data
         end
       end
+
+      # --- Inline image detection (from tool_result content blocks) ---
+
+      test "detect_inline_images extracts PNG image block" do
+        blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } }]
+
+        refs = @detector.detect_inline_images(blocks)
+
+        assert_equal 1, refs.size
+        assert_equal :base64, refs[0].source
+        assert_equal "image/png", refs[0].media_type
+        assert_equal "screenshot.png", refs[0].filename
+        assert refs[0].data.start_with?("iVBOR")
+      end
+
+      test "detect_inline_images extracts JPEG image block" do
+        blocks = [{ "type" => "image", "source" => { "data" => "/9j/#{"B" * 200}", "media_type" => "image/jpeg" } }]
+
+        refs = @detector.detect_inline_images(blocks)
+
+        assert_equal 1, refs.size
+        assert_equal "image/jpeg", refs[0].media_type
+        assert_equal "screenshot.jpg", refs[0].filename
+      end
+
+      test "detect_inline_images infers PNG when media_type is absent" do
+        blocks = [{ "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}" } }]
+
+        refs = @detector.detect_inline_images(blocks)
+
+        assert_equal 1, refs.size
+        assert_equal "image/png", refs[0].media_type
+      end
+
+      test "detect_inline_images infers JPEG from data prefix" do
+        blocks = [{ "type" => "image", "source" => { "data" => "/9j/#{"C" * 200}" } }]
+
+        refs = @detector.detect_inline_images(blocks)
+
+        assert_equal 1, refs.size
+        assert_equal "image/jpeg", refs[0].media_type
+        assert_equal "screenshot.jpg", refs[0].filename
+      end
+
+      test "detect_inline_images skips blocks with short data" do
+        blocks = [{ "type" => "image", "source" => { "data" => "iVBOR" } }]
+
+        refs = @detector.detect_inline_images(blocks)
+
+        assert_empty refs
+      end
+
+      test "detect_inline_images skips blocks with missing source data" do
+        blocks = [{ "type" => "image", "source" => {} }]
+
+        refs = @detector.detect_inline_images(blocks)
+
+        assert_empty refs
+      end
+
+      test "detect_inline_images returns empty for nil input" do
+        refs = @detector.detect_inline_images(nil)
+
+        assert_empty refs
+      end
+
+      test "detect_inline_images handles multiple image blocks" do
+        blocks = [
+          { "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } },
+          { "type" => "image", "source" => { "data" => "/9j/#{"B" * 200}", "media_type" => "image/jpeg" } }
+        ]
+
+        refs = @detector.detect_inline_images(blocks)
+
+        assert_equal 2, refs.size
+        assert_equal "image/png", refs[0].media_type
+        assert_equal "image/jpeg", refs[1].media_type
+      end
     end
   end
 end
