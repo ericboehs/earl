@@ -7,21 +7,22 @@ module Earl
       private
 
       def setup_message_handler
-        @services.mattermost.on_message do |sender_name:, thread_id:, text:, channel_id:, **_extra|
-          if allowed_user?(sender_name)
-            msg = UserMessage.new(thread_id: thread_id, text: text, channel_id: channel_id,
-                                  sender_name: sender_name)
-            handle_incoming_message(msg)
-          end
+        @services.mattermost.on_message do |**params|
+          receive_message(params) if allowed_user?(params[:sender_name])
         end
       end
 
+      def receive_message(params)
+        handle_incoming_message(build_user_message(params))
+      end
+
+      def build_user_message(params)
+        UserMessage.new(**params.slice(:thread_id, :text, :channel_id, :sender_name),
+                        file_ids: params.fetch(:file_ids, []))
+      end
+
       def handle_incoming_message(msg)
-        if CommandParser.command?(msg.text)
-          dispatch_command(msg)
-        else
-          enqueue_message(msg)
-        end
+        CommandParser.command?(msg.text) ? dispatch_command(msg) : enqueue_message(msg)
       end
 
       def dispatch_command(msg)
@@ -49,7 +50,7 @@ module Earl
         if queue.try_claim(thread_id)
           process_message(msg)
         else
-          queue.enqueue(thread_id, msg.text)
+          queue.enqueue(thread_id, msg)
         end
       end
 
@@ -64,13 +65,44 @@ module Earl
       end
 
       def process_message_send(msg, thread_id)
-        text = msg.text
         effective_channel = msg.channel_id || @services.config.channel_id
         existing_session, session = prepare_session(thread_id, effective_channel, msg.sender_name)
         prepare_response(session, thread_id, effective_channel)
-        message = existing_session ? text : build_contextual_message(thread_id, text)
-        send_and_touch(session, thread_id, message)
+        raw_text = msg.text
+        text = existing_session ? raw_text : build_contextual_text(thread_id, raw_text)
+        content = attach_images(text, msg.file_ids)
+        send_and_touch(session, thread_id, content)
       end
+
+      def build_contextual_text(thread_id, text)
+        ThreadContextBuilder.new(mattermost: @services.mattermost, content_builder: content_builder)
+                            .build(thread_id, text)
+      end
+
+      # Image content assembly: attaches and merges image blocks with text.
+      module ContentAssembly
+        private
+
+        def attach_images(content, file_ids)
+          return content if file_ids.empty?
+          return merge_image_blocks(content, file_ids) if content.is_a?(Array)
+
+          content_builder.build(content, file_ids)
+        end
+
+        def merge_image_blocks(blocks, file_ids)
+          new_blocks = content_builder.build("", file_ids)
+          return blocks unless new_blocks.is_a?(Array)
+
+          blocks.concat(new_blocks)
+        end
+
+        def content_builder
+          @content_builder ||= ImageSupport::ContentBuilder.new(mattermost: @services.mattermost)
+        end
+      end
+
+      include ContentAssembly
 
       def send_and_touch(session, thread_id, message)
         sent = session.send_message(message)
@@ -93,28 +125,24 @@ module Earl
         @services.command_executor.working_dir_for(thread_id) || @services.config.channels[channel_id] || Dir.pwd
       end
 
-      def build_contextual_message(thread_id, text)
-        ThreadContextBuilder.new(mattermost: @services.mattermost).build(thread_id, text)
-      end
-
       def process_next_queued(thread_id)
-        next_text = @app_state.message_queue.dequeue(thread_id)
-        return unless next_text
+        queued = @app_state.message_queue.dequeue(thread_id)
+        return unless queued
 
-        msg = UserMessage.new(thread_id: thread_id, text: next_text, channel_id: nil, sender_name: nil)
+        msg = if queued.is_a?(UserMessage)
+                queued
+              else
+                UserMessage.new(thread_id: thread_id, text: queued, channel_id: nil, sender_name: nil)
+              end
         process_message(msg)
       end
 
       def allowed_user?(username)
         allowed = @services.config.allowed_users
-        return true if allowed.empty?
+        return true if allowed.empty? || allowed.include?(username)
 
-        unless allowed.include?(username)
-          log(:debug, "Ignoring message from non-allowed user: #{username}")
-          return false
-        end
-
-        true
+        log(:debug, "Ignoring message from non-allowed user: #{username}")
+        false
       end
     end
   end

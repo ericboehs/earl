@@ -77,6 +77,30 @@ module Earl
       parse_post_response(@api.get("/channels/#{channel_id}"))
     end
 
+    # File operations extracted to keep class method count under threshold.
+    module FileHandling
+      # Bundles parameters for creating a post with file attachments.
+      FilePost = Data.define(:channel_id, :message, :root_id, :file_ids)
+
+      def download_file(file_id)
+        @api.get("/files/#{file_id}")
+      end
+
+      def get_file_info(file_id)
+        parse_post_response(@api.get("/files/#{file_id}/info"))
+      end
+
+      def upload_file(upload)
+        parse_post_response(@api.post_multipart("/files", upload))
+      end
+
+      def create_post_with_files(file_post)
+        parse_post_response(@api.post("/posts", file_post.to_h))
+      end
+    end
+
+    include FileHandling
+
     # Fetches all posts in a thread, ordered oldest-first.
     # Returns an array of hashes with :sender, :message, :is_bot.
     def get_thread_posts(thread_id)
@@ -104,7 +128,8 @@ module Earl
       from_bot = post.dig("props", "from_bot") == "true"
       message = post["message"] || ""
       user_id = post["user_id"]
-      { sender: from_bot ? "EARL" : "user", message: message, is_bot: user_id == bot_id }
+      file_ids = post["file_ids"] || []
+      { sender: from_bot ? "EARL" : "user", message: message, is_bot: user_id == bot_id, file_ids: file_ids }
     end
 
     # WebSocket lifecycle methods extracted to reduce class method count.
@@ -225,16 +250,20 @@ module Earl
       end
 
       def build_message_params(event, post)
-        post_id = post["id"]
-        root_id = post["root_id"]
-        sender = event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
+        post_id, root_id, message, channel_id, file_ids =
+          post.values_at("id", "root_id", "message", "channel_id", "file_ids")
         {
-          sender_name: sender,
+          sender_name: extract_sender(event),
           thread_id: root_id.to_s.empty? ? post_id : root_id,
-          text: post["message"] || "",
+          text: message || "",
           post_id: post_id,
-          channel_id: post["channel_id"]
+          channel_id: channel_id,
+          file_ids: file_ids || []
         }
+      end
+
+      def extract_sender(event)
+        event.dig("data", "sender_name")&.delete_prefix("@") || "unknown"
       end
     end
 

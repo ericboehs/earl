@@ -33,7 +33,7 @@ module Earl
       end
     end
     # Holds text-streaming, tool-use, and completion callback procs.
-    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_system, keyword_init: true)
+    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_tool_result, :on_system, keyword_init: true)
     # Bundles MCP server env with permission mode to avoid boolean parameters.
     McpConfig = Data.define(:env, :skip_permissions)
 
@@ -67,28 +67,19 @@ module Earl
 
     attr_reader :session_id, :stats
 
-    def on_text(&block)
-      @runtime.callbacks.on_text = block
-    end
+    def working_dir = @options.working_dir
+    def on_text(&block) = @runtime.callbacks.on_text = block
+    def on_complete(&block) = @runtime.callbacks.on_complete = block
+    def on_tool_use(&block) = @runtime.callbacks.on_tool_use = block
+    def on_system(&block) = @runtime.callbacks.on_system = block
+    def on_tool_result(&block) = @runtime.callbacks.on_tool_result = block
 
-    def on_complete(&block)
-      @runtime.callbacks.on_complete = block
-    end
-
-    def on_tool_use(&block)
-      @runtime.callbacks.on_tool_use = block
-    end
-
-    def on_system(&block)
-      @runtime.callbacks.on_system = block
-    end
-
-    def send_message(text)
+    def send_message(content)
       return warn_dead_session unless alive?
 
-      write_to_stdin(text)
+      write_to_stdin(content)
       @stats.begin_turn
-      log(:debug, "Sent message to Claude #{short_id}: #{text[0..60]}")
+      log(:debug, "Sent message to Claude #{short_id}: #{content_preview(content)}")
       true
     rescue IOError, Errno::EPIPE => error
       log(:error, "Failed to write to Claude #{short_id}: #{error.message}")
@@ -110,9 +101,15 @@ module Earl
       )
     end
 
-    def write_to_stdin(text)
-      payload = "#{JSON.generate({ type: "user", message: { role: "user", content: text } })}\n"
+    def write_to_stdin(content)
+      payload = "#{JSON.generate({ type: "user", message: { role: "user", content: content } })}\n"
       @runtime.mutex.synchronize { @runtime.process_state.write(payload) }
+    end
+
+    def content_preview(content)
+      return content[0..60] if content.is_a?(String)
+
+      "[#{content.size} content blocks]"
     end
 
     def short_id
@@ -330,6 +327,7 @@ module Earl
         case event["type"]
         when "system" then handle_system_event(event)
         when "assistant" then handle_assistant_event(event)
+        when "user" then handle_user_event(event)
         when "result" then handle_result_event(event)
         end
       end
@@ -366,6 +364,34 @@ module Earl
       def emit_single_tool_use(item)
         tool_id, tool_name, tool_input = item.values_at("id", "name", "input")
         @runtime.callbacks.on_tool_use&.call(id: tool_id, name: tool_name, input: tool_input)
+      end
+
+      def handle_user_event(event)
+        content = event.dig("message", "content")
+        return unless content.is_a?(Array)
+
+        emit_tool_result_images(content)
+      end
+
+      def emit_tool_result_images(content)
+        content.each do |item|
+          emit_images_from_result(item) if item["type"] == "tool_result"
+        end
+      end
+
+      def emit_images_from_result(item)
+        nested = item["content"]
+        return unless nested.is_a?(Array)
+
+        images = nested.select { |block| block["type"] == "image" }
+        texts = extract_text_content(nested)
+        return if images.empty? && texts.empty?
+
+        @runtime.callbacks.on_tool_result&.call(images: images, texts: texts)
+      end
+
+      def extract_text_content(nested)
+        nested.filter_map { |block| block["text"] if block["type"] == "text" }
       end
     end
 

@@ -407,7 +407,7 @@ module Earl
       ENV["PATH"] = "#{fake_bin}:#{original_path}"
 
       session.start
-      sleep 0.3
+      sleep 0.5
 
       assert_not session.alive?
     ensure
@@ -1139,6 +1139,95 @@ module Earl
       session = Earl::ClaudeSession.new
       result = session.send(:format_context_usage)
       assert_nil result
+    end
+
+    # --- working_dir accessor ---
+
+    test "working_dir returns configured directory" do
+      session = Earl::ClaudeSession.new(working_dir: "/tmp/test-project")
+      assert_equal "/tmp/test-project", session.working_dir
+    end
+
+    test "working_dir returns nil when not configured" do
+      session = Earl::ClaudeSession.new
+      assert_nil session.working_dir
+    end
+
+    # --- emit_images_from_result with texts ---
+
+    test "handle_event fires on_tool_result with images and texts for user tool_result events" do
+      session = Earl::ClaudeSession.new
+      received = nil
+      session.on_tool_result { |data| received = data }
+
+      event = {
+        "type" => "user",
+        "message" => {
+          "content" => [
+            {
+              "type" => "tool_result",
+              "content" => [
+                { "type" => "image", "source" => { "data" => "iVBOR#{"A" * 200}", "media_type" => "image/png" } },
+                { "type" => "text", "text" => ".playwright-mcp/page-1.png" }
+              ]
+            }
+          ]
+        }
+      }
+      session.send(:handle_event, event)
+
+      assert_not_nil received
+      assert_equal 1, received[:images].size
+      assert_equal "image", received[:images][0]["type"]
+      assert_equal [".playwright-mcp/page-1.png"], received[:texts]
+    end
+
+    test "handle_event fires on_tool_result for texts-only tool_result" do
+      session = Earl::ClaudeSession.new
+      received = nil
+      session.on_tool_result { |data| received = data }
+
+      event = {
+        "type" => "user",
+        "message" => {
+          "content" => [
+            {
+              "type" => "tool_result",
+              "content" => [
+                { "type" => "text", "text" => ".playwright-mcp/screenshot.png" }
+              ]
+            }
+          ]
+        }
+      }
+      session.send(:handle_event, event)
+
+      assert_not_nil received
+      assert_empty received[:images]
+      assert_equal [".playwright-mcp/screenshot.png"], received[:texts]
+    end
+
+    test "handle_event skips on_tool_result when no images or texts" do
+      session = Earl::ClaudeSession.new
+      called = false
+      session.on_tool_result { |_| called = true }
+
+      event = {
+        "type" => "user",
+        "message" => {
+          "content" => [
+            {
+              "type" => "tool_result",
+              "content" => [
+                { "type" => "other", "data" => "something" }
+              ]
+            }
+          ]
+        }
+      }
+      session.send(:handle_event, event)
+
+      assert_not called
     end
 
     test "stats format_summary includes all optional fields when present" do

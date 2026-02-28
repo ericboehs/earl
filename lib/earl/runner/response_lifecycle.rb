@@ -1,9 +1,13 @@
 # frozen_string_literal: true
 
+require_relative "callback_wiring"
+
 module Earl
   class Runner
     # Streaming response lifecycle: creates responses, wires callbacks, handles completion.
     module ResponseLifecycle
+      include CallbackWiring
+
       # Bundles response context that travels together through the lifecycle.
       ResponseBundle = Struct.new(:session, :response, :thread_id, keyword_init: true)
 
@@ -16,22 +20,6 @@ module Earl
         bundle = ResponseBundle.new(session: session, response: response, thread_id: thread_id)
         wire_all_callbacks(bundle)
         response
-      end
-
-      def wire_all_callbacks(bundle)
-        session, response, thread_id = bundle.deconstruct
-        resp_channel_id = response.channel_id
-        wire_text_callbacks(session, response)
-        session.on_complete { |_| handle_response_complete(thread_id) }
-        session.on_tool_use do |tool_use|
-          response.on_tool_use(tool_use)
-          handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: resp_channel_id)
-        end
-      end
-
-      def wire_text_callbacks(session, response)
-        session.on_text { |text| response.on_text(text) }
-        session.on_system { |event| response.on_text(event[:message]) }
       end
 
       def handle_tool_use(thread_id:, tool_use:, channel_id:)

@@ -533,6 +533,34 @@ module Earl
       assert_equal "Can u approve 4", posts[2][:message]
     end
 
+    test "get_thread_posts includes file_ids from posts" do
+      mm = Earl::Mattermost.new(@config)
+      api = mm.instance_variable_get(:@api)
+
+      thread_data = {
+        "posts" => {
+          "post-1" => { "id" => "post-1", "user_id" => "user-999", "message" => "see this",
+                        "props" => {}, "file_ids" => %w[file-a file-b] },
+          "post-2" => { "id" => "post-2", "user_id" => "bot-123", "message" => "I see it",
+                        "props" => { "from_bot" => "true" } }
+        },
+        "order" => %w[post-2 post-1]
+      }
+
+      api.define_singleton_method(:get) do |_path|
+        response = Object.new
+        response.define_singleton_method(:body) { JSON.generate(thread_data) }
+        response.define_singleton_method(:is_a?) do |klass|
+          klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+        end
+        response
+      end
+
+      posts = mm.get_thread_posts("post-1")
+      assert_equal %w[file-a file-b], posts[0][:file_ids]
+      assert_equal [], posts[1][:file_ids]
+    end
+
     test "get_thread_posts returns empty array on API failure" do
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)
@@ -699,6 +727,69 @@ module Earl
 
       assert_not_nil received
       assert_equal "channel-456", received[:channel_id]
+    end
+
+    # --- file_ids in message params ---
+
+    test "connect includes file_ids in message params when present" do
+      fake_ws = build_fake_ws
+      install_fake_ws(fake_ws)
+
+      mm = Earl::Mattermost.new(@config)
+      received = nil
+      mm.on_message { |**kwargs| received = kwargs }
+      mm.connect
+
+      post_data = {
+        "id" => "post-abc", "user_id" => "user-999",
+        "channel_id" => "channel-456", "root_id" => "", "message" => "See image",
+        "file_ids" => %w[file-1 file-2]
+      }
+      event = { "event" => "posted", "data" => { "post" => JSON.generate(post_data), "sender_name" => "@alice" } }
+
+      fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+      assert_not_nil received
+      assert_equal %w[file-1 file-2], received[:file_ids]
+    end
+
+    test "connect returns empty file_ids when post has no file_ids" do
+      fake_ws = build_fake_ws
+      install_fake_ws(fake_ws)
+
+      mm = Earl::Mattermost.new(@config)
+      received = nil
+      mm.on_message { |**kwargs| received = kwargs }
+      mm.connect
+
+      post_data = {
+        "id" => "post-abc", "user_id" => "user-999",
+        "channel_id" => "channel-456", "root_id" => "", "message" => "No files"
+      }
+      event = { "event" => "posted", "data" => { "post" => JSON.generate(post_data), "sender_name" => "@alice" } }
+
+      fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event)))
+
+      assert_not_nil received
+      assert_equal [], received[:file_ids]
+    end
+
+    # --- file download and info tests ---
+
+    test "download_file sends GET to files endpoint" do
+      @mattermost.download_file("file-123")
+
+      req = @requests.last
+      assert_equal :get, req[:method]
+      assert_equal "/files/file-123", req[:path]
+    end
+
+    test "get_file_info sends GET to file info endpoint" do
+      @mattermost.get_file_info("file-123")
+
+      req = @requests.last
+      assert_equal :get, req[:method]
+      assert_equal "/files/file-123/info", req[:path]
     end
 
     # --- API client GET test ---

@@ -121,5 +121,19 @@ module Earl
       # Can still claim after no-op release
       assert @queue.try_claim("thread-1")
     end
+
+    test "enqueue and dequeue preserves UserMessage objects" do
+      @queue.try_claim("thread-1")
+      msg = Earl::Runner::UserMessage.new(
+        thread_id: "thread-1", text: "hello", channel_id: "ch-1",
+        sender_name: "alice", file_ids: %w[file-1 file-2]
+      )
+      @queue.enqueue("thread-1", msg)
+
+      result = @queue.dequeue("thread-1")
+      assert_instance_of Earl::Runner::UserMessage, result
+      assert_equal "hello", result.text
+      assert_equal %w[file-1 file-2], result.file_ids
+    end
   end
 end
