@@ -19,27 +19,46 @@ module Earl
       end
 
       def wire_all_callbacks(bundle)
-        session, response, thread_id = bundle.deconstruct
-        resp_channel_id = response.channel_id
-        wire_text_callback(session, response)
-        wire_system_callback(session, response)
-        session.on_complete { |_| handle_response_complete(thread_id) }
-        session.on_tool_use do |tool_use|
-          response.on_tool_use(tool_use)
-          handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: resp_channel_id)
-        end
+        last_tool = []
+        wire_text_callback(bundle, last_tool)
+        wire_tool_use_callback(bundle, last_tool)
+        wire_system_callback(bundle)
+        bundle.session.on_complete { |_| handle_response_complete(bundle.thread_id) }
       end
 
-      def wire_text_callback(session, response)
+      def wire_text_callback(bundle, last_tool)
         detector = output_detector
-        session.on_text do |text|
-          refs = detector.detect_in_text(text)
+        response = bundle.response
+        bundle.session.on_text do |text|
+          tool_name = last_tool.pop
+          refs = detect_images(detector, text, tool_name)
           response.on_text_with_images(text, refs)
         end
       end
 
-      def wire_system_callback(session, response)
-        session.on_system { |event| response.on_text(event[:message]) }
+      def wire_tool_use_callback(bundle, last_tool)
+        session, _response, thread_id = bundle.deconstruct
+        resp_channel_id, on_tool = extract_tool_use_context(bundle.response)
+        session.on_tool_use do |tool_use|
+          last_tool.replace([tool_use[:name]])
+          on_tool.call(tool_use)
+          handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: resp_channel_id)
+        end
+      end
+
+      def extract_tool_use_context(response)
+        [response.channel_id, response.method(:on_tool_use)]
+      end
+
+      def wire_system_callback(bundle)
+        response = bundle.response
+        bundle.session.on_system { |event| response.on_text(event[:message]) }
+      end
+
+      def detect_images(detector, text, tool_name)
+        return detector.detect_in_tool_result(tool_name, text) if tool_name
+
+        detector.detect_in_text(text)
       end
 
       def output_detector
