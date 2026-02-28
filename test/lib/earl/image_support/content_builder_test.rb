@@ -82,6 +82,14 @@ module Earl
         assert_equal "Check this PDF", result
       end
 
+      test "skips SVG images since Claude cannot process vector graphics" do
+        @mattermost.stub_file_info("file-1", "image/svg+xml")
+
+        result = @builder.build("See this SVG", ["file-1"])
+
+        assert_equal "See this SVG", result
+      end
+
       test "skips unsupported MIME types but keeps supported ones" do
         @mattermost.stub_file_info("file-1", "application/pdf")
         @mattermost.stub_file_info("file-2", "image/gif")

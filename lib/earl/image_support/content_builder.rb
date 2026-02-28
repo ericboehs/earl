@@ -10,6 +10,9 @@ module Earl
     class ContentBuilder
       include Logging
 
+      # Claude vision supports these raster types. SVG (image/svg+xml) is excluded
+      # because Claude cannot process vector images. Animated GIFs are accepted; Claude
+      # may only analyze the first frame but Mattermost renders the full animation.
       SUPPORTED_TYPES = %w[image/jpeg image/png image/gif image/webp].freeze
       MAX_IMAGE_BYTES = 5 * 1024 * 1024
 

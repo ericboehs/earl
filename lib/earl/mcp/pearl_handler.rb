@@ -2,6 +2,7 @@
 
 require "securerandom"
 require "shellwords"
+require "base64"
 
 module Earl
   module Mcp
@@ -24,7 +25,7 @@ module Earl
       KEEP_ALIVE_SECONDS = 300
 
       # Bundles run parameters that travel together through the confirmation and creation flow.
-      RunRequest = Data.define(:agent, :prompt, :window_name, :log_path) do
+      RunRequest = Data.define(:agent, :prompt, :window_name, :log_path, :image_dir) do
         def target
           "#{TMUX_SESSION}:#{window_name}"
         end
@@ -33,7 +34,8 @@ module Earl
           base = [pearl_bin, agent, "-p", prompt].map { |arg| Shellwords.shellescape(arg) }.join(" ")
           escaped_log = Shellwords.shellescape(log_path)
           trailer = "echo '--- PEARL agent exited ---' | tee -a #{escaped_log}"
-          "#{base} 2>&1 | tee #{escaped_log}; #{trailer}; sleep #{KEEP_ALIVE_SECONDS}"
+          env_prefix = image_dir ? "PEARL_IMAGES=#{Shellwords.shellescape(image_dir)} " : ""
+          "#{env_prefix}#{base} 2>&1 | tee #{escaped_log}; #{trailer}; sleep #{KEEP_ALIVE_SECONDS}"
         end
       end
 
@@ -168,7 +170,9 @@ module Earl
           agent, prompt = arguments.values_at("agent", "prompt")
           window_name = "#{agent}-#{SecureRandom.hex(2)}"
           log_path = File.join(pearl_log_dir, "#{window_name}.log")
-          RunRequest.new(agent: agent, prompt: prompt, window_name: window_name, log_path: log_path)
+          image_dir = write_inbound_images(arguments["image_data"], window_name)
+          RunRequest.new(agent: agent, prompt: prompt, window_name: window_name,
+                         log_path: log_path, image_dir: image_dir)
         end
 
         def execute_run(request)
@@ -204,7 +208,7 @@ module Earl
         end
 
         def format_run_result(request)
-          agent, prompt, window_name, log_path = request.deconstruct
+          agent, prompt, window_name, log_path, _image_dir = request.deconstruct
           target = "#{TMUX_SESSION}:#{window_name}"
           text_content(
             "Spawned PEARL agent `#{agent}` in tmux window `#{target}`.\n" \
@@ -221,9 +225,29 @@ module Earl
         def pearl_log_dir
           File.join(Earl.config_root, "pearl-logs")
         end
+
+        def write_inbound_images(image_data, window_name)
+          images = Array(image_data)
+          return nil if images.empty?
+
+          dir = File.join(Earl.config_root, "pearl-images", window_name)
+          FileUtils.mkdir_p(dir)
+          images.each { |img| write_single_image(dir, img) }
+          dir
+        rescue StandardError => error
+          log(:warn, "PEARL inbound image write failed: #{error.message}")
+          nil
+        end
+
+        def write_single_image(dir, img)
+          filename = img["filename"] || "image.png"
+          data = Base64.decode64(img["base64_data"] || "")
+          File.binwrite(File.join(dir, filename), data)
+        end
       end
 
       # Checks PEARL agent output by capturing the tmux pane or reading the log file.
+      # When output contains image references, uploads them to Mattermost.
       module AgentStatus
         private
 
@@ -231,7 +255,9 @@ module Earl
           target = arguments["target"]
           return text_content("Error: target is required for status") unless target && !target.strip.empty?
 
-          capture_agent_output(target)
+          result = capture_agent_output(target)
+          detect_and_upload_images(result)
+          result
         end
 
         def capture_agent_output(target)
@@ -241,6 +267,26 @@ module Earl
           read_log_fallback(target)
         rescue Tmux::Error => error
           text_content("Error: #{error.message}")
+        end
+
+        def detect_and_upload_images(result)
+          text = result.dig(:content, 0, :text) || result.dig(:content, 0, "text")
+          return unless text
+
+          refs = ImageSupport::OutputDetector.new.detect_in_text(text)
+          return if refs.empty?
+
+          context = upload_context
+          file_ids = ImageSupport::Uploader.upload_refs(context, refs)
+          ImageSupport::Uploader.post_with_images(context, root_id: @config.platform_thread_id, file_ids: file_ids)
+        rescue StandardError => error
+          log(:warn, "PEARL image upload failed: #{error.message}")
+        end
+
+        def upload_context
+          ImageSupport::Uploader::UploadContext.new(
+            mattermost: ApiClientAdapter.new(@api), channel_id: @config.platform_channel_id
+          )
         end
 
         def read_log_fallback(target)
@@ -504,12 +550,33 @@ module Earl
             target: {
               type: "string",
               description: "Tmux target (e.g., 'pearl-agents:code-ab12'). Required for status."
-            }
+            },
+            image_data: image_data_property
           }
         end
 
         def action_property
           { type: "string", enum: VALID_ACTIONS, description: "Action to perform" }
+        end
+
+        def image_data_property
+          {
+            type: "array",
+            description: "Optional images to pass to the agent. Each item has filename, base64_data, media_type.",
+            items: image_data_item_schema
+          }
+        end
+
+        def image_data_item_schema
+          {
+            type: "object",
+            properties: {
+              filename: { type: "string", description: "Image filename (e.g., 'screenshot.png')" },
+              base64_data: { type: "string", description: "Base64-encoded image content" },
+              media_type: { type: "string", description: "MIME type (e.g., 'image/png')" }
+            },
+            required: %w[filename base64_data]
+          }
         end
       end
 
@@ -526,6 +593,32 @@ module Earl
           status.success? ? output.strip : nil
         rescue Errno::ENOENT
           nil
+        end
+      end
+
+      # Thin adapter wrapping ApiClient with Mattermost-compatible upload/post
+      # methods, so Uploader can work without a full Mattermost instance.
+      class ApiClientAdapter
+        def initialize(api)
+          @api = api
+        end
+
+        def upload_file(upload)
+          parse_response(@api.post_multipart("/files", upload))
+        end
+
+        def create_post_with_files(file_post)
+          parse_response(@api.post("/posts", file_post.to_h))
+        end
+
+        private
+
+        def parse_response(response)
+          return {} unless response.is_a?(Net::HTTPSuccess)
+
+          JSON.parse(response.body)
+        rescue JSON::ParserError
+          {}
         end
       end
 

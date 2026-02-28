@@ -73,20 +73,47 @@ module Earl
 
       MAX_RETRIES = 2
       RETRY_DELAY = 1
-      private_constant :MAX_RETRIES, :RETRY_DELAY
+      RATE_LIMIT_MAX_RETRIES = 3
+      private_constant :MAX_RETRIES, :RETRY_DELAY, :RATE_LIMIT_MAX_RETRIES
 
       def send_request(uri, req)
         attempts = 0
-        begin
+        loop do
           attempts += 1
-          http_start(uri.host, uri.port) { |http| http.request(req) }
-        rescue Net::ReadTimeout, Net::OpenTimeout, Errno::ECONNRESET, Errno::ECONNREFUSED, IOError => error
-          raise if attempts > MAX_RETRIES
+          response = attempt_request(uri, req, attempts)
+          return response unless rate_limited?(response, attempts)
 
-          log(:warn, "Mattermost API retry #{attempts}/#{MAX_RETRIES} after #{error.class}: #{error.message}")
-          sleep RETRY_DELAY
-          retry
+          sleep rate_limit_delay(response, attempts)
         end
+      end
+
+      def attempt_request(uri, req, attempts)
+        http_start(uri.host, uri.port) { |http| http.request(req) }
+      rescue Net::ReadTimeout, Net::OpenTimeout, Errno::ECONNRESET, Errno::ECONNREFUSED, IOError => error
+        handle_connection_error(error, attempts)
+        retry
+      end
+
+      def handle_connection_error(error, attempts)
+        raise error if attempts > MAX_RETRIES
+
+        log(:warn, "Mattermost API retry #{attempts}/#{MAX_RETRIES} after #{error.class}: #{error.message}")
+        sleep RETRY_DELAY
+      end
+
+      def rate_limited?(response, attempts)
+        return false unless response.code == "429"
+        return false if attempts > RATE_LIMIT_MAX_RETRIES
+
+        log(:warn, "Mattermost API rate limited (attempt #{attempts}/#{RATE_LIMIT_MAX_RETRIES})")
+        true
+      end
+
+      def rate_limit_delay(response, attempts)
+        header_delay = response["X-RateLimit-Reset-After"]&.to_f
+        return header_delay if header_delay&.positive?
+
+        RETRY_DELAY * (2**(attempts - 1))
       end
 
       def http_start(host, port, &)
