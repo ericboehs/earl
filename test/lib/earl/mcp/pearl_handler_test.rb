@@ -241,7 +241,7 @@ module Earl
           assert info.name.start_with?("pearl-agents:code-")
           assert_equal "channel-123", info.channel_id
           assert_equal "thread-123", info.thread_id
-          assert_equal "fix tests", info.prompt
+          assert info.prompt.start_with?("fix tests"), "Expected prompt to start with original text"
         end
       end
 
@@ -326,7 +326,7 @@ module Earl
         handler = build_handler_with_api(post_success: true)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "fix tests", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         post_id = handler.send(:post_confirmation_request, request)
         assert_equal "spawn-post-1", post_id
@@ -336,7 +336,7 @@ module Earl
         handler = build_handler_with_api(post_success: false)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "fix tests", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         post_id = handler.send(:post_confirmation_request, request)
         assert_nil post_id
@@ -346,7 +346,7 @@ module Earl
         handler = build_handler_with_api(post_success: true)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "fix tests", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         message = handler.send(:build_confirmation_message, request)
         assert_includes message, "code"
@@ -474,7 +474,7 @@ module Earl
         handler = build_handler_with_api(post_success: false)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "hi", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         result = handler.send(:request_run_confirmation, request)
         assert_equal :error, result
@@ -485,7 +485,7 @@ module Earl
       test "RunRequest target returns session:window format" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "hello", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         assert_equal "pearl-agents:code-ab12", request.target
       end
@@ -493,7 +493,7 @@ module Earl
       test "RunRequest pearl_command builds correct command" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "fix the bug", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         command = request.pearl_command("/usr/local/bin/pearl")
         assert_includes command, "/usr/local/bin/pearl"
@@ -507,7 +507,7 @@ module Earl
       test "RunRequest pearl_command escapes pearl_bin path" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "hello", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         command = request.pearl_command("/path with spaces/pearl")
         assert_includes command, '/path\\ with\\ spaces/pearl'
@@ -516,7 +516,7 @@ module Earl
       test "RunRequest pearl_command includes log path and keep-alive" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "hello", window_name: "code-ab12",
-          log_path: "/tmp/pearl-logs/code-ab12.log", image_dir: nil
+          log_path: "/tmp/pearl-logs/code-ab12.log", image_dir: nil, output_dir: nil
         )
         command = request.pearl_command("/usr/local/bin/pearl")
         assert_includes command, "tee /tmp/pearl-logs/code-ab12.log"
@@ -527,7 +527,7 @@ module Earl
       test "RunRequest pearl_command includes PEARL_IMAGES env when image_dir present" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "hello", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: "/tmp/pearl-images/code-ab12"
+          log_path: "/tmp/code-ab12.log", image_dir: "/tmp/pearl-images/code-ab12", output_dir: nil
         )
         command = request.pearl_command("/usr/local/bin/pearl")
         assert_includes command, "PEARL_IMAGES=/tmp/pearl-images/code-ab12"
@@ -536,7 +536,7 @@ module Earl
       test "RunRequest pearl_command omits PEARL_IMAGES env when image_dir is nil" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "hello", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         command = request.pearl_command("/usr/local/bin/pearl")
         assert_not_includes command, "PEARL_IMAGES"
@@ -765,7 +765,7 @@ module Earl
 
       test "status detects image paths in output and uploads them" do
         uploaded_refs = []
-        stub_singleton(@handler, :detect_and_upload_images) do |result|
+        stub_singleton(@handler, :detect_and_upload_images) do |result, _target|
           text = result.dig(:content, 0, :text)
           uploaded_refs << text
         end
@@ -849,6 +849,132 @@ module Earl
         assert_equal path, refs.first.data
       ensure
         File.delete(path) if path && File.exist?(path)
+      end
+
+      # --- output pipeline ---
+
+      test "create_output_dir creates the directory" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            dir = @handler.send(:create_output_dir, "code-ab12")
+            assert_equal File.join(tmpdir, "pearl-output", "code-ab12"), dir
+            assert Dir.exist?(dir)
+          end
+        end
+      end
+
+      test "scan_output_dir finds images in output directory" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            output_dir = File.join(tmpdir, "pearl-output", "code-ab12")
+            FileUtils.mkdir_p(output_dir)
+            File.binwrite(File.join(output_dir, "screenshot.png"), "png data")
+            File.binwrite(File.join(output_dir, "chart.jpg"), "jpg data")
+
+            refs = @handler.send(:scan_output_dir, "pearl-agents:code-ab12")
+            assert_equal 2, refs.size
+            filenames = refs.map(&:filename).sort
+            assert_equal %w[chart.jpg screenshot.png], filenames
+            assert(refs.all? { |r| r.source == :file_path })
+          end
+        end
+      end
+
+      test "scan_output_dir finds images in subdirectories" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            sub_dir = File.join(tmpdir, "pearl-output", "code-ab12", "subdir")
+            FileUtils.mkdir_p(sub_dir)
+            File.binwrite(File.join(sub_dir, "nested.png"), "png data")
+
+            refs = @handler.send(:scan_output_dir, "pearl-agents:code-ab12")
+            assert_equal 1, refs.size
+            assert_equal "nested.png", refs.first.filename
+          end
+        end
+      end
+
+      test "scan_output_dir returns empty for nonexistent directory" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            refs = @handler.send(:scan_output_dir, "pearl-agents:code-ab12")
+            assert_empty refs
+          end
+        end
+      end
+
+      test "scan_output_dir returns empty when target has no window name" do
+        refs = @handler.send(:scan_output_dir, "pearl-agents")
+        assert_empty refs
+      end
+
+      test "scan_output_dir skips empty files" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            output_dir = File.join(tmpdir, "pearl-output", "code-ab12")
+            FileUtils.mkdir_p(output_dir)
+            File.binwrite(File.join(output_dir, "empty.png"), "")
+
+            refs = @handler.send(:scan_output_dir, "pearl-agents:code-ab12")
+            assert_empty refs
+          end
+        end
+      end
+
+      test "safe_upload_path? allows paths under pearl-output" do
+        pearl_path = File.join(Earl.config_root, "pearl-output", "code-ab12", "screenshot.png")
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: pearl_path, media_type: "image/png", filename: "screenshot.png"
+        )
+        assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "RunRequest pearl_command includes PEARL_OUTPUT env when output_dir present" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil,
+          output_dir: "/tmp/pearl-output/code-ab12"
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_includes command, "PEARL_OUTPUT=/tmp/pearl-output/code-ab12"
+      end
+
+      test "RunRequest pearl_command omits PEARL_OUTPUT env when output_dir is nil" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_not_includes command, "PEARL_OUTPUT"
+      end
+
+      test "RunRequest pearl_command includes both env vars when both dirs present" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: "/tmp/pearl-images/code-ab12",
+          output_dir: "/tmp/pearl-output/code-ab12"
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_includes command, "PEARL_IMAGES=/tmp/pearl-images/code-ab12"
+        assert_includes command, "PEARL_OUTPUT=/tmp/pearl-output/code-ab12"
+      end
+
+      test "build_run_request includes output dir hint in prompt" do
+        with_agents_dir do |_agents_dir|
+          stub_singleton(@handler, :request_run_confirmation) { |_| :approved }
+
+          request = @handler.send(:build_run_request, { "agent" => "code", "prompt" => "do stuff" })
+          assert_includes request.prompt, "/pearl-output/"
+          assert_includes request.prompt, "automatically uploaded"
+        end
+      end
+
+      test "build_run_request includes image hint only when images present" do
+        with_agents_dir do |_agents_dir|
+          request = @handler.send(:build_run_request, { "agent" => "code", "prompt" => "do stuff" })
+          assert_not_includes request.prompt, "/pearl-images/"
+          assert_includes request.prompt, "/pearl-output/"
+        end
       end
 
       # --- inbound images ---
@@ -1296,7 +1422,7 @@ module Earl
         )
         request = Earl::Mcp::PearlHandler::RunRequest.new(
           agent: "code", prompt: "hi", window_name: "code-ab12",
-          log_path: "/tmp/code-ab12.log", image_dir: nil
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         result = handler.send(:post_confirmation_request, request)
         assert_nil result

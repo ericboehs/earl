@@ -25,7 +25,7 @@ module Earl
       KEEP_ALIVE_SECONDS = 300
 
       # Bundles run parameters that travel together through the confirmation and creation flow.
-      RunRequest = Data.define(:agent, :prompt, :window_name, :log_path, :image_dir) do
+      RunRequest = Data.define(:agent, :prompt, :window_name, :log_path, :image_dir, :output_dir) do
         def target
           "#{TMUX_SESSION}:#{window_name}"
         end
@@ -42,8 +42,17 @@ module Earl
           base = [pearl_bin, agent, "-p", prompt].map { |arg| Shellwords.shellescape(arg) }.join(" ")
           escaped_log = Shellwords.shellescape(log_path)
           trailer = "echo '--- PEARL agent exited ---' | tee -a #{escaped_log}"
-          env_prefix = image_dir ? "PEARL_IMAGES=#{Shellwords.shellescape(image_dir)} " : ""
+          env_prefix = build_env_prefix
           "#{env_prefix}#{base} 2>&1 | tee #{escaped_log}; #{trailer}; sleep #{KEEP_ALIVE_SECONDS}"
+        end
+
+        private
+
+        def build_env_prefix
+          vars = []
+          vars << "PEARL_IMAGES=#{Shellwords.shellescape(image_dir)}" if image_dir
+          vars << "PEARL_OUTPUT=#{Shellwords.shellescape(output_dir)}" if output_dir
+          vars.empty? ? "" : "#{vars.join(" ")} "
         end
       end
 
@@ -139,6 +148,11 @@ module Earl
 
       # Spawns PEARL agents in the pearl-agents tmux session with Mattermost confirmation.
       module AgentRunner
+        INBOUND_IMAGES_HINT = "Images are available at /pearl-images/ inside the container. " \
+                              "Use the Read tool to view them."
+        OUTPUT_DIR_HINT = "Save any output files (screenshots, images, artifacts) to /pearl-output/. " \
+                          "Files placed there are automatically uploaded to the chat."
+
         private
 
         def handle_run(arguments)
@@ -178,14 +192,17 @@ module Earl
           window_name = "#{agent}-#{SecureRandom.hex(2)}"
           log_path = File.join(pearl_log_dir, "#{window_name}.log")
           image_dir = write_inbound_images(resolve_image_data(arguments), window_name)
-          full_prompt = image_dir ? augment_prompt_with_images(prompt) : prompt
+          output_dir = create_output_dir(window_name)
+          hints = [INBOUND_IMAGES_HINT].select { image_dir } + [OUTPUT_DIR_HINT]
+          full_prompt = [prompt, *hints].join("\n\n")
           RunRequest.new(agent: agent, prompt: full_prompt, window_name: window_name,
-                         log_path: log_path, image_dir: image_dir)
+                         log_path: log_path, image_dir: image_dir, output_dir: output_dir)
         end
 
-        def augment_prompt_with_images(prompt)
-          "#{prompt}\n\nImages are available at /pearl-images/ inside the container. " \
-            "Use the Read tool to view them."
+        def create_output_dir(window_name)
+          dir = File.join(Earl.config_root, "pearl-output", window_name)
+          FileUtils.mkdir_p(dir)
+          dir
         end
 
         def execute_run(request)
@@ -262,7 +279,7 @@ module Earl
           return text_content("Error: target is required for status") unless target && !target.strip.empty?
 
           result = capture_agent_output(target)
-          detect_and_upload_images(result)
+          detect_and_upload_images(result, target)
           result
         end
 
@@ -276,10 +293,13 @@ module Earl
         end
 
         SAFE_UPLOAD_DIRS = %w[/tmp /var/tmp].freeze
-        private_constant :SAFE_UPLOAD_DIRS
+        IMAGE_EXTENSIONS = "*.{png,jpg,jpeg,gif,webp,svg}"
+        private_constant :SAFE_UPLOAD_DIRS, :IMAGE_EXTENSIONS
 
-        def detect_and_upload_images(result)
-          refs = detect_safe_image_refs(result)
+        def detect_and_upload_images(result, target)
+          text_refs = detect_safe_image_refs(result)
+          output_refs = scan_output_dir(target)
+          refs = (text_refs + output_refs).uniq(&:data)
           return if refs.empty?
 
           context = upload_context
@@ -297,12 +317,43 @@ module Earl
           refs.select { |ref| safe_upload_path?(ref) }.uniq(&:data)
         end
 
+        def scan_output_dir(target)
+          window_name = target.split(":").last
+          return [] unless window_name
+
+          dir = File.join(Earl.config_root, "pearl-output", window_name)
+          return [] unless Dir.exist?(dir)
+
+          Dir.glob(File.join(dir, "**", IMAGE_EXTENSIONS)).filter_map { |path| build_output_ref(path) }
+        end
+
+        def build_output_ref(path)
+          return unless File.file?(path) && File.size(path).positive?
+
+          ImageSupport::OutputDetector::ImageReference.new(
+            source: :file_path, data: path,
+            media_type: media_type_for_output(path), filename: File.basename(path)
+          )
+        end
+
+        MEDIA_TYPES = {
+          ".png" => "image/png", ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg",
+          ".gif" => "image/gif", ".webp" => "image/webp", ".svg" => "image/svg+xml"
+        }.freeze
+        private_constant :MEDIA_TYPES
+
+        def media_type_for_output(path)
+          MEDIA_TYPES.fetch(File.extname(path).downcase, "application/octet-stream")
+        end
+
         def safe_upload_path?(ref)
           return true unless ref.source == :file_path
 
           path = File.expand_path(ref.data)
-          pearl_images = File.join(Earl.config_root, "pearl-images")
-          SAFE_UPLOAD_DIRS.any? { |dir| path.start_with?(dir) } || path.start_with?(pearl_images)
+          config = Earl.config_root
+          SAFE_UPLOAD_DIRS.any? { |dir| path.start_with?(dir) } ||
+            path.start_with?(File.join(config, "pearl-images")) ||
+            path.start_with?(File.join(config, "pearl-output"))
         end
 
         def upload_context
