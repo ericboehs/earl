@@ -789,7 +789,55 @@ module Earl
         assert_includes text, "Some output"
       end
 
-      # --- ApiClientAdapter ---
+      # --- safe_upload_path? ---
+
+      test "safe_upload_path? allows base64 refs" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :base64, data: "abc", media_type: "image/png", filename: "img.png"
+        )
+        assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? allows paths under /tmp" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: "/tmp/chart.png", media_type: "image/png", filename: "chart.png"
+        )
+        assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? allows paths under pearl-images" do
+        pearl_path = File.join(Earl.config_root, "pearl-images", "test.png")
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: pearl_path, media_type: "image/png", filename: "test.png"
+        )
+        assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? rejects paths outside safe dirs" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: "/home/user/.ssh/id_rsa", media_type: "image/png", filename: "id_rsa"
+        )
+        refute @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? rejects traversal attempts" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: "/tmp/../etc/passwd", media_type: "image/png", filename: "passwd"
+        )
+        refute @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "detect_safe_image_refs returns empty for nil text" do
+        result = { content: [{ type: "text" }] }
+        refs = @handler.send(:detect_safe_image_refs, result)
+        assert_empty refs
+      end
+
+      test "detect_safe_image_refs returns empty for text with no images" do
+        result = { content: [{ type: "text", text: "No images here" }] }
+        refs = @handler.send(:detect_safe_image_refs, result)
+        assert_empty refs
+      end
 
       # --- inbound images ---
 

@@ -80,17 +80,19 @@ module Earl
         attempts = 0
         loop do
           attempts += 1
-          response = attempt_request(uri, req, attempts)
+          response = attempt_request(uri, req)
           return response unless rate_limited?(response, attempts)
 
           sleep rate_limit_delay(response, attempts)
         end
       end
 
-      def attempt_request(uri, req, attempts)
+      def attempt_request(uri, req)
+        retries = 0
         http_start(uri.host, uri.port) { |http| http.request(req) }
       rescue Net::ReadTimeout, Net::OpenTimeout, Errno::ECONNRESET, Errno::ECONNREFUSED, IOError => error
-        handle_connection_error(error, attempts)
+        retries += 1
+        handle_connection_error(error, retries)
         retry
       end
 

@@ -269,11 +269,11 @@ module Earl
           text_content("Error: #{error.message}")
         end
 
-        def detect_and_upload_images(result)
-          text = result.dig(:content, 0, :text)
-          return unless text
+        SAFE_UPLOAD_DIRS = %w[/tmp /var/tmp].freeze
+        private_constant :SAFE_UPLOAD_DIRS
 
-          refs = ImageSupport::OutputDetector.new.detect_in_text(text)
+        def detect_and_upload_images(result)
+          refs = detect_safe_image_refs(result)
           return if refs.empty?
 
           context = upload_context
@@ -281,6 +281,21 @@ module Earl
           ImageSupport::Uploader.post_with_images(context, root_id: @config.platform_thread_id, file_ids: file_ids)
         rescue StandardError => error
           log(:error, "PEARL image upload failed: #{error.class}: #{error.message}")
+        end
+
+        def detect_safe_image_refs(result)
+          text = result.dig(:content, 0, :text)
+          return [] unless text
+
+          ImageSupport::OutputDetector.new.detect_in_text(text).select { |ref| safe_upload_path?(ref) }
+        end
+
+        def safe_upload_path?(ref)
+          return true unless ref.source == :file_path
+
+          path = File.expand_path(ref.data)
+          pearl_images = File.join(Earl.config_root, "pearl-images")
+          SAFE_UPLOAD_DIRS.any? { |dir| path.start_with?(dir) } || path.start_with?(pearl_images)
         end
 
         def upload_context
@@ -580,7 +595,7 @@ module Earl
               base64_data: { type: "string", description: "Base64-encoded image content" },
               media_type: { type: "string", description: "MIME type (e.g., 'image/png')" }
             },
-            required: %w[filename base64_data]
+            required: %w[base64_data]
           }
         end
       end
