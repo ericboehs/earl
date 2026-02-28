@@ -69,7 +69,7 @@ module Earl
 
       # Stub typing to avoid real HTTP calls
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
 
       runner.send(:process_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "Hello Earl", channel_id: nil,
@@ -87,15 +87,15 @@ module Earl
       stats = mock_stats(total_input_tokens: 1000, total_output_tokens: 500)
 
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
-      mock_session.define_singleton_method(:total_cost) { 0.05 }
-      mock_session.define_singleton_method(:stats) { stats }
+      stub_singleton(mock_session, :on_text) { |&block| on_text_callback = block }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :total_cost) { 0.05 }
+      stub_singleton(mock_session, :stats) { stats }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
@@ -103,12 +103,12 @@ module Earl
       created_posts = []
       updated_posts = []
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         created_posts << { channel_id: channel_id, message: message, root_id: root_id }
         { "id" => "reply-post-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -156,22 +156,22 @@ module Earl
 
       on_text_callback = nil
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
+      stub_singleton(mock_session, :on_text) { |&block| on_text_callback = block }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       updated_posts = []
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -202,8 +202,8 @@ module Earl
       mm = runner.instance_variable_get(:@services).mattermost
 
       # Stub connect and get_channel to not make real network calls
-      mm.define_singleton_method(:connect) {}
-      mm.define_singleton_method(:get_channel) { |channel_id:| { "display_name" => "Test Channel" } }
+      stub_singleton(mm, :connect) {}
+      stub_singleton(mm, :get_channel) { |channel_id:| { "display_name" => "Test Channel" } }
 
       # Set shutting_down so the loop exits immediately
       runner.instance_variable_get(:@app_state).shutting_down = true
@@ -217,20 +217,20 @@ module Earl
     test "on_complete without prior text does not update or create posts" do
       runner = Earl::Runner.new
 
-      on_text_callback = nil
+      _on_text_callback = nil
       on_complete_callback = nil
       stats = mock_stats
 
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
-      mock_session.define_singleton_method(:total_cost) { 0.0 }
-      mock_session.define_singleton_method(:stats) { stats }
+      stub_singleton(mock_session, :on_text) { |&block| _on_text_callback = block }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
@@ -238,11 +238,11 @@ module Earl
       updated_posts = []
       created_posts = []
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         created_posts << { channel_id: channel_id, message: message, root_id: root_id }
         { "id" => "notif-1" }
       end
@@ -264,22 +264,22 @@ module Earl
 
       on_text_callback = nil
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
+      stub_singleton(mock_session, :on_text) { |&block| on_text_callback = block }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       update_count = 0
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         update_count += 1
       end
 
@@ -307,8 +307,8 @@ module Earl
     test "start enters main loop before exiting" do
       runner = Earl::Runner.new
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:connect) {}
-      mm.define_singleton_method(:get_channel) { |channel_id:| { "display_name" => "Test Channel" } }
+      stub_singleton(mm, :connect) {}
+      stub_singleton(mm, :get_channel) { |channel_id:| { "display_name" => "Test Channel" } }
 
       # Set shutting_down after a brief delay so the loop runs at least once
       Thread.new do
@@ -332,7 +332,7 @@ module Earl
       mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
 
       callback.call(sender_name: "alice", thread_id: "thread-12345678", text: "Hi Earl", post_id: "post-1",
                     channel_id: "channel-456")
@@ -348,22 +348,22 @@ module Earl
       sent_messages = []
       stats = mock_stats
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&_block| }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
-      mock_session.define_singleton_method(:total_cost) { 0.0 }
-      mock_session.define_singleton_method(:stats) { stats }
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |text| sent_messages << text }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "notif-1" } }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
 
       # First message starts processing
       runner.send(:enqueue_message,
@@ -394,7 +394,7 @@ module Earl
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
 
       runner.send(:enqueue_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "hello", channel_id: nil,
@@ -410,22 +410,22 @@ module Earl
       on_complete_callback = nil
       stats = mock_stats
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&_block| }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
-      mock_session.define_singleton_method(:total_cost) { 0.0 }
-      mock_session.define_singleton_method(:stats) { stats }
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "notif-1" } }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
 
       runner.send(:enqueue_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "hello", channel_id: nil,
@@ -452,8 +452,8 @@ module Earl
       # Mock the session_manager to ensure it's never called for non-allowed user
       session_created = false
       mock_manager = Object.new
-      mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| session_created = true }
-      mock_manager.define_singleton_method(:touch) { |_id| }
+      stub_singleton(mock_manager, :get_or_create) { |*_args, **_kwargs| session_created = true }
+      stub_singleton(mock_manager, :touch) { |_id| }
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       callback.call(sender_name: "eve", thread_id: "thread-1", text: "Hi", post_id: "post-1", channel_id: "channel-456")
@@ -466,7 +466,7 @@ module Earl
 
       executed_command = nil
       executor = runner.instance_variable_get(:@services).command_executor
-      executor.define_singleton_method(:execute) do |command, thread_id:, channel_id:|
+      stub_singleton(executor, :execute) do |command, thread_id:, channel_id:|
         executed_command = command
       end
 
@@ -487,7 +487,7 @@ module Earl
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
 
       runner.send(:handle_incoming_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "hello", channel_id: "channel-456",
@@ -510,19 +510,19 @@ module Earl
 
       on_tool_use_callback = nil
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&_block| }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&block| on_tool_use_callback = block }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
 
       runner.send(:process_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil,
@@ -538,28 +538,28 @@ module Earl
 
       on_tool_use_callback = nil
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&_block| }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&block| on_tool_use_callback = block }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       created_posts = []
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         created_posts << { message: message }
         { "id" => "reply-1" }
       end
 
       question_handler_called = false
       handler = runner.instance_variable_get(:@services).question_handler
-      handler.define_singleton_method(:handle_tool_use) do |**_args|
+      stub_singleton(handler, :handle_tool_use) do |**_args|
         question_handler_called = true
         nil
       end
@@ -584,7 +584,7 @@ module Earl
 
       # Mock get_user to return a valid allowed username
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
 
       # No pending questions, so reaction handling returns nil
       assert_nothing_raised do
@@ -625,25 +625,25 @@ module Earl
                          turn_input_tokens: 5000, cache_read_tokens: 30_000)
 
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
-      mock_session.define_singleton_method(:stats) { stats }
+      stub_singleton(mock_session, :on_text) { |&block| on_text_callback = block }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :stats) { stats }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       updated_posts = []
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         { "id" => "post-1" }
       end
 
@@ -669,25 +669,25 @@ module Earl
       stats = mock_stats
 
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&block| on_text_callback = block }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&block| on_complete_callback = block }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
-      mock_session.define_singleton_method(:stats) { stats }
+      stub_singleton(mock_session, :on_text) { |&block| on_text_callback = block }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :stats) { stats }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       updated_posts = []
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         { "id" => "post-1" }
       end
 
@@ -729,7 +729,7 @@ module Earl
       # Stub Thread.new to avoid actually spawning shutdown thread
       threads_spawned = 0
       original_new = Thread.method(:new)
-      Thread.define_singleton_method(:new) do
+      stub_singleton(Thread, :new) do
         threads_spawned += 1
         original_new.call {} # no-op thread
       end
@@ -742,7 +742,7 @@ module Earl
       runner.send(:handle_shutdown_signal)
       assert_equal 1, threads_spawned # no additional thread
     ensure
-      Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+      stub_singleton(Thread, :new) { |&block| original_new.call(&block) } if original_new
     end
 
     test "handle_incoming_message ignores unparseable commands" do
@@ -750,7 +750,7 @@ module Earl
 
       executed = false
       executor = runner.instance_variable_get(:@services).command_executor
-      executor.define_singleton_method(:execute) { |*_args, **_kwargs| executed = true }
+      stub_singleton(executor, :execute) { |*_args, **_kwargs| executed = true }
 
       # "!unknown_thing" is command-like but CommandParser.parse returns nil
       msg = Earl::Runner::UserMessage.new(
@@ -765,10 +765,10 @@ module Earl
     test "handle_reaction returns early when question handler returns nil result" do
       runner = Earl::Runner.new
       handler = runner.instance_variable_get(:@services).question_handler
-      handler.define_singleton_method(:handle_reaction) { |**_args| nil }
+      stub_singleton(handler, :handle_reaction) { |**_args| nil }
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
 
       assert_nothing_raised do
         runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
@@ -778,10 +778,10 @@ module Earl
     test "handle_reaction returns early when find_thread returns nil" do
       runner = Earl::Runner.new
       handler = runner.instance_variable_get(:@services).question_handler
-      handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
+      stub_singleton(handler, :handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
 
       # @question_threads is empty, so find_thread_for_question returns nil
       assert_nothing_raised do
@@ -794,23 +794,23 @@ module Earl
 
       on_tool_use_callback = nil
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&_block| }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_use) { |&block| on_tool_use_callback = block }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| true }
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&block| on_tool_use_callback = block }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
 
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         { "id" => "question-post-1" }
       end
-      mock_mm.define_singleton_method(:add_reaction) { |**_args| }
+      stub_singleton(mock_mm, :add_reaction) { |**_args| }
 
       runner.send(:process_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil,
@@ -842,12 +842,12 @@ module Earl
       runner = Earl::Runner.new
 
       mock_manager = Object.new
-      mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| raise "session creation failed" }
-      mock_manager.define_singleton_method(:touch) { |_id| }
+      stub_singleton(mock_manager, :get_or_create) { |*_args, **_kwargs| raise "session creation failed" }
+      stub_singleton(mock_manager, :touch) { |_id| }
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
 
       # Claim the thread first
       queue = runner.instance_variable_get(:@app_state).message_queue
@@ -868,14 +868,14 @@ module Earl
       runner = Earl::Runner.new
 
       mock_session = Object.new
-      mock_session.define_singleton_method(:on_text) { |&_block| }
-      mock_session.define_singleton_method(:on_system) { |&_block| }
-      mock_session.define_singleton_method(:on_complete) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_use) { |&_block| }
-      mock_session.define_singleton_method(:on_tool_result) { |&_block| }
-      mock_session.define_singleton_method(:working_dir) { nil }
-      mock_session.define_singleton_method(:send_message) { |_text| false } # Dead session
-      mock_session.define_singleton_method(:stats) do
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| false } # Dead session
+      stub_singleton(mock_session, :stats) do
         Earl::ClaudeSession::Stats.new(
           total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
           turn_input_tokens: 0, turn_output_tokens: 0,
@@ -887,8 +887,8 @@ module Earl
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
 
       queue = runner.instance_variable_get(:@app_state).message_queue
       queue.try_claim("thread-12345678")
@@ -919,7 +919,7 @@ module Earl
 
       stopped = false
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:stop_session) { |_id| stopped = true }
+      stub_singleton(manager, :stop_session) { |_id| stopped = true }
 
       runner.send(:stop_if_idle, "thread-12345678", persisted)
       assert_not stopped
@@ -934,7 +934,7 @@ module Earl
 
       stopped = false
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:stop_session) { |_id| stopped = true }
+      stub_singleton(manager, :stop_session) { |_id| stopped = true }
 
       runner.send(:stop_if_idle, "thread-12345678", persisted)
       assert_not stopped
@@ -949,7 +949,7 @@ module Earl
 
       stopped = false
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:stop_session) { |_id| stopped = true }
+      stub_singleton(manager, :stop_session) { |_id| stopped = true }
 
       runner.send(:stop_if_idle, "thread-12345678", persisted)
       assert stopped
@@ -964,7 +964,7 @@ module Earl
 
       stopped = false
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:stop_session) { |_id| stopped = true }
+      stub_singleton(manager, :stop_session) { |_id| stopped = true }
 
       assert_nothing_raised { runner.send(:stop_if_idle, "thread-12345678", persisted) }
       assert_not stopped
@@ -973,20 +973,20 @@ module Earl
     test "handle_reaction sends answer when thread found and session exists" do
       runner = Earl::Runner.new
       handler = runner.instance_variable_get(:@services).question_handler
-      handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
+      stub_singleton(handler, :handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
       # Populate @question_threads to simulate a prior tool_use capture
       runner.instance_variable_get(:@responses).question_threads["tu-1"] = "thread-12345678"
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
 
       sent_messages = []
       mock_session = Object.new
-      mock_session.define_singleton_method(:send_message) { |text| sent_messages << text }
+      stub_singleton(mock_session, :send_message) { |text| sent_messages << text }
 
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:get) { |_id| mock_session }
+      stub_singleton(manager, :get) { |_id| mock_session }
 
       runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
       assert_equal ["yes"], sent_messages
@@ -995,17 +995,17 @@ module Earl
     test "handle_reaction skips send when session is nil" do
       runner = Earl::Runner.new
       handler = runner.instance_variable_get(:@services).question_handler
-      handler.define_singleton_method(:handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
+      stub_singleton(handler, :handle_reaction) { |**_args| { tool_use_id: "tu-1", answer_text: "yes" } }
 
       # Populate @question_threads to simulate a prior tool_use capture
       runner.instance_variable_get(:@responses).question_threads["tu-1"] = "thread-12345678"
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
 
       # session_manager.get returns nil
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:get) { |_id| nil }
+      stub_singleton(manager, :get) { |_id| nil }
 
       # Should not raise (session&.send_message with nil session)
       assert_nothing_raised do
@@ -1017,11 +1017,11 @@ module Earl
       runner = Earl::Runner.new
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_user) { |user_id:| { "username" => "eve" } }
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "eve" } }
 
       handler = runner.instance_variable_get(:@services).question_handler
       handler_called = false
-      handler.define_singleton_method(:handle_reaction) do |**_args|
+      stub_singleton(handler, :handle_reaction) do |**_args|
         handler_called = true
         nil
       end
@@ -1030,12 +1030,29 @@ module Earl
       assert_not handler_called, "Expected non-allowed user reaction to be blocked"
     end
 
+    test "handle_reaction blocks when get_user returns no username" do
+      runner = Earl::Runner.new
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mm, :get_user) { |user_id:| {} }
+
+      handler = runner.instance_variable_get(:@services).question_handler
+      handler_called = false
+      stub_singleton(handler, :handle_reaction) do |**_args|
+        handler_called = true
+        nil
+      end
+
+      runner.send(:handle_reaction, user_id: "user-unknown", post_id: "post-1", emoji_name: "one")
+      assert_not handler_called, "Expected reaction to be blocked when username is nil"
+    end
+
     test "handle_reaction allows all users when allowlist is empty" do
       ENV["EARL_ALLOWED_USERS"] = ""
       runner = Earl::Runner.new
 
       handler = runner.instance_variable_get(:@services).question_handler
-      handler.define_singleton_method(:handle_reaction) { |**_args| nil }
+      stub_singleton(handler, :handle_reaction) { |**_args| nil }
 
       # Should not need get_user when allowlist is empty
       assert_nothing_raised do
@@ -1053,7 +1070,7 @@ module Earl
 
       # Stub session_manager.pause_all
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:pause_all) {}
+      stub_singleton(manager, :pause_all) {}
 
       runner.send(:shutdown)
       sleep 0.05 # Allow thread to be killed
@@ -1065,7 +1082,7 @@ module Earl
       runner.instance_variable_get(:@app_state).idle_checker_thread = nil
 
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:pause_all) {}
+      stub_singleton(manager, :pause_all) {}
 
       # Should not raise even with nil thread
       assert_nothing_raised { runner.send(:shutdown) }
@@ -1079,15 +1096,15 @@ module Earl
 
       # Mock manager where get returns nil (new session) but get_or_create returns session
       mock_manager = Object.new
-      mock_manager.define_singleton_method(:get) { |_id| nil }
-      mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| mock_session }
-      mock_manager.define_singleton_method(:touch) { |_id| }
-      mock_manager.define_singleton_method(:save_stats) { |_id| }
+      stub_singleton(mock_manager, :get) { |_id| nil }
+      stub_singleton(mock_manager, :get_or_create) { |*_args, **_kwargs| mock_session }
+      stub_singleton(mock_manager, :touch) { |_id| }
+      stub_singleton(mock_manager, :save_stats) { |_id| }
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:get_thread_posts) do |_thread_id|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :get_thread_posts) do |_thread_id|
         [
           { sender: "user", message: "!sessions", is_bot: false },
           { sender: "EARL", message: "| Session | Project | Status |", is_bot: true },
@@ -1113,15 +1130,15 @@ module Earl
       mock_session = build_mock_session(on_send: ->(text) { sent_text = text })
 
       mock_manager = Object.new
-      mock_manager.define_singleton_method(:get) { |_id| nil }
-      mock_manager.define_singleton_method(:get_or_create) { |*_args, **_kwargs| mock_session }
-      mock_manager.define_singleton_method(:touch) { |_id| }
-      mock_manager.define_singleton_method(:save_stats) { |_id| }
+      stub_singleton(mock_manager, :get) { |_id| nil }
+      stub_singleton(mock_manager, :get_or_create) { |*_args, **_kwargs| mock_session }
+      stub_singleton(mock_manager, :touch) { |_id| }
+      stub_singleton(mock_manager, :save_stats) { |_id| }
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:get_thread_posts) { |_thread_id| [] }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :get_thread_posts) { |_thread_id| [] }
 
       runner.send(:process_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "Hello Earl", channel_id: nil,
@@ -1141,8 +1158,8 @@ module Earl
 
       thread_posts_called = false
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:get_thread_posts) do |_id|
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :get_thread_posts) do |_id|
         thread_posts_called = true
         []
       end
@@ -1160,7 +1177,7 @@ module Earl
       runner = Earl::Runner.new
 
       mock_mm = runner.instance_variable_get(:@services).mattermost
-      mock_mm.define_singleton_method(:get_thread_posts) do |_thread_id|
+      stub_singleton(mock_mm, :get_thread_posts) do |_thread_id|
         [
           { sender: "user", message: "!help", is_bot: false },
           { sender: "EARL", message: "Available commands: ...", is_bot: true },
@@ -1184,7 +1201,7 @@ module Earl
 
       threads_spawned = 0
       original_new = Thread.method(:new)
-      Thread.define_singleton_method(:new) do
+      stub_singleton(Thread, :new) do
         threads_spawned += 1
         original_new.call {}
       end
@@ -1197,7 +1214,7 @@ module Earl
       runner.request_restart
       assert_equal 1, threads_spawned
     ensure
-      Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+      stub_singleton(Thread, :new) { |&block| original_new.call(&block) } if original_new
     end
 
     test "handle_restart_signal is idempotent like handle_shutdown_signal" do
@@ -1206,7 +1223,7 @@ module Earl
 
       threads_spawned = 0
       original_new = Thread.method(:new)
-      Thread.define_singleton_method(:new) do
+      stub_singleton(Thread, :new) do
         threads_spawned += 1
         original_new.call {}
       end
@@ -1219,7 +1236,7 @@ module Earl
       runner.send(:handle_restart_signal)
       assert_equal 1, threads_spawned
     ensure
-      Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+      stub_singleton(Thread, :new) { |&block| original_new.call(&block) } if original_new
     end
 
     test "begin_shutdown is shared by shutdown and restart signals" do
@@ -1228,7 +1245,7 @@ module Earl
 
       threads_spawned = 0
       original_new = Thread.method(:new)
-      Thread.define_singleton_method(:new) do
+      stub_singleton(Thread, :new) do
         threads_spawned += 1
         original_new.call {}
       end
@@ -1242,7 +1259,7 @@ module Earl
       runner.send(:handle_restart_signal)
       assert_equal 1, threads_spawned
     ensure
-      Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+      stub_singleton(Thread, :new) { |&block| original_new.call(&block) } if original_new
     end
 
     test "request_update sets pending_update flag" do
@@ -1250,7 +1267,7 @@ module Earl
       app_state = runner.instance_variable_get(:@app_state)
 
       original_new = Thread.method(:new)
-      Thread.define_singleton_method(:new) do
+      stub_singleton(Thread, :new) do
         original_new.call {}
       end
 
@@ -1259,7 +1276,7 @@ module Earl
       assert app_state.pending_restart
       assert app_state.pending_update
     ensure
-      Thread.define_singleton_method(:new) { |&block| original_new.call(&block) } if original_new
+      stub_singleton(Thread, :new) { |&block| original_new.call(&block) } if original_new
     end
 
     test "restart with pending_update flag logs updating" do
@@ -1268,11 +1285,11 @@ module Earl
       app_state.pending_update = true
 
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:pause_all) {}
+      stub_singleton(manager, :pause_all) {}
 
       # Stub pull_latest and update_dependencies to avoid real shell calls
-      runner.define_singleton_method(:pull_latest) {}
-      runner.define_singleton_method(:update_dependencies) {}
+      stub_singleton(runner, :pull_latest) {}
+      stub_singleton(runner, :update_dependencies) {}
 
       assert_nothing_raised { runner.send(:restart) }
     end
@@ -1283,11 +1300,11 @@ module Earl
       app_state.pending_update = false
 
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:pause_all) {}
+      stub_singleton(manager, :pause_all) {}
 
       update_called = false
-      runner.define_singleton_method(:pull_latest) {}
-      runner.define_singleton_method(:update_dependencies) { update_called = true }
+      stub_singleton(runner, :pull_latest) {}
+      stub_singleton(runner, :update_dependencies) { update_called = true }
 
       runner.send(:restart)
 
@@ -1297,7 +1314,7 @@ module Earl
     test "run_in_repo logs success on successful command" do
       runner = Earl::Runner.new
 
-      runner.define_singleton_method(:system) { |*_args| true }
+      stub_singleton(runner, :system) { |*_args| true }
 
       assert_nothing_raised do
         Dir.chdir(File.dirname($PROGRAM_NAME)) do
@@ -1309,7 +1326,7 @@ module Earl
     test "run_in_repo logs failure on failed command" do
       runner = Earl::Runner.new
 
-      runner.define_singleton_method(:system) { |*_args| false }
+      stub_singleton(runner, :system) { |*_args| false }
 
       assert_nothing_raised do
         Dir.chdir(File.dirname($PROGRAM_NAME)) do
@@ -1322,7 +1339,7 @@ module Earl
       runner = Earl::Runner.new
 
       # Stub Dir.chdir to raise
-      runner.define_singleton_method(:run_in_repo) do |label, *_cmd|
+      stub_singleton(runner, :run_in_repo) do |label, *_cmd|
         raise StandardError, "chdir failed"
       rescue StandardError => error
         # Call the real rescue logic
@@ -1341,7 +1358,7 @@ module Earl
       posted = []
       mm = runner.instance_variable_get(:@services).mattermost
       psts = posted
-      mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mm, :create_post) do |channel_id:, message:, root_id:|
         psts << { channel_id: channel_id, message: message, root_id: root_id }
       end
 
@@ -1365,7 +1382,7 @@ module Earl
       posted = []
       mm = runner.instance_variable_get(:@services).mattermost
       psts = posted
-      mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mm, :create_post) do |channel_id:, message:, root_id:|
         psts << { message: message }
       end
 
@@ -1384,7 +1401,7 @@ module Earl
       File.write(path, JSON.generate({ channel_id: "ch-1", thread_id: "th-1", command: "restart" }))
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:create_post) { |**_args| raise "network timeout" }
+      stub_singleton(mm, :create_post) { |**_args| raise "network timeout" }
 
       assert_nothing_raised { runner.send(:notify_restart) }
     ensure
@@ -1394,7 +1411,7 @@ module Earl
     test "resolve_channel_names falls back to truncated id when channel info has no name" do
       runner = Earl::Runner.new
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_channel) { |channel_id:| {} }
+      stub_singleton(mm, :get_channel) { |channel_id:| {} }
 
       names = runner.send(:resolve_channel_names, ["abcdefgh12345678"])
       assert_equal ["abcdefgh"], names
@@ -1403,7 +1420,7 @@ module Earl
     test "resolve_channel_names falls back to name when display_name is nil" do
       runner = Earl::Runner.new
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_channel) { |channel_id:| { "name" => "general" } }
+      stub_singleton(mm, :get_channel) { |channel_id:| { "name" => "general" } }
 
       names = runner.send(:resolve_channel_names, ["channel-456"])
       assert_equal ["general"], names
@@ -1412,7 +1429,7 @@ module Earl
     test "resolve_channel_names falls back to truncated id when get_channel returns nil" do
       runner = Earl::Runner.new
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_channel) { |channel_id:| nil }
+      stub_singleton(mm, :get_channel) { |channel_id:| nil }
 
       names = runner.send(:resolve_channel_names, ["abcdefgh12345678"])
       assert_equal ["abcdefgh"], names
@@ -1421,11 +1438,11 @@ module Earl
     test "handle_response_complete handles nil session gracefully" do
       runner = Earl::Runner.new
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:get) { |_id| nil }
+      stub_singleton(manager, :get) { |_id| nil }
 
       # Create a response for the thread
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
       response = Earl::StreamingResponse.new(thread_id: "thread-12345678", mattermost: mm, channel_id: "ch-1")
       runner.instance_variable_get(:@responses).active_responses["thread-12345678"] = response
 
@@ -1436,7 +1453,7 @@ module Earl
       runner = Earl::Runner.new
       mock_session = build_mock_session
       manager = runner.instance_variable_get(:@services).session_manager
-      manager.define_singleton_method(:get) { |_id| mock_session }
+      stub_singleton(manager, :get) { |_id| mock_session }
 
       # No active response for this thread
       assert_nothing_raised { runner.send(:handle_response_complete, "thread-12345678") }
@@ -1451,7 +1468,7 @@ module Earl
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
 
       analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
       response = Earl::StreamingResponse.new(thread_id: "thread-12345678", mattermost: mm, channel_id: "ch-1")
@@ -1476,10 +1493,10 @@ module Earl
       runner = Earl::Runner.new
 
       executor = runner.instance_variable_get(:@services).command_executor
-      executor.define_singleton_method(:execute) { |*_args, **_kwargs| { passthrough: "forwarded message" } }
+      stub_singleton(executor, :execute) { |*_args, **_kwargs| { passthrough: "forwarded message" } }
 
       enqueued = nil
-      runner.define_singleton_method(:enqueue_message) { |msg| enqueued = msg }
+      stub_singleton(runner, :enqueue_message) { |msg| enqueued = msg }
 
       runner.send(:handle_incoming_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "!escape",
@@ -1493,11 +1510,11 @@ module Earl
       runner = Earl::Runner.new
 
       executor = runner.instance_variable_get(:@services).command_executor
-      executor.define_singleton_method(:execute) { |*_args, **_kwargs| nil }
+      stub_singleton(executor, :execute) { |*_args, **_kwargs| nil }
 
       # Simulate an active response
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
       response = Earl::StreamingResponse.new(thread_id: "thread-12345678", mattermost: mm, channel_id: "ch-1")
       runner.instance_variable_get(:@responses).active_responses["thread-12345678"] = response
 
@@ -1512,10 +1529,10 @@ module Earl
       runner = Earl::Runner.new
 
       executor = runner.instance_variable_get(:@services).command_executor
-      executor.define_singleton_method(:execute) { |*_args, **_kwargs| nil }
+      stub_singleton(executor, :execute) { |*_args, **_kwargs| nil }
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
       response = Earl::StreamingResponse.new(thread_id: "thread-12345678", mattermost: mm, channel_id: "ch-1")
       runner.instance_variable_get(:@responses).active_responses["thread-12345678"] = response
 
@@ -1529,7 +1546,7 @@ module Earl
     test "log_startup with single channel uses singular form" do
       runner = Earl::Runner.new
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:get_channel) { |channel_id:| { "display_name" => "General" } }
+      stub_singleton(mm, :get_channel) { |channel_id:| { "display_name" => "General" } }
 
       # Should not raise — testing singular "channel" vs plural "channels"
       assert_nothing_raised { runner.send(:log_startup) }
@@ -1608,6 +1625,12 @@ module Earl
       assert runner.send(:needs_fixes_followup?, text)
     end
 
+    test "needs_fixes_followup? returns false when heading present but no keywords" do
+      runner = Earl::Runner.new
+      text = "## Investigation\n\n#{"x" * 300}\n\nThis response has only a heading with no matching keyword phrases."
+      assert_not runner.send(:needs_fixes_followup?, text)
+    end
+
     test "needs_fixes_followup? recognizes case-insensitive headings" do
       runner = Earl::Runner.new
       text = "## WHAT WENT WRONG\n\n#{"x" * 300}\n\nThe problem went wrong here."
@@ -1623,12 +1646,12 @@ module Earl
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
 
       analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
       mock_response = Object.new
-      mock_response.define_singleton_method(:full_text) { analysis_text }
-      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+      stub_singleton(mock_response, :full_text) { analysis_text }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
 
       bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
         session: mock_session, response: mock_response, thread_id: "thread-12345678"
@@ -1648,8 +1671,8 @@ module Earl
 
       text_with_fixes = "## Root Cause\n\n#{"x" * 300}\n\nSomething went wrong.\n\n## Suggested Fixes\n\n1. Fix it"
       mock_response = Object.new
-      mock_response.define_singleton_method(:full_text) { text_with_fixes }
-      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+      stub_singleton(mock_response, :full_text) { text_with_fixes }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
 
       bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
         session: mock_session, response: mock_response, thread_id: "thread-12345678"
@@ -1669,12 +1692,12 @@ module Earl
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
 
       analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
       mock_response = Object.new
-      mock_response.define_singleton_method(:full_text) { analysis_text }
-      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+      stub_singleton(mock_response, :full_text) { analysis_text }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
 
       bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
         session: mock_session, response: mock_response, thread_id: "thread-12345678"
@@ -1690,17 +1713,17 @@ module Earl
       runner = Earl::Runner.new
 
       mock_session = build_mock_session
-      mock_session.define_singleton_method(:send_message) { |_text| false }
+      stub_singleton(mock_session, :send_message) { |_text| false }
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
 
       analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
       mock_response = Object.new
-      mock_response.define_singleton_method(:full_text) { analysis_text }
-      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+      stub_singleton(mock_response, :full_text) { analysis_text }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
 
       bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
         session: mock_session, response: mock_response, thread_id: "thread-12345678"
@@ -1718,12 +1741,12 @@ module Earl
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
 
       analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
       mock_response = Object.new
-      mock_response.define_singleton_method(:full_text) { analysis_text }
-      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+      stub_singleton(mock_response, :full_text) { analysis_text }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
 
       bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
         session: mock_session, response: mock_response, thread_id: "thread-ret-true"
@@ -1737,8 +1760,8 @@ module Earl
       runner = Earl::Runner.new
 
       mock_response = Object.new
-      mock_response.define_singleton_method(:full_text) { "Short text" }
-      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+      stub_singleton(mock_response, :full_text) { "Short text" }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
 
       bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
         session: build_mock_session, response: mock_response, thread_id: "thread-ret-false"
@@ -1752,17 +1775,17 @@ module Earl
       runner = Earl::Runner.new
 
       mock_session = build_mock_session
-      mock_session.define_singleton_method(:send_message) { |_text| raise "boom" }
+      stub_singleton(mock_session, :send_message) { |_text| raise "boom" }
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
 
       analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
       mock_response = Object.new
-      mock_response.define_singleton_method(:full_text) { analysis_text }
-      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+      stub_singleton(mock_response, :full_text) { analysis_text }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
 
       bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
         session: mock_session, response: mock_response, thread_id: "thread-err-false"
@@ -1777,17 +1800,17 @@ module Earl
       runner = Earl::Runner.new
 
       mock_session = build_mock_session
-      mock_session.define_singleton_method(:send_message) { |_text| raise "boom" }
+      stub_singleton(mock_session, :send_message) { |_text| raise "boom" }
       mock_manager = build_mock_manager(mock_session)
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       mm = runner.instance_variable_get(:@services).mattermost
-      mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mm, :send_typing) { |**_args| }
 
       analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
       mock_response = Object.new
-      mock_response.define_singleton_method(:full_text) { analysis_text }
-      mock_response.define_singleton_method(:channel_id) { "ch-1" }
+      stub_singleton(mock_response, :full_text) { analysis_text }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
 
       bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
         session: mock_session, response: mock_response, thread_id: "thread-12345678"
@@ -1797,6 +1820,33 @@ module Earl
       assert_match(/Analysis follow-up failed.*boom/, logs)
     end
 
+    test "send_analysis_followup_if_needed logs nil backtrace path" do
+      runner = Earl::Runner.new
+
+      mock_session = build_mock_session
+      error = StandardError.new("nil trace")
+      # Error with nil backtrace (never raised, so no backtrace set)
+      stub_singleton(mock_session, :send_message) { |_text| raise error }
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mm, :send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      mock_response = Object.new
+      stub_singleton(mock_response, :full_text) { analysis_text }
+      stub_singleton(mock_response, :channel_id) { "ch-1" }
+
+      bundle = Earl::Runner::ResponseLifecycle::ResponseBundle.new(
+        session: mock_session, response: mock_response, thread_id: "thread-nil-bt"
+      )
+
+      result = nil
+      capture_logs { result = runner.send(:send_analysis_followup_if_needed, bundle) }
+      assert_equal false, result
+    end
+
     test "handle_tool_use stores question thread only when tool_use_id present" do
       runner = Earl::Runner.new
       mock_session = build_mock_session
@@ -1804,7 +1854,7 @@ module Earl
       runner.instance_variable_get(:@services).session_manager = mock_manager
 
       qh = runner.instance_variable_get(:@services).question_handler
-      qh.define_singleton_method(:handle_tool_use) { |**_args| { tool_use_id: nil } }
+      stub_singleton(qh, :handle_tool_use) { |**_args| { tool_use_id: nil } }
 
       runner.send(:handle_tool_use, thread_id: "thread-nil-id", tool_use: {}, channel_id: "ch-1")
 
@@ -1821,19 +1871,213 @@ module Earl
       end
     end
 
+    # --- ContentAssembly (attach_images / merge_image_blocks) tests ---
+
+    test "attach_images returns content unchanged when file_ids empty" do
+      runner = Earl::Runner.new
+      result = runner.send(:attach_images, "plain text", [])
+      assert_equal "plain text", result
+    end
+
+    test "attach_images with string content builds image blocks" do
+      runner = Earl::Runner.new
+      mm = runner.instance_variable_get(:@services).mattermost
+
+      stub_singleton(mm, :get_file_info) { |_id| { "mime_type" => "image/png" } }
+      mock_response = Object.new
+      stub_singleton(mock_response, :is_a?) { |klass| klass == Net::HTTPSuccess }
+      stub_singleton(mock_response, :body) { "fake-png-bytes" }
+      stub_singleton(mm, :download_file) { |_id| mock_response }
+
+      result = runner.send(:attach_images, "hello with image", ["file-1"])
+
+      assert result.is_a?(Array), "Expected Array result from content_builder.build"
+      text_blocks = result.select { |b| b["type"] == "text" }
+      assert(text_blocks.any? { |b| b["text"].include?("hello with image") })
+    end
+
+    test "attach_images with Array content merges image blocks" do
+      runner = Earl::Runner.new
+      mm = runner.instance_variable_get(:@services).mattermost
+
+      # Stub get_file_info and download_file for image building
+      stub_singleton(mm, :get_file_info) { |_id| { "mime_type" => "image/png" } }
+      mock_response = Object.new
+      stub_singleton(mock_response, :is_a?) { |klass| klass == Net::HTTPSuccess }
+      stub_singleton(mock_response, :body) { "fake-png-bytes" }
+      stub_singleton(mm, :download_file) { |_id| mock_response }
+
+      existing_blocks = [{ "type" => "text", "text" => "existing text" }]
+      result = runner.send(:attach_images, existing_blocks, ["file-1"])
+
+      assert result.is_a?(Array), "Expected Array result from merge_image_blocks"
+      assert result.size > 1, "Expected merged blocks to have more than 1 entry"
+    end
+
+    test "merge_image_blocks returns blocks when new_blocks is not Array" do
+      runner = Earl::Runner.new
+      mm = runner.instance_variable_get(:@services).mattermost
+
+      # Stub content builder to return a string (not Array) — simulating no images found
+      stub_singleton(mm, :get_file_info) { |_id| { "mime_type" => "text/plain" } }
+
+      existing_blocks = [{ "type" => "text", "text" => "hello" }]
+      result = runner.send(:attach_images, existing_blocks, ["file-1"])
+
+      assert_equal existing_blocks, result
+    end
+
+    # --- callback_wiring detect_images tests ---
+
+    test "wire_text_callback passes image refs via on_text_with_images" do
+      runner = Earl::Runner.new
+
+      on_text_block = nil
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&block| on_text_block = block }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :stats) do
+        Earl::ClaudeSession::Stats.new(
+          total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
+          turn_input_tokens: 0, turn_output_tokens: 0,
+          cache_read_tokens: 0, cache_creation_tokens: 0
+        )
+      end
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+
+      runner.send(:process_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Invoke on_text callback — detect_images is called with tool_name from last_tool
+      assert_not_nil on_text_block
+      assert_nothing_raised { on_text_block.call("Here is some text with no images") }
+    end
+
+    test "wire_tool_result_callback detects inline images" do
+      runner = Earl::Runner.new
+
+      on_tool_result_block = nil
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&block| on_tool_result_block = block }
+      stub_singleton(mock_session, :working_dir) { "/tmp" }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :stats) do
+        Earl::ClaudeSession::Stats.new(
+          total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
+          turn_input_tokens: 0, turn_output_tokens: 0,
+          cache_read_tokens: 0, cache_creation_tokens: 0
+        )
+      end
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+
+      runner.send(:process_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "test", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Call the tool result callback with image blocks
+      assert_not_nil on_tool_result_block
+      long_data = "A" * 200
+      assert_nothing_raised do
+        on_tool_result_block.call(
+          images: [{ "source" => { "data" => long_data, "media_type" => "image/png" } }],
+          texts: []
+        )
+      end
+    end
+
+    # --- response_lifecycle: stop_active_response with nil response ---
+
+    test "stop_active_response handles nil response gracefully" do
+      runner = Earl::Runner.new
+
+      # No active response for this thread
+      assert_nothing_raised { runner.send(:stop_active_response, "nonexistent-thread") }
+    end
+
+    # --- process_next_queued with string message ---
+
+    test "process_next_queued converts string to UserMessage" do
+      runner = Earl::Runner.new
+
+      sent_messages = []
+      stats = mock_stats
+      on_complete_cb = nil
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_cb = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) do |text|
+        sent_messages << text
+        true
+      end
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
+
+      thread_id = "thread-12345678"
+
+      # First message claims the thread
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: thread_id, text: "first", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Directly enqueue a plain string (this is what heartbeat scheduler does)
+      runner.instance_variable_get(:@app_state).message_queue.enqueue(thread_id, "plain string msg")
+
+      # Complete first message — should process the queued string
+      on_complete_cb.call(mock_session)
+      sleep 0.05
+
+      assert_includes sent_messages, "plain string msg"
+    end
+
     private
 
     def build_mock_session(on_send: nil)
       mock = Object.new
-      mock.define_singleton_method(:on_text) { |&_block| }
-      mock.define_singleton_method(:on_system) { |&_block| }
-      mock.define_singleton_method(:on_complete) { |&_block| }
-      mock.define_singleton_method(:on_tool_use) { |&_block| }
-      mock.define_singleton_method(:on_tool_result) { |&_block| }
-      mock.define_singleton_method(:working_dir) { nil }
-      mock.define_singleton_method(:send_message) { |text| on_send&.call(text) }
-      mock.define_singleton_method(:total_cost) { 0.0 }
-      mock.define_singleton_method(:stats) do
+      stub_singleton(mock, :on_text) { |&_block| }
+      stub_singleton(mock, :on_system) { |&_block| }
+      stub_singleton(mock, :on_complete) { |&_block| }
+      stub_singleton(mock, :on_tool_use) { |&_block| }
+      stub_singleton(mock, :on_tool_result) { |&_block| }
+      stub_singleton(mock, :working_dir) { nil }
+      stub_singleton(mock, :send_message) { |text| on_send&.call(text) }
+      stub_singleton(mock, :total_cost) { 0.0 }
+      stub_singleton(mock, :stats) do
         Earl::ClaudeSession::Stats.new(
           total_cost: 0.0, total_input_tokens: 0, total_output_tokens: 0,
           turn_input_tokens: 0, turn_output_tokens: 0,
@@ -1845,10 +2089,10 @@ module Earl
 
     def build_mock_manager(mock_session)
       mock = Object.new
-      mock.define_singleton_method(:get_or_create) { |*_args, **_kwargs| mock_session }
-      mock.define_singleton_method(:get) { |_id| mock_session }
-      mock.define_singleton_method(:touch) { |_id| }
-      mock.define_singleton_method(:save_stats) { |_id| }
+      stub_singleton(mock, :get_or_create) { |*_args, **_kwargs| mock_session }
+      stub_singleton(mock, :get) { |_id| mock_session }
+      stub_singleton(mock, :touch) { |_id| }
+      stub_singleton(mock, :save_stats) { |_id| }
       mock
     end
 

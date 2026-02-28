@@ -249,9 +249,9 @@ module Earl
       test "handles handler error with nil backtrace gracefully" do
         output = StringIO.new
         handler = mock_handler
-        handler.define_singleton_method(:call) do |_name, _args|
+        stub_singleton(handler, :call) do |_name, _args|
           error = StandardError.new("no trace")
-          error.define_singleton_method(:backtrace) { nil }
+          stub_singleton(error, :backtrace) { nil }
           raise error
         end
 
@@ -279,11 +279,11 @@ module Earl
         err = call_raises
 
         handler = Object.new
-        handler.define_singleton_method(:tool_definitions) do
+        stub_singleton(handler, :tool_definitions) do
           [{ name: tn, description: desc, inputSchema: { type: "object", properties: {} } }]
         end
-        handler.define_singleton_method(:handles?) { |name| name == tn }
-        handler.define_singleton_method(:call) do |_name, _args|
+        stub_singleton(handler, :handles?) { |name| name == tn }
+        stub_singleton(handler, :call) do |_name, _args|
           raise err if err
 
           cr

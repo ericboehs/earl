@@ -432,7 +432,7 @@ module Earl
 
       # Make the second reaction fail
       call_count = 0
-      @mattermost.define_singleton_method(:add_reaction) do |post_id:, emoji_name:|
+      stub_singleton(@mattermost, :add_reaction) do |post_id:, emoji_name:|
         call_count += 1
         raise "network error" if call_count == 2
 
@@ -509,7 +509,7 @@ module Earl
       stored = @tmux_store.get("test")
 
       # Make create_post raise
-      @mattermost.define_singleton_method(:create_post) { |**_| raise "network error" }
+      stub_singleton(@mattermost, :create_post) { |**_| raise "network error" }
 
       # Should not raise
       assert_nothing_raised do
@@ -532,13 +532,25 @@ module Earl
       assert_empty question_posts
     end
 
+    test "forward_question skips when question detected via cursor but no numbered options" do
+      @tmux_store.save(build_info(name: "cursor-session"))
+      @tmux_adapter.session_exists_result = true
+      # Matches STATE_PATTERN (has ?\n + ❯) but parse_question finds no numbered options
+      @tmux_adapter.capture_pane_result = "Which option?\n❯ foo\n  bar\n"
+
+      call_poll_sessions
+
+      question_posts = @mattermost_posts.select { |p| p[:message].include?(":question:") }
+      assert_empty question_posts
+    end
+
     test "forward_question handles post failure gracefully" do
       @tmux_store.save(build_info(name: "q-session"))
       @tmux_adapter.session_exists_result = true
       @tmux_adapter.capture_pane_result = "Which file?\n1. foo.rb\n2. bar.rb\n"
 
       # Make create_post raise
-      @mattermost.define_singleton_method(:create_post) { |**_| raise "network error" }
+      stub_singleton(@mattermost, :create_post) { |**_| raise "network error" }
 
       assert_nothing_raised { call_poll_sessions }
       # No pending interactions should be registered
@@ -551,7 +563,7 @@ module Earl
       @tmux_adapter.capture_pane_result = "Which file?\n1. foo.rb\n2. bar.rb\n"
 
       # Return a post without "id" key
-      @mattermost.define_singleton_method(:create_post) { |**_| {} }
+      stub_singleton(@mattermost, :create_post) { |**_| {} }
 
       assert_nothing_raised { call_poll_sessions }
       assert_empty poll_state.pending_interactions
@@ -564,7 +576,7 @@ module Earl
       @tmux_adapter.session_exists_result = true
       @tmux_adapter.capture_pane_result = "Do you want to allow this action?\n"
 
-      @mattermost.define_singleton_method(:create_post) { |**_| raise "network error" }
+      stub_singleton(@mattermost, :create_post) { |**_| raise "network error" }
 
       assert_nothing_raised { call_poll_sessions }
       assert_empty poll_state.pending_interactions
@@ -575,7 +587,7 @@ module Earl
       @tmux_adapter.session_exists_result = true
       @tmux_adapter.capture_pane_result = "Do you want to allow this action?\n"
 
-      @mattermost.define_singleton_method(:create_post) { |**_| {} }
+      stub_singleton(@mattermost, :create_post) { |**_| {} }
 
       assert_nothing_raised { call_poll_sessions }
       assert_empty poll_state.pending_interactions
@@ -683,6 +695,17 @@ module Earl
       assert_equal :running, call_detect_state("")
     end
 
+    test "dispatch_state_alert skips post when state has no alert message" do
+      @tmux_store.save(build_info(name: "run-session"))
+      @tmux_adapter.session_exists_result = true
+      @tmux_adapter.capture_pane_result = "Processing files...\nDone with step 1\nStarting step 2\n"
+
+      call_poll_sessions
+
+      # :running state produces nil from passive_alert_message, so no posts
+      assert_empty @mattermost_posts
+    end
+
     test "forward_question skips when output has question mark but more than 4 options only takes 4" do
       @tmux_store.save(build_info(name: "big-q"))
       @tmux_adapter.session_exists_result = true
@@ -708,7 +731,7 @@ module Earl
 
       # Make poll_sessions raise to trigger the rescue in poll_loop
       poll_count = 0
-      @monitor.define_singleton_method(:poll_sessions) do
+      stub_singleton(@monitor, :poll_sessions) do
         poll_count += 1
         raise "poll explosion" if poll_count == 1
       end
@@ -762,6 +785,50 @@ module Earl
       ctl = Earl::TmuxMonitor::ThreadControl.new
       assert_nothing_raised { ctl.stop }
       assert_not ctl.alive?
+    end
+
+    test "ThreadControl stop does not kill thread that finished before join timeout" do
+      ctl = Earl::TmuxMonitor::ThreadControl.new
+      ctl.start { nil } # Thread finishes immediately
+      sleep 0.05 # Let it finish
+
+      assert_not ctl.instance_variable_get(:@thread).alive?
+      ctl.stop
+      assert_not ctl.alive?
+    end
+
+    test "poll_loop rescues errors with nil backtrace and continues" do
+      error = StandardError.new("poll crash")
+      # Error without backtrace (nil backtrace)
+      call_count = 0
+      stub_singleton(@monitor, :poll_sessions) do
+        call_count += 1
+        raise error if call_count <= 1
+      end
+
+      _thread_ctl = @monitor.instance_variable_get(:@thread_ctl)
+      # Run one iteration of poll_loop manually
+      @monitor.instance_variable_set(:@thread_ctl,
+                                     Earl::TmuxMonitor::ThreadControl.new)
+      new_ctl = @monitor.instance_variable_get(:@thread_ctl)
+      new_ctl.start do
+        @monitor.send(:poll_loop)
+      end
+      sleep 0.05
+      new_ctl.stop
+
+      assert call_count >= 1
+    end
+
+    test "poll_sessions rescues per-session errors with nil backtrace" do
+      @tmux_store.save(build_info(name: "boom-session"))
+      @tmux_adapter.session_exists_result = true
+
+      error = StandardError.new("session error")
+      # Error with nil backtrace
+      stub_singleton(@tmux_adapter, :capture_pane) { |_name, **_opts| raise error }
+
+      assert_nothing_raised { call_poll_sessions }
     end
 
     test "error_message includes last 10 lines of output" do
@@ -883,13 +950,13 @@ module Earl
 
       mattermost = Object.new
 
-      mattermost.define_singleton_method(:create_post) do |channel_id:, message:, root_id: nil|
+      stub_singleton(mattermost, :create_post) do |channel_id:, message:, root_id: nil|
         post_id = "post-#{posts.size + 1}"
         posts << { channel_id: channel_id, message: message, root_id: root_id, id: post_id }
         { "id" => post_id }
       end
 
-      mattermost.define_singleton_method(:add_reaction) do |post_id:, emoji_name:|
+      stub_singleton(mattermost, :add_reaction) do |post_id:, emoji_name:|
         reactions << { post_id: post_id, emoji_name: emoji_name }
       end
 
@@ -915,13 +982,13 @@ module Earl
       err_name = error_session
       output = default_output
 
-      adapter.define_singleton_method(:session_exists?) { |_name| true }
-      adapter.define_singleton_method(:capture_pane) do |name, **_opts|
+      stub_singleton(adapter, :session_exists?) { |_name| true }
+      stub_singleton(adapter, :capture_pane) do |name, **_opts|
         raise StandardError, "unexpected error" if name == err_name
 
         output
       end
-      adapter.define_singleton_method(:send_keys) { |_target, _text| nil }
+      stub_singleton(adapter, :send_keys) { |_target, _text| nil }
       adapter
     end
   end

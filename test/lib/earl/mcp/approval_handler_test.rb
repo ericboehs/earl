@@ -246,17 +246,17 @@ module Earl
 
         api = Object.new
         psts = posts
-        api.define_singleton_method(:post) do |path, body|
+        stub_singleton(api, :post) do |path, body|
           psts << { path: path, body: body }
           response = Object.new
-          response.define_singleton_method(:body) { JSON.generate({ "id" => "perm-post-1" }) }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { JSON.generate({ "id" => "perm-post-1" }) }
+          stub_singleton(response, :is_a?) do |klass|
             klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
         end
-        api.define_singleton_method(:put) { |*_args| Object.new }
-        api.define_singleton_method(:get) { |*_args| Object.new }
+        stub_singleton(api, :put) { |*_args| Object.new }
+        stub_singleton(api, :get) { |*_args| Object.new }
 
         handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api)
         handler.send(:add_reaction_options, "post-1")
@@ -279,7 +279,7 @@ module Earl
       test "delete_permission_post handles errors gracefully" do
         handler = build_handler
         api = handler.instance_variable_get(:@api)
-        api.define_singleton_method(:delete) { |_path| raise "network error" }
+        stub_singleton(api, :delete) { |_path| raise "network error" }
 
         assert_nothing_raised { handler.send(:delete_permission_post, "post-1") }
       end
@@ -287,14 +287,15 @@ module Earl
       test "allowed_reactor? returns true when allowed_users is empty" do
         handler = build_handler
         # Mock allowed_users to be empty
-        handler.instance_variable_get(:@config).define_singleton_method(:allowed_users) { [] }
+        config = handler.instance_variable_get(:@config)
+        stub_singleton(config, :allowed_users) { [] }
 
         assert handler.send(:allowed_reactor?, "any-user-id")
       end
 
       test "allowed_reactor? checks username when allowed_users is not empty" do
         config = build_mock_config
-        config.define_singleton_method(:allowed_users) { %w[alice] }
+        stub_singleton(config, :allowed_users) { %w[alice] }
         api = build_mock_api(post_success: true)
         handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api)
 
@@ -303,15 +304,15 @@ module Earl
 
       test "allowed_reactor? returns false when API call fails" do
         config = build_mock_config
-        config.define_singleton_method(:allowed_users) { %w[alice] }
+        stub_singleton(config, :allowed_users) { %w[alice] }
         api = build_mock_api(post_success: true)
 
         # Override get to return failure
-        api.define_singleton_method(:get) do |_path|
+        stub_singleton(api, :get) do |_path|
           response = Object.new
-          response.define_singleton_method(:body) { '{"error":"forbidden"}' }
-          response.define_singleton_method(:code) { "403" }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { '{"error":"forbidden"}' }
+          stub_singleton(response, :code) { "403" }
+          stub_singleton(response, :is_a?) do |klass|
             Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -325,7 +326,7 @@ module Earl
       test "safe_close handles IOError from websocket close" do
         handler = build_handler
         ws = Object.new
-        ws.define_singleton_method(:close) { raise IOError, "broken pipe" }
+        stub_singleton(ws, :close) { raise IOError, "broken pipe" }
 
         assert_nothing_raised { handler.send(:safe_close, ws) }
       end
@@ -369,7 +370,7 @@ module Earl
 
       test "wait_for_reaction denies when WS connection fails" do
         handler = build_handler
-        handler.define_singleton_method(:connect_websocket) { nil }
+        stub_singleton(handler, :connect_websocket) { nil }
 
         request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
         result = handler.send(:wait_for_reaction, "post-123", request)
@@ -559,7 +560,7 @@ module Earl
         request = Earl::Mcp::ApprovalHandler::ToolRequest.new(tool_name: "Bash", input: { "command" => "ls" })
 
         pong_sent = false
-        mock_ws.define_singleton_method(:send) do |_data, **kwargs|
+        stub_singleton(mock_ws, :send) do |_data, **kwargs|
           pong_sent = true if kwargs[:type] == :pong
         end
 
@@ -587,7 +588,7 @@ module Earl
         handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api)
 
         # Speed up dequeue_reaction poll sleep from 0.5s to 0.01s for tests
-        handler.define_singleton_method(:dequeue_reaction) do |queue|
+        stub_singleton(handler, :dequeue_reaction) do |queue|
           queue.pop(true)
         rescue ThreadError
           sleep 0.01
@@ -599,14 +600,14 @@ module Earl
 
       def build_mock_config
         config = Object.new
-        config.define_singleton_method(:platform_channel_id) { "channel-1" }
-        config.define_singleton_method(:platform_thread_id) { "thread-1" }
-        config.define_singleton_method(:platform_bot_id) { "bot-1" }
-        config.define_singleton_method(:allowed_users) { [] }
-        config.define_singleton_method(:permission_timeout_ms) { 1000 }
-        config.define_singleton_method(:platform_url) { "http://localhost:8065" }
-        config.define_singleton_method(:platform_token) { "test-token" }
-        config.define_singleton_method(:websocket_url) { "ws://localhost:8065/api/v4/websocket" }
+        stub_singleton(config, :platform_channel_id) { "channel-1" }
+        stub_singleton(config, :platform_thread_id) { "thread-1" }
+        stub_singleton(config, :platform_bot_id) { "bot-1" }
+        stub_singleton(config, :allowed_users) { [] }
+        stub_singleton(config, :permission_timeout_ms) { 1000 }
+        stub_singleton(config, :platform_url) { "http://localhost:8065" }
+        stub_singleton(config, :platform_token) { "test-token" }
+        stub_singleton(config, :websocket_url) { "ws://localhost:8065/api/v4/websocket" }
         config
       end
 
@@ -614,38 +615,38 @@ module Earl
         api = Object.new
 
         if post_success
-          api.define_singleton_method(:post) do |_path, _body|
+          stub_singleton(api, :post) do |_path, _body|
             response = Object.new
-            response.define_singleton_method(:body) { JSON.generate({ "id" => "perm-post-1" }) }
-            response.define_singleton_method(:is_a?) do |klass|
+            stub_singleton(response, :body) { JSON.generate({ "id" => "perm-post-1" }) }
+            stub_singleton(response, :is_a?) do |klass|
               klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
             end
             response
           end
         else
-          api.define_singleton_method(:post) do |_path, _body|
+          stub_singleton(api, :post) do |_path, _body|
             response = Object.new
-            response.define_singleton_method(:body) { '{"error":"fail"}' }
-            response.define_singleton_method(:code) { "500" }
-            response.define_singleton_method(:is_a?) do |klass|
+            stub_singleton(response, :body) { '{"error":"fail"}' }
+            stub_singleton(response, :code) { "500" }
+            stub_singleton(response, :is_a?) do |klass|
               Object.instance_method(:is_a?).bind_call(self, klass)
             end
             response
           end
         end
 
-        api.define_singleton_method(:put) do |_path, _body|
+        stub_singleton(api, :put) do |_path, _body|
           Object.new
         end
 
-        api.define_singleton_method(:delete) do |_path|
+        stub_singleton(api, :delete) do |_path|
           Object.new
         end
 
-        api.define_singleton_method(:get) do |_path|
+        stub_singleton(api, :get) do |_path|
           response = Object.new
-          response.define_singleton_method(:body) { JSON.generate({ "id" => "user-1", "username" => "alice" }) }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { JSON.generate({ "id" => "user-1", "username" => "alice" }) }
+          stub_singleton(response, :is_a?) do |klass|
             klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -662,30 +663,30 @@ module Earl
         pts = puts_data
         dels = deletes
 
-        api.define_singleton_method(:post) do |path, body|
+        stub_singleton(api, :post) do |path, body|
           psts << { path: path, body: body }
           response = Object.new
-          response.define_singleton_method(:body) { JSON.generate({ "id" => "perm-post-1" }) }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { JSON.generate({ "id" => "perm-post-1" }) }
+          stub_singleton(response, :is_a?) do |klass|
             klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
         end
 
-        api.define_singleton_method(:put) do |path, body|
+        stub_singleton(api, :put) do |path, body|
           pts << { path: path, body: body }
           Object.new
         end
 
-        api.define_singleton_method(:delete) do |path|
+        stub_singleton(api, :delete) do |path|
           dels << { path: path }
           Object.new
         end
 
-        api.define_singleton_method(:get) do |_path|
+        stub_singleton(api, :get) do |_path|
           response = Object.new
-          response.define_singleton_method(:body) { JSON.generate({ "id" => "user-1", "username" => "alice" }) }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { JSON.generate({ "id" => "user-1", "username" => "alice" }) }
+          stub_singleton(response, :is_a?) do |klass|
             klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -697,19 +698,19 @@ module Earl
       def build_mock_websocket
         ws = Object.new
         ws.instance_variable_set(:@handlers, {})
-        ws.define_singleton_method(:on) do |event, &block|
+        stub_singleton(ws, :on) do |event, &block|
           @handlers[event] = block
         end
-        ws.define_singleton_method(:close) {}
-        ws.define_singleton_method(:send) { |*_args, **_kwargs| nil }
-        ws.define_singleton_method(:fire_message) do |data, type: :text|
+        stub_singleton(ws, :close) {}
+        stub_singleton(ws, :send) { |*_args, **_kwargs| nil }
+        stub_singleton(ws, :fire_message) do |data, type: :text|
           handler = @handlers[:message]
           return unless handler
 
           msg_type = type
           msg = Object.new
-          msg.define_singleton_method(:type) { msg_type }
-          msg.define_singleton_method(:data) { data }
+          stub_singleton(msg, :type) { msg_type }
+          stub_singleton(msg, :data) { data }
           handler.call(msg)
         end
         ws

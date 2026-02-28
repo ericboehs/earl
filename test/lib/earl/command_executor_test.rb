@@ -53,7 +53,7 @@ module Earl
         cache_read_tokens: 100, cache_creation_tokens: 50,
         context_window: 200_000, model_id: "claude-sonnet-4-20250514"
       )
-      mock_session.define_singleton_method(:stats) { mock_stats }
+      stub_singleton(mock_session, :stats) { mock_stats }
 
       executor = build_executor(posted: posted, session: mock_session)
       command = Earl::CommandParser::ParsedCommand.new(name: :stats, args: [])
@@ -77,7 +77,7 @@ module Earl
         turn_input_tokens: 100, turn_output_tokens: 50,
         cache_read_tokens: 0, cache_creation_tokens: 0
       )
-      mock_session.define_singleton_method(:stats) { mock_stats }
+      stub_singleton(mock_session, :stats) { mock_stats }
 
       executor = build_executor(posted: posted, session: mock_session)
       command = Earl::CommandParser.parse("!cost")
@@ -107,8 +107,8 @@ module Earl
         total_input_tokens: 10_000,
         total_output_tokens: 3_000
       )
-      executor.instance_variable_get(:@deps).session_manager
-              .define_singleton_method(:persisted_session_for) { |_id| persisted }
+      manager = executor.instance_variable_get(:@deps).session_manager
+      stub_singleton(manager, :persisted_session_for) { |_id| persisted }
 
       command = Earl::CommandParser::ParsedCommand.new(name: :stats, args: [])
       executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -133,7 +133,7 @@ module Earl
         message_sent_at: Time.now - 2.0, first_token_at: Time.now - 1.0,
         complete_at: Time.now
       )
-      mock_session.define_singleton_method(:stats) { mock_stats }
+      stub_singleton(mock_session, :stats) { mock_stats }
 
       executor = build_executor(posted: posted, session: mock_session)
       command = Earl::CommandParser::ParsedCommand.new(name: :stats, args: [])
@@ -239,14 +239,14 @@ module Earl
     test "!escape sends SIGINT to active session" do
       posted = []
       mock_session = Object.new
-      mock_session.define_singleton_method(:process_pid) { 99_999 }
+      stub_singleton(mock_session, :process_pid) { 99_999 }
 
       executor = build_executor(posted: posted, session: mock_session)
 
       # Stub Process.kill to avoid actually sending signals
       killed = []
       original_kill = Process.method(:kill)
-      Process.define_singleton_method(:kill) do |signal, pid|
+      stub_singleton(Process, :kill) do |signal, pid|
         killed << { signal: signal, pid: pid }
       end
 
@@ -256,7 +256,7 @@ module Earl
       assert_equal [{ signal: "INT", pid: 99_999 }], killed
       assert_includes posted.first[:message], "SIGINT"
     ensure
-      Process.define_singleton_method(:kill) { |*args| original_kill.call(*args) } if original_kill
+      stub_singleton(Process, :kill) { |*args| original_kill.call(*args) } if original_kill
     end
 
     test "!escape reports no session when none active" do
@@ -273,13 +273,13 @@ module Earl
       posted = []
       stopped = []
       mock_session = Object.new
-      mock_session.define_singleton_method(:process_pid) { 99_999 }
+      stub_singleton(mock_session, :process_pid) { 99_999 }
 
       executor = build_executor(posted: posted, session: mock_session, stopped: stopped)
 
       killed = []
       original_kill = Process.method(:kill)
-      Process.define_singleton_method(:kill) do |signal, pid|
+      stub_singleton(Process, :kill) do |signal, pid|
         killed << { signal: signal, pid: pid }
       end
 
@@ -290,7 +290,7 @@ module Earl
       assert_equal ["thread-1"], stopped
       assert_includes posted.first[:message], "force killed"
     ensure
-      Process.define_singleton_method(:kill) { |*args| original_kill.call(*args) } if original_kill
+      stub_singleton(Process, :kill) { |*args| original_kill.call(*args) } if original_kill
     end
 
     test "!kill reports no session when none active" do
@@ -327,7 +327,7 @@ module Earl
     test "!heartbeats posts status table with heartbeats" do
       posted = []
       mock_scheduler = Object.new
-      mock_scheduler.define_singleton_method(:status) do
+      stub_singleton(mock_scheduler, :status) do
         [
           { name: "morning_briefing", description: "Morning briefing", next_run_at: Time.new(2026, 2, 14, 9, 0, 0),
             last_run_at: Time.new(2026, 2, 13, 9, 0, 0), run_count: 5, running: false, last_error: nil }
@@ -352,7 +352,7 @@ module Earl
     test "!heartbeats shows running status" do
       posted = []
       mock_scheduler = Object.new
-      mock_scheduler.define_singleton_method(:status) do
+      stub_singleton(mock_scheduler, :status) do
         [
           { name: "active_beat", description: "Active", next_run_at: nil,
             last_run_at: Time.now, run_count: 1, running: true, last_error: nil }
@@ -370,7 +370,7 @@ module Earl
     test "!heartbeats shows error status" do
       posted = []
       mock_scheduler = Object.new
-      mock_scheduler.define_singleton_method(:status) do
+      stub_singleton(mock_scheduler, :status) do
         [
           { name: "broken_beat", description: "Broken", next_run_at: Time.now + 3600,
             last_run_at: Time.now - 3600, run_count: 3, running: false, last_error: "timeout" }
@@ -388,7 +388,7 @@ module Earl
     test "!heartbeats reports no heartbeats configured" do
       posted = []
       mock_scheduler = Object.new
-      mock_scheduler.define_singleton_method(:status) { [] }
+      stub_singleton(mock_scheduler, :status) { [] }
 
       executor = build_executor(posted: posted, heartbeat_scheduler: mock_scheduler)
 
@@ -438,7 +438,7 @@ module Earl
         "extra" => { "percent_used" => 52, "spent" => "$10.47", "budget" => "$20.00",
                      "resets" => "Mar 1 (America/Chicago)" }
       }
-      executor.define_singleton_method(:fetch_usage_data) { usage_json }
+      stub_singleton(executor, :fetch_usage_data) { usage_json }
 
       command = Earl::CommandParser::ParsedCommand.new(name: :usage, args: [])
       executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -457,7 +457,7 @@ module Earl
       posted = []
       executor = build_executor(posted: posted)
 
-      executor.define_singleton_method(:fetch_usage_data) { nil }
+      stub_singleton(executor, :fetch_usage_data) { nil }
 
       command = Earl::CommandParser::ParsedCommand.new(name: :usage, args: [])
       executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -510,8 +510,8 @@ module Earl
       executor = build_executor(posted: posted, session: nil)
 
       # Override claude_session_id_for to simulate a persisted (closed) session
-      executor.instance_variable_get(:@deps).session_manager
-              .define_singleton_method(:claude_session_id_for) { |_id| "persisted-abc-123" }
+      manager = executor.instance_variable_get(:@deps).session_manager
+      stub_singleton(manager, :claude_session_id_for) { |_id| "persisted-abc-123" }
 
       context_json = {
         "model" => "claude-opus-4-6",
@@ -522,7 +522,7 @@ module Earl
           "messages" => { "tokens" => "100k", "percent" => "50.0%" }
         }
       }
-      executor.define_singleton_method(:fetch_context_data) { |_sid| context_json }
+      stub_singleton(executor, :fetch_context_data) { |_sid| context_json }
 
       command = Earl::CommandParser::ParsedCommand.new(name: :context, args: [])
       executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -536,7 +536,7 @@ module Earl
     test "!context posts loading message and then context data" do
       posted = []
       mock_session = Object.new
-      mock_session.define_singleton_method(:session_id) { "abc-123" }
+      stub_singleton(mock_session, :session_id) { "abc-123" }
 
       executor = build_executor(posted: posted, session: mock_session)
       context_json = {
@@ -550,7 +550,7 @@ module Earl
           "free_space" => { "tokens" => "106k", "percent" => "53.0%" }
         }
       }
-      executor.define_singleton_method(:fetch_context_data) { |_sid| context_json }
+      stub_singleton(executor, :fetch_context_data) { |_sid| context_json }
 
       command = Earl::CommandParser::ParsedCommand.new(name: :context, args: [])
       executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -566,10 +566,10 @@ module Earl
     test "!context posts error when fetch fails" do
       posted = []
       mock_session = Object.new
-      mock_session.define_singleton_method(:session_id) { "abc-123" }
+      stub_singleton(mock_session, :session_id) { "abc-123" }
 
       executor = build_executor(posted: posted, session: mock_session)
-      executor.define_singleton_method(:fetch_context_data) { |_sid| nil }
+      stub_singleton(executor, :fetch_context_data) { |_sid| nil }
 
       command = Earl::CommandParser::ParsedCommand.new(name: :context, args: [])
       executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -954,7 +954,7 @@ module Earl
       posted = []
       mock_runner = Object.new
       restarted = false
-      mock_runner.define_singleton_method(:request_restart) { restarted = true }
+      stub_singleton(mock_runner, :request_restart) { restarted = true }
 
       executor = build_executor(posted: posted, runner: mock_runner)
 
@@ -983,7 +983,7 @@ module Earl
       posted = []
       mock_runner = Object.new
       updated = false
-      mock_runner.define_singleton_method(:request_update) { updated = true }
+      stub_singleton(mock_runner, :request_update) { updated = true }
 
       executor = build_executor(posted: posted, runner: mock_runner)
 
@@ -998,7 +998,7 @@ module Earl
     test "!restart saves restart context to disk" do
       posted = []
       mock_runner = Object.new
-      mock_runner.define_singleton_method(:request_restart) { nil }
+      stub_singleton(mock_runner, :request_restart) { nil }
 
       executor = build_executor(posted: posted, runner: mock_runner)
 
@@ -1235,7 +1235,7 @@ module Earl
       posted = []
       update_called = false
       mock_runner = Object.new
-      mock_runner.define_singleton_method(:request_update) { update_called = true }
+      stub_singleton(mock_runner, :request_update) { update_called = true }
 
       executor = build_executor(posted: posted, runner: mock_runner)
 
@@ -1259,7 +1259,7 @@ module Earl
       posted = []
       restart_called = false
       mock_runner = Object.new
-      mock_runner.define_singleton_method(:request_restart) { restart_called = true }
+      stub_singleton(mock_runner, :request_restart) { restart_called = true }
 
       executor = build_executor(posted: posted, runner: mock_runner)
 
@@ -1280,15 +1280,15 @@ module Earl
     test "!escape sends SIGINT when session has a process_pid" do
       posted = []
       mock_session = Object.new
-      mock_session.define_singleton_method(:process_pid) { Process.pid }
+      stub_singleton(mock_session, :process_pid) { Process.pid }
       # We can't actually send SIGINT to ourselves in a test, so let's mock
-      mock_session.define_singleton_method(:session_id) { "abc" }
+      stub_singleton(mock_session, :session_id) { "abc" }
 
       executor = build_executor(posted: posted, session: mock_session)
 
       # Override Process.kill to track the call
       kill_called = false
-      executor.define_singleton_method(:handle_escape) do |ctx|
+      stub_singleton(executor, :handle_escape) do |ctx|
         sess = @deps.session_manager.get(ctx.thread_id)
         return unless sess&.process_pid
 
@@ -1372,8 +1372,8 @@ module Earl
         cache_read_tokens: 200, cache_creation_tokens: 100,
         context_window: 200_000
       )
-      mock_session.define_singleton_method(:stats) { stats }
-      mock_session.define_singleton_method(:session_id) { "sess-1" }
+      stub_singleton(mock_session, :stats) { stats }
+      stub_singleton(mock_session, :session_id) { "sess-1" }
 
       executor = build_executor(posted: posted, session: mock_session)
 
@@ -1391,8 +1391,8 @@ module Earl
       persisted = Earl::SessionStore::PersistedSession.new(
         total_cost: 0.05, total_input_tokens: 3000, total_output_tokens: 1000
       )
-      executor.instance_variable_get(:@deps).session_manager
-              .define_singleton_method(:persisted_session_for) { |_id| persisted }
+      manager = executor.instance_variable_get(:@deps).session_manager
+      stub_singleton(manager, :persisted_session_for) { |_id| persisted }
 
       command = Earl::CommandParser::ParsedCommand.new(name: :stats, args: [])
       executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -1416,8 +1416,8 @@ module Earl
       executor = build_executor(posted: posted, session: nil)
 
       persisted = Earl::SessionStore::PersistedSession.new(total_cost: nil)
-      executor.instance_variable_get(:@deps).session_manager
-              .define_singleton_method(:persisted_session_for) { |_id| persisted }
+      manager = executor.instance_variable_get(:@deps).session_manager
+      stub_singleton(manager, :persisted_session_for) { |_id| persisted }
 
       command = Earl::CommandParser::ParsedCommand.new(name: :stats, args: [])
       executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
@@ -1508,7 +1508,7 @@ module Earl
     test "usage_fetch_body rescues StandardError" do
       posted = []
       executor = build_executor(posted: posted)
-      executor.define_singleton_method(:fetch_usage_data) { raise StandardError, "test error" }
+      stub_singleton(executor, :fetch_usage_data) { raise StandardError, "test error" }
 
       ctx = Earl::CommandExecutor::CommandContext.new(
         thread_id: "t-1", channel_id: "ch-1", arg: nil, args: []
@@ -1520,7 +1520,7 @@ module Earl
     test "context_fetch_body rescues StandardError" do
       posted = []
       executor = build_executor(posted: posted)
-      executor.define_singleton_method(:fetch_context_data) { |_sid| raise StandardError, "test error" }
+      stub_singleton(executor, :fetch_context_data) { |_sid| raise StandardError, "test error" }
 
       ctx = Earl::CommandExecutor::CommandContext.new(
         thread_id: "t-1", channel_id: "ch-1", arg: nil, args: []
@@ -1538,18 +1538,18 @@ module Earl
       config = Earl::Config.new
 
       mock_manager = Object.new
-      mock_manager.define_singleton_method(:get) { |_id| session }
+      stub_singleton(mock_manager, :get) { |_id| session }
       sess = session
-      mock_manager.define_singleton_method(:claude_session_id_for) do |_id|
+      stub_singleton(mock_manager, :claude_session_id_for) do |_id|
         sess.respond_to?(:session_id) ? sess.session_id : nil
       end
-      mock_manager.define_singleton_method(:persisted_session_for) { |_id| nil }
+      stub_singleton(mock_manager, :persisted_session_for) { |_id| nil }
       stoppd = stopped
-      mock_manager.define_singleton_method(:stop_session) { |thread_id| stoppd << thread_id }
+      stub_singleton(mock_manager, :stop_session) { |thread_id| stoppd << thread_id }
 
       pstd = posted
       mock_mm = Object.new
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         pstd << { channel_id: channel_id, message: message, root_id: root_id }
         { "id" => "reply-1" }
       end
@@ -1572,8 +1572,8 @@ module Earl
       store = Object.new
       svd = tracker[:saved]
       dlt = tracker[:deleted]
-      store.define_singleton_method(:save) { |info| svd << info }
-      store.define_singleton_method(:delete) { |name| dlt << name }
+      stub_singleton(store, :save) { |info| svd << info }
+      stub_singleton(store, :delete) { |name| dlt << name }
       tracker[:store] = store
       tracker
     end

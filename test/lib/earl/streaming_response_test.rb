@@ -23,16 +23,16 @@ module Earl
 
     def build_mock_mattermost
       mock_mm = Object.new
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) { |**_args| }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) { |**_args| }
       mock_mm
     end
 
     test "start_typing creates a thread that sends typing indicators" do
       typing_calls = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**args| typing_calls << args }
+      stub_singleton(mock_mm, :send_typing) { |**args| typing_calls << args }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
       response.start_typing
@@ -46,7 +46,7 @@ module Earl
 
     test "start_typing rescues errors and exits thread" do
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:send_typing) { |**_args| raise "connection lost" }
+      stub_singleton(mock_mm, :send_typing) { |**_args| raise "connection lost" }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
       response.start_typing
@@ -60,7 +60,7 @@ module Earl
     test "on_text creates initial post on first call" do
       created_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         created_posts << { channel_id: channel_id, message: message, root_id: root_id }
         { "id" => "reply-post-1" }
       end
@@ -76,8 +76,8 @@ module Earl
     test "on_text updates post after debounce window" do
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -98,8 +98,8 @@ module Earl
     test "on_text schedules debounce timer for rapid updates" do
       update_count = 0
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         update_count += 1
       end
 
@@ -125,11 +125,11 @@ module Earl
       updated_posts = []
       created_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**args|
+      stub_singleton(mock_mm, :create_post) do |**args|
         created_posts << args
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -158,11 +158,11 @@ module Earl
       updated_posts = []
       created_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**args|
+      stub_singleton(mock_mm, :create_post) do |**args|
         created_posts << args
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -187,10 +187,10 @@ module Earl
       updated_posts = []
       created_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
-      mock_mm.define_singleton_method(:create_post) do |**args|
+      stub_singleton(mock_mm, :create_post) do |**args|
         created_posts << args
         { "id" => "reply-1" }
       end
@@ -218,7 +218,7 @@ module Earl
 
     test "on_text handles errors gracefully" do
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| raise "API error" }
+      stub_singleton(mock_mm, :create_post) { |**_args| raise "API error" }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
 
@@ -228,7 +228,7 @@ module Earl
     test "on_text stops retrying when create_post returns no id" do
       create_count = 0
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**_args|
+      stub_singleton(mock_mm, :create_post) do |**_args|
         create_count += 1
         {} # No "id" key — simulates API error response
       end
@@ -247,7 +247,7 @@ module Earl
     test "on_complete handles errors gracefully" do
       call_count = 0
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**_args|
+      stub_singleton(mock_mm, :create_post) do |**_args|
         call_count += 1
         raise "network error" if call_count > 1
 
@@ -264,11 +264,11 @@ module Earl
       created_posts = []
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         created_posts << { message: message }
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { message: message }
       end
 
@@ -287,11 +287,11 @@ module Earl
       created_posts = []
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         created_posts << { message: message }
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { message: message }
       end
 
@@ -309,7 +309,7 @@ module Earl
     test "on_tool_use creates initial post when no text precedes" do
       created_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         created_posts << { message: message }
         { "id" => "reply-1" }
       end
@@ -326,8 +326,8 @@ module Earl
     test "full flow: text then tool then text holds back text after tools" do
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { message: message }
       end
 
@@ -373,7 +373,7 @@ module Earl
     test "on_tool_use skips update when create_failed" do
       create_count = 0
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**_args|
+      stub_singleton(mock_mm, :create_post) do |**_args|
         create_count += 1
         {} # No "id" key — simulates failure
       end
@@ -410,11 +410,11 @@ module Earl
       created_posts = []
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**args|
+      stub_singleton(mock_mm, :create_post) do |**args|
         created_posts << args
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -438,11 +438,11 @@ module Earl
       created_posts = []
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**args|
+      stub_singleton(mock_mm, :create_post) do |**args|
         created_posts << args
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -466,11 +466,11 @@ module Earl
       created_posts = []
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**args|
+      stub_singleton(mock_mm, :create_post) do |**args|
         created_posts << args
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -494,10 +494,10 @@ module Earl
     test "remove_trailing_text keeps tool segments in streamed post" do
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**_args|
+      stub_singleton(mock_mm, :create_post) do |**_args|
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -520,8 +520,8 @@ module Earl
 
     test "on_complete multi-segment with create_failed has no reply_post_id" do
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No id — failure
-      mock_mm.define_singleton_method(:update_post) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| {} } # No id — failure
+      stub_singleton(mock_mm, :update_post) { |**_args| }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
 
@@ -535,7 +535,7 @@ module Earl
 
     test "on_tool_use handles errors gracefully" do
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| raise "API error" }
+      stub_singleton(mock_mm, :create_post) { |**_args| raise "API error" }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
 
@@ -564,7 +564,7 @@ module Earl
 
     test "on_complete with text-only but no reply_post_id due to create_failed" do
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No id — failure
+      stub_singleton(mock_mm, :create_post) { |**_args| {} } # No id — failure
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
 
@@ -578,7 +578,7 @@ module Earl
     test "on_text handles error with nil backtrace" do
       mock_mm = build_mock_mattermost
       error = StandardError.new("nil trace")
-      mock_mm.define_singleton_method(:create_post) { |**_args| raise error }
+      stub_singleton(mock_mm, :create_post) { |**_args| raise error }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
       assert_nothing_raised { response.on_text("Hello") }
@@ -587,7 +587,7 @@ module Earl
     test "on_tool_use handles error with nil backtrace" do
       mock_mm = build_mock_mattermost
       error = StandardError.new("nil trace")
-      mock_mm.define_singleton_method(:create_post) { |**_args| raise error }
+      stub_singleton(mock_mm, :create_post) { |**_args| raise error }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
       assert_nothing_raised { response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } }) }
@@ -595,8 +595,8 @@ module Earl
 
     test "on_complete handles error with nil backtrace" do
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) { |**_args| raise StandardError, "nil trace" }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) { |**_args| raise StandardError, "nil trace" }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
       response.on_text("text")
@@ -607,7 +607,7 @@ module Earl
       mock_mm = build_mock_mattermost
       error = StandardError.new("real trace")
       error.set_backtrace(%w[line1 line2 line3])
-      mock_mm.define_singleton_method(:create_post) { |**_args| raise error }
+      stub_singleton(mock_mm, :create_post) { |**_args| raise error }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
       assert_nothing_raised { response.on_text("Hello") }
@@ -617,7 +617,7 @@ module Earl
       mock_mm = build_mock_mattermost
       error = StandardError.new("real trace")
       error.set_backtrace(%w[line1 line2 line3])
-      mock_mm.define_singleton_method(:create_post) { |**_args| raise error }
+      stub_singleton(mock_mm, :create_post) { |**_args| raise error }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
       assert_nothing_raised { response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } }) }
@@ -627,8 +627,8 @@ module Earl
       mock_mm = build_mock_mattermost
       error = StandardError.new("real trace")
       error.set_backtrace(%w[line1 line2 line3])
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) { |**_args| raise error }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) { |**_args| raise error }
 
       response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
       response.on_text("text")
@@ -647,8 +647,8 @@ module Earl
     test "finalize joins active debounce timer" do
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -674,8 +674,8 @@ module Earl
     test "remove_trailing_text returns early when no tool segments" do
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
-      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
         updated_posts << { post_id: post_id, message: message }
       end
 
@@ -693,11 +693,11 @@ module Earl
       created_posts = []
       updated_posts = []
       mock_mm = build_mock_mattermost
-      mock_mm.define_singleton_method(:create_post) do |**_args|
+      stub_singleton(mock_mm, :create_post) do |**_args|
         created_posts << true
         { "id" => "reply-1" }
       end
-      mock_mm.define_singleton_method(:update_post) do |**_args|
+      stub_singleton(mock_mm, :update_post) do |**_args|
         updated_posts << true
       end
 
@@ -707,6 +707,328 @@ module Earl
 
       assert_empty created_posts
       assert_empty updated_posts
+    end
+
+    # --- on_text_with_images tests ---
+
+    test "on_text_with_images logs and stores image refs" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: "/tmp/test.png", media_type: "image/png", filename: "test.png"
+      )
+      response.on_text_with_images("Check this image", [ref])
+
+      image_refs = response.instance_variable_get(:@post_state).image_refs
+      assert_equal 1, image_refs.size
+      assert_equal "test.png", image_refs.first.filename
+    end
+
+    test "on_text_with_images skips log when refs empty" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      response.on_text_with_images("No images here", [])
+
+      image_refs = response.instance_variable_get(:@post_state).image_refs
+      assert_empty image_refs
+    end
+
+    test "on_text_with_images rescues errors and logs" do
+      mock_mm = build_mock_mattermost
+      stub_singleton(mock_mm, :create_post) { |**_args| raise "boom" }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: "/tmp/test.png", media_type: "image/png", filename: "test.png"
+      )
+      assert_nothing_raised { response.on_text_with_images("text", [ref]) }
+    end
+
+    test "on_text_with_images handles error with non-nil backtrace" do
+      mock_mm = build_mock_mattermost
+      error = StandardError.new("traced")
+      error.set_backtrace(%w[line1 line2])
+      stub_singleton(mock_mm, :create_post) { |**_args| raise error }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      assert_nothing_raised { response.on_text_with_images("text", []) }
+    end
+
+    # --- add_image_refs tests ---
+
+    test "add_image_refs appends refs to post state" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :base64, data: "abc123", media_type: "image/png", filename: "img.png"
+      )
+      response.add_image_refs([ref])
+
+      image_refs = response.instance_variable_get(:@post_state).image_refs
+      assert_equal 1, image_refs.size
+    end
+
+    test "add_image_refs rescues errors" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      # Force an error by passing something that will blow up in concat
+      assert_nothing_raised { response.add_image_refs(nil) }
+    end
+
+    # --- ImageAttachment module tests ---
+
+    test "upload_collected_images skips when no refs" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      # No refs, so should return early
+      assert_nothing_raised { response.send(:upload_collected_images) }
+    end
+
+    test "upload_collected_images uploads refs and posts file attachments" do
+      uploaded_files = []
+      file_posts = []
+      mock_mm = build_mock_mattermost
+      stub_singleton(mock_mm, :upload_file) do |upload|
+        uploaded_files << upload
+        { "file_infos" => [{ "id" => "file-#{uploaded_files.size}" }] }
+      end
+      stub_singleton(mock_mm, :create_post_with_files) do |file_post|
+        file_posts << file_post
+      end
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      # Create a temp file to read
+      require "tempfile"
+      tmp = Tempfile.new(["test", ".png"])
+      tmp.write("fake png data")
+      tmp.close
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: tmp.path, media_type: "image/png", filename: "test.png"
+      )
+      response.instance_variable_get(:@post_state).image_refs.push(ref)
+
+      response.send(:upload_collected_images)
+
+      assert_equal 1, uploaded_files.size
+      assert_equal 1, file_posts.size
+    ensure
+      tmp&.unlink
+    end
+
+    test "upload_image_ref returns nil when read fails" do
+      mock_mm = build_mock_mattermost
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: "/nonexistent/path.png", media_type: "image/png", filename: "path.png"
+      )
+      result = response.send(:upload_image_ref, ref)
+      assert_nil result
+    end
+
+    test "upload_image_ref returns nil when upload returns no file_id" do
+      mock_mm = build_mock_mattermost
+      stub_singleton(mock_mm, :upload_file) { |_upload| { "file_infos" => [] } }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      require "tempfile"
+      tmp = Tempfile.new(["test", ".png"])
+      tmp.write("fake data")
+      tmp.close
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: tmp.path, media_type: "image/png", filename: "test.png"
+      )
+      result = response.send(:upload_image_ref, ref)
+      assert_nil result
+    ensure
+      tmp&.unlink
+    end
+
+    test "read_image_content reads file_path source" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      require "tempfile"
+      tmp = Tempfile.new(["test", ".png"])
+      tmp.write("png bytes")
+      tmp.close
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: tmp.path, media_type: "image/png", filename: "test.png"
+      )
+      content = response.send(:read_image_content, ref)
+      assert_equal "png bytes", content
+    ensure
+      tmp&.unlink
+    end
+
+    test "read_image_content reads base64 source" do
+      require "base64"
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      encoded = Base64.encode64("hello image")
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :base64, data: encoded, media_type: "image/png", filename: "img.png"
+      )
+      content = response.send(:read_image_content, ref)
+      assert_equal "hello image", content
+    end
+
+    test "read_image_content returns nil on error" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: "/no/such/file.png", media_type: "image/png", filename: "file.png"
+      )
+      result = response.send(:read_image_content, ref)
+      assert_nil result
+    end
+
+    # --- Error rescue branch tests (nil backtrace paths) ---
+
+    test "on_text rescues errors with nil backtrace" do
+      mock_mm = build_mock_mattermost
+      error = StandardError.new("sync fail")
+      stub_singleton(mock_mm, :create_post) { |**_args| raise error }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      assert_nothing_raised { response.on_text("hello") }
+    end
+
+    test "on_text rescues errors with non-nil backtrace" do
+      mock_mm = build_mock_mattermost
+      error = StandardError.new("sync fail")
+      error.set_backtrace(%w[line1 line2 line3])
+      stub_singleton(mock_mm, :create_post) { |**_args| raise error }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      assert_nothing_raised { response.on_text("hello") }
+    end
+
+    test "on_tool_use rescues errors with nil backtrace" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      # Force handle_tool_use_display to blow up by passing bad tool_use
+      stub_singleton(response, :handle_tool_use_display) { |_tu| raise StandardError, "tool fail" }
+      assert_nothing_raised { response.on_tool_use({ name: "Bash", input: {} }) }
+    end
+
+    test "on_tool_use rescues errors with non-nil backtrace" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      error = StandardError.new("tool fail")
+      error.set_backtrace(%w[frame1 frame2])
+      stub_singleton(response, :handle_tool_use_display) { |_tu| raise error }
+      assert_nothing_raised { response.on_tool_use({ name: "Bash", input: {} }) }
+    end
+
+    test "on_complete rescues errors with nil backtrace" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      stub_singleton(response, :finalize) { raise StandardError, "finalize fail" }
+      assert_nothing_raised { response.on_complete }
+    end
+
+    test "on_complete rescues errors with non-nil backtrace" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      error = StandardError.new("finalize fail")
+      error.set_backtrace(%w[frame1 frame2])
+      stub_singleton(response, :finalize) { raise error }
+      assert_nothing_raised { response.on_complete }
+    end
+
+    test "remove_trailing_text_from_streamed_post updates when full_text not empty" do
+      updated_posts = []
+      mock_mm = build_mock_mattermost
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
+        updated_posts << { post_id: post_id, message: message }
+      end
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      # Create a posted response with tool + text segments
+      response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "echo hi" } })
+      sleep 0.05
+      response.on_text("Some trailing text after tool")
+
+      updated_posts.clear
+      response.send(:remove_trailing_text_from_streamed_post)
+
+      # Should have updated the post with tool-only content (non-empty)
+      assert updated_posts.any?, "Expected update_post to be called"
+      assert_includes updated_posts.first[:message], "Bash"
+      refute_includes updated_posts.first[:message], "trailing text"
+    end
+
+    test "remove_trailing_text_from_streamed_post skips update when full_text becomes empty" do
+      updated_posts = []
+      mock_mm = build_mock_mattermost
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) do |post_id:, message:|
+        updated_posts << { post_id: post_id, message: message }
+      end
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      # Simulate a posted response with only text segments (no tool segments at all)
+      response.on_text("first chunk")
+      sleep 0.05
+
+      updated_posts.clear
+      # Manually call remove_trailing_text — since there are no tool segments,
+      # last_tool_index will be nil, and no filtering occurs
+      response.send(:remove_trailing_text_from_streamed_post)
+
+      # No update should have been triggered since no tool segments found
+      assert_empty updated_posts
+    end
+
+    test "upload_collected_images skips posting when all uploads fail" do
+      mock_mm = build_mock_mattermost
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mock_mm, :update_post) { |**_args| }
+      created_file_posts = []
+      stub_singleton(mock_mm, :upload_file) { |_upload| { "file_infos" => [] } }
+      stub_singleton(mock_mm, :create_post_with_files) do |file_post|
+        created_file_posts << file_post
+      end
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      # Post some text first
+      response.on_text("hello")
+      sleep 0.05
+
+      # Add image refs that will all fail to upload (upload returns empty file_infos)
+      ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+        source: :file_path, data: "/nonexistent/image.png", media_type: "image/png", filename: "image.png"
+      )
+      response.add_image_refs([ref])
+
+      # Finalize should attempt upload but get nil file_ids, skip posting
+      response.on_complete
+      sleep 0.05
+
+      assert_empty created_file_posts
     end
   end
 end

@@ -537,19 +537,19 @@ module Earl
 
     def mock_status(success)
       status = Object.new
-      status.define_singleton_method(:success?) { success }
-      status.define_singleton_method(:exitstatus) { success ? 0 : 1 }
+      stub_singleton(status, :success?) { success }
+      stub_singleton(status, :exitstatus) { success ? 0 : 1 }
       status
     end
 
     def stub_osascript(output, success: true)
       pair = [output, mock_status(success)]
-      Open3.define_singleton_method(:capture2e) { |*_args| pair }
+      stub_singleton(Open3, :capture2e) { |*_args| pair }
     end
 
     def stub_osascript_with_tracking(calls)
       pair_tail = mock_status(true)
-      Open3.define_singleton_method(:capture2e) do |*args|
+      stub_singleton(Open3, :capture2e) do |*args|
         calls << args.last
         ["OK\n", pair_tail]
       end
@@ -559,7 +559,7 @@ module Earl
       idx = 0
       builder = method(:mock_status)
       extractor = method(:extract_response)
-      Open3.define_singleton_method(:capture2e) do |*_args|
+      stub_singleton(Open3, :capture2e) do |*_args|
         output, ok = extractor.call(responses, idx, builder)
         idx += 1
         [output, ok]
@@ -573,12 +573,12 @@ module Earl
 
     def restore_capture
       original = @original_capture2e
-      Open3.define_singleton_method(:capture2e) { |*args| original.call(*args) }
+      stub_singleton(Open3, :capture2e) { |*args| original.call(*args) }
     end
 
     def stub_all_sleeps
       noop = ->(_) {}
-      SLEEP_MODULES.each { |mod| mod.define_singleton_method(:sleep, &noop) }
+      SLEEP_MODULES.each { |mod| stub_singleton(mod, :sleep, &noop) }
     end
 
     def restore_all_sleeps

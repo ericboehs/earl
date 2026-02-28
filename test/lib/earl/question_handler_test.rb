@@ -364,7 +364,7 @@ module Earl
 
       # Override delete_post to raise
       mm = handler.instance_variable_get(:@mattermost)
-      mm.define_singleton_method(:delete_post) { |post_id:| raise "delete failed" }
+      stub_singleton(mm, :delete_post) { |post_id:| raise "delete failed" }
 
       handler.handle_tool_use(
         thread_id: "thread-1",
@@ -394,8 +394,8 @@ module Earl
 
     test "handle_tool_use returns error answer when create_post fails" do
       mock_mm = Object.new
-      mock_mm.define_singleton_method(:create_post) { |**_args| {} } # No "id"
-      mock_mm.define_singleton_method(:add_reaction) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| {} } # No "id"
+      stub_singleton(mock_mm, :add_reaction) { |**_args| }
 
       handler = Earl::QuestionHandler.new(mattermost: mock_mm)
 
@@ -486,16 +486,16 @@ module Earl
       post_counter = [0]
 
       mock_mm = Object.new
-      mock_mm.define_singleton_method(:create_post) do |channel_id:, message:, root_id:|
+      stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
         post_counter[0] += 1
         post_id = "question-post-#{post_counter[0]}"
         pstd << { channel_id: channel_id, message: message, root_id: root_id, post_id: post_id }
         { "id" => post_id }
       end
-      mock_mm.define_singleton_method(:add_reaction) do |post_id:, emoji_name:|
+      stub_singleton(mock_mm, :add_reaction) do |post_id:, emoji_name:|
         rxns << { post_id: post_id, emoji_name: emoji_name }
       end
-      mock_mm.define_singleton_method(:delete_post) do |post_id:|
+      stub_singleton(mock_mm, :delete_post) do |post_id:|
         dltd << post_id
       end
 

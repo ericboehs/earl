@@ -148,11 +148,25 @@ module Earl
 
       # Stub File.write to raise IOError
       original_write = File.method(:write)
-      File.define_singleton_method(:write) { |*_args| raise IOError, "disk full" }
+      stub_singleton(File, :write) { |*_args| raise IOError, "disk full" }
 
       assert_nothing_raised { store.save("thread-2", build_session(id: "sess-2")) }
     ensure
-      File.define_singleton_method(:write) { |*args, **kwargs| original_write.call(*args, **kwargs) }
+      stub_singleton(File, :write) { |*args, **kwargs| original_write.call(*args, **kwargs) }
+    end
+
+    test "write_store rescues when error occurs before tmp_path is assigned" do
+      store = Earl::SessionStore.new(path: @store_path)
+      session = build_session(id: "sess-1")
+      store.save("thread-1", session)
+
+      # Stub FileUtils.mkdir_p to raise Errno::EACCES before tmp_path is assigned
+      original_mkdir = FileUtils.method(:mkdir_p)
+      stub_singleton(FileUtils, :mkdir_p) { |*_args| raise Errno::EACCES, "permission denied" }
+
+      assert_nothing_raised { store.save("thread-2", build_session(id: "sess-2")) }
+    ensure
+      stub_singleton(FileUtils, :mkdir_p) { |*args, **kwargs| original_mkdir.call(*args, **kwargs) }
     end
 
     private

@@ -27,7 +27,7 @@ module Earl
 
     teardown do
       Earl.logger = nil
-      WebSocket::Client::Simple.define_singleton_method(:connect, @original_ws_connect)
+      stub_singleton(WebSocket::Client::Simple, :connect, &@original_ws_connect)
       %w[MATTERMOST_URL MATTERMOST_BOT_TOKEN MATTERMOST_BOT_ID EARL_CHANNEL_ID EARL_ALLOWED_USERS].each do |key|
         if @original_env.key?(key)
           ENV[key] = @original_env[key]
@@ -98,11 +98,11 @@ module Earl
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)
 
-      api.define_singleton_method(:post) do |_path, _body|
+      stub_singleton(api, :post) do |_path, _body|
         response = Object.new
-        response.define_singleton_method(:body) { '{"error":"unauthorized"}' }
-        response.define_singleton_method(:code) { "401" }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { '{"error":"unauthorized"}' }
+        stub_singleton(response, :code) { "401" }
+        stub_singleton(response, :is_a?) do |klass|
           Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -116,10 +116,10 @@ module Earl
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)
 
-      api.define_singleton_method(:post) do |_path, _body|
+      stub_singleton(api, :post) do |_path, _body|
         response = Object.new
-        response.define_singleton_method(:body) { "not json{{{" }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { "not json{{{" }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -175,7 +175,7 @@ module Earl
       api = mm.instance_variable_get(:@api)
       logged_errors = []
 
-      Earl.logger.define_singleton_method(:error) do |msg|
+      stub_singleton(Earl.logger, :error) do |msg|
         logged_errors << msg
       end
 
@@ -365,7 +365,7 @@ module Earl
       mm.connect
 
       error = Object.new
-      error.define_singleton_method(:message) { "test error" }
+      stub_singleton(error, :message) { "test error" }
       assert_nothing_raised { fake_ws.fire(:error, error) }
     end
 
@@ -377,8 +377,8 @@ module Earl
       mm.connect
 
       close_event = Object.new
-      close_event.define_singleton_method(:code) { 1000 }
-      close_event.define_singleton_method(:reason) { "normal" }
+      stub_singleton(close_event, :code) { 1000 }
+      stub_singleton(close_event, :reason) { "normal" }
       assert_raises(SystemExit) { fake_ws.fire(:close, close_event) }
     end
 
@@ -514,10 +514,10 @@ module Earl
         "order" => %w[post-3 post-2 post-1]
       }
 
-      api.define_singleton_method(:get) do |_path|
+      stub_singleton(api, :get) do |_path|
         response = Object.new
-        response.define_singleton_method(:body) { JSON.generate(thread_data) }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { JSON.generate(thread_data) }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -547,10 +547,10 @@ module Earl
         "order" => %w[post-2 post-1]
       }
 
-      api.define_singleton_method(:get) do |_path|
+      stub_singleton(api, :get) do |_path|
         response = Object.new
-        response.define_singleton_method(:body) { JSON.generate(thread_data) }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { JSON.generate(thread_data) }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -565,11 +565,11 @@ module Earl
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)
 
-      api.define_singleton_method(:get) do |_path|
+      stub_singleton(api, :get) do |_path|
         response = Object.new
-        response.define_singleton_method(:body) { '{"error":"not found"}' }
-        response.define_singleton_method(:code) { "404" }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { '{"error":"not found"}' }
+        stub_singleton(response, :code) { "404" }
+        stub_singleton(response, :is_a?) do |klass|
           Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -582,10 +582,10 @@ module Earl
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)
 
-      api.define_singleton_method(:get) do |_path|
+      stub_singleton(api, :get) do |_path|
         response = Object.new
-        response.define_singleton_method(:body) { "not json{{{" }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { "not json{{{" }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -600,10 +600,10 @@ module Earl
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)
 
-      api.define_singleton_method(:get) do |_path|
+      stub_singleton(api, :get) do |_path|
         response = Object.new
-        response.define_singleton_method(:body) { JSON.generate({ "id" => "user-1", "username" => "alice" }) }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { JSON.generate({ "id" => "user-1", "username" => "alice" }) }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -617,11 +617,11 @@ module Earl
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)
 
-      api.define_singleton_method(:get) do |_path|
+      stub_singleton(api, :get) do |_path|
         response = Object.new
-        response.define_singleton_method(:body) { '{"error":"not found"}' }
-        response.define_singleton_method(:code) { "404" }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { '{"error":"not found"}' }
+        stub_singleton(response, :code) { "404" }
+        stub_singleton(response, :is_a?) do |klass|
           Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -822,10 +822,10 @@ module Earl
         "order" => %w[post-3 post-2 post-1]
       }
 
-      api.define_singleton_method(:get) do |_path|
+      stub_singleton(api, :get) do |_path|
         response = Object.new
-        response.define_singleton_method(:body) { JSON.generate(thread_data) }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { JSON.generate(thread_data) }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
@@ -871,32 +871,32 @@ module Earl
       mm = Earl::Mattermost.new(@config)
       api = mm.instance_variable_get(:@api)
 
-      api.define_singleton_method(:get) do |path|
+      stub_singleton(api, :get) do |path|
         requests << { method: :get, path: path, body: nil, auth: "Bearer test-token" }
         response = Object.new
-        response.define_singleton_method(:body) { JSON.generate({ "id" => "fake-id" }) }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { JSON.generate({ "id" => "fake-id" }) }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
       end
 
-      api.define_singleton_method(:post) do |path, body|
+      stub_singleton(api, :post) do |path, body|
         requests << { method: :post, path: path, body: body, auth: "Bearer test-token" }
         response = Object.new
-        response.define_singleton_method(:body) { JSON.generate({ "id" => "fake-post-id" }) }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :body) { JSON.generate({ "id" => "fake-post-id" }) }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         response
       end
 
-      api.define_singleton_method(:put) do |path, body|
+      stub_singleton(api, :put) do |path, body|
         requests << { method: :put, path: path, body: body, auth: "Bearer test-token" }
         Object.new
       end
 
-      api.define_singleton_method(:delete) do |path|
+      stub_singleton(api, :delete) do |path|
         requests << { method: :delete, path: path, body: nil, auth: "Bearer test-token" }
         Object.new
       end
@@ -911,23 +911,23 @@ module Earl
         on_request&.call(req)
         resp = Object.new
         rb = response_body
-        resp.define_singleton_method(:body) { rb }
-        resp.define_singleton_method(:code) { is_success ? "200" : "401" }
-        resp.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(resp, :body) { rb }
+        stub_singleton(resp, :code) { is_success ? "200" : "401" }
+        stub_singleton(resp, :is_a?) do |klass|
           (is_success && klass == Net::HTTPSuccess) || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         resp
       end
 
-      Net::HTTP.define_singleton_method(:start) do |_host, _port, **kwargs, &block|
+      stub_singleton(Net::HTTP, :start) do |_host, _port, **kwargs, &block|
         on_ssl&.call(kwargs[:use_ssl])
         mock_http = Object.new
-        mock_http.define_singleton_method(:request) { |req| mock_response.call(req) }
+        stub_singleton(mock_http, :request) { |req| mock_response.call(req) }
         block ? block.call(mock_http) : mock_http
       end
       yield
     ensure
-      Net::HTTP.define_singleton_method(:start, original_start)
+      stub_singleton(Net::HTTP, :start, &original_start)
     end
 
     # Fake WebSocket that executes handlers with instance_exec like the real gem
@@ -936,13 +936,13 @@ module Earl
     end
 
     def install_fake_ws(fake_ws)
-      WebSocket::Client::Simple.define_singleton_method(:connect) { |_url| fake_ws }
+      stub_singleton(WebSocket::Client::Simple, :connect) { |_url| fake_ws }
     end
 
     def ws_message(type:, data:)
       msg = Object.new
-      msg.define_singleton_method(:type) { type }
-      msg.define_singleton_method(:data) { data }
+      stub_singleton(msg, :type) { type }
+      stub_singleton(msg, :data) { data }
       msg
     end
 

@@ -26,8 +26,8 @@ module Earl
 
       test "handles? works with MemoryHandler" do
         store = Object.new
-        store.define_singleton_method(:save) { |**_| {} }
-        store.define_singleton_method(:search) { |**_| [] }
+        stub_singleton(store, :save) { |**_| {} }
+        stub_singleton(store, :search) { |**_| [] }
 
         handler = Earl::Mcp::MemoryHandler.new(store: store)
         assert handler.handles?("save_memory")

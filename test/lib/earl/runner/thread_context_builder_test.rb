@@ -147,6 +147,22 @@ module Earl
         assert_equal 0, image_blocks.size
       end
 
+      test "skips image blocks for posts with nil file_ids" do
+        posts = [
+          { sender: "user", message: "has image", is_bot: false, file_ids: ["file-1"] },
+          { sender: "EARL", message: "reply", is_bot: true }
+        ]
+        @mattermost.stub_thread(posts)
+        content_builder = FakeContentBuilder.new
+        builder = ThreadContextBuilder.new(mattermost: @mattermost, content_builder: content_builder)
+
+        result = builder.build("thread-1", "follow up")
+
+        assert_instance_of Array, result
+        image_blocks = result.select { |block| block["type"] == "image" }
+        assert_equal 1, image_blocks.size
+      end
+
       test "returns text context when no posts have images even with content_builder" do
         posts = [
           { sender: "user", message: "just text", is_bot: false, file_ids: [] },

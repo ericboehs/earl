@@ -216,7 +216,7 @@ module Earl
       end
 
       test "approve returns error for missing session" do
-        @tmux.define_singleton_method(:send_keys_raw) { |_t, _k| raise Earl::Tmux::NotFound, "not found" }
+        stub_singleton(@tmux, :send_keys_raw) { |_t, _k| raise Earl::Tmux::NotFound, "not found" }
         result = @handler.call("manage_tmux_sessions", { "action" => "approve", "target" => "missing:1.0" })
         text = result[:content].first[:text]
         assert_includes text, "not found"
@@ -274,7 +274,7 @@ module Earl
       end
 
       test "kill returns error for missing session and cleans up store" do
-        @tmux.define_singleton_method(:kill_session) { |_n| raise Earl::Tmux::NotFound, "not found" }
+        stub_singleton(@tmux, :kill_session) { |_n| raise Earl::Tmux::NotFound, "not found" }
         result = @handler.call("manage_tmux_sessions", { "action" => "kill", "target" => "missing" })
         text = result[:content].first[:text]
         assert_includes text, "not found"
@@ -307,7 +307,7 @@ module Earl
 
       test "spawn allows dot and colon in window name when session param provided" do
         @tmux.session_exists_result = true
-        @handler.define_singleton_method(:request_spawn_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_spawn_confirmation) { |_| :approved }
 
         result = @handler.call("manage_tmux_sessions", {
                                  "action" => "spawn", "prompt" => "fix tests", "name" => "window.with:chars",
@@ -339,7 +339,7 @@ module Earl
 
       test "spawn creates session when confirmation is approved" do
         @tmux.session_exists_result = false
-        @handler.define_singleton_method(:request_spawn_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_spawn_confirmation) { |_| :approved }
 
         result = @handler.call("manage_tmux_sessions", {
                                  "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -352,7 +352,7 @@ module Earl
 
       test "spawn creates window in existing session when session param provided" do
         @tmux.session_exists_result = true
-        @handler.define_singleton_method(:request_spawn_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_spawn_confirmation) { |_| :approved }
 
         result = @handler.call("manage_tmux_sessions", {
                                  "action" => "spawn", "prompt" => "fix tests", "name" => "test-window",
@@ -368,7 +368,7 @@ module Earl
 
       test "spawn returns denied message when confirmation is rejected" do
         @tmux.session_exists_result = false
-        @handler.define_singleton_method(:request_spawn_confirmation) { |_| :denied }
+        stub_singleton(@handler, :request_spawn_confirmation) { |_| :denied }
 
         result = @handler.call("manage_tmux_sessions", {
                                  "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -381,7 +381,7 @@ module Earl
 
       test "spawn returns error when confirmation fails" do
         @tmux.session_exists_result = false
-        @handler.define_singleton_method(:request_spawn_confirmation) { |_| :error }
+        stub_singleton(@handler, :request_spawn_confirmation) { |_| :error }
 
         result = @handler.call("manage_tmux_sessions", {
                                  "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -409,7 +409,7 @@ module Earl
       # --- deny error handling ---
 
       test "deny returns error for missing session" do
-        @tmux.define_singleton_method(:send_keys_raw) { |_t, _k| raise Earl::Tmux::NotFound, "not found" }
+        stub_singleton(@tmux, :send_keys_raw) { |_t, _k| raise Earl::Tmux::NotFound, "not found" }
         result = @handler.call("manage_tmux_sessions", { "action" => "deny", "target" => "missing:1.0" })
         text = result[:content].first[:text]
         assert_includes text, "not found"
@@ -418,7 +418,7 @@ module Earl
       # --- send_input error handling ---
 
       test "send_input returns not found error for missing session" do
-        @tmux.define_singleton_method(:send_keys) { |_t, _txt| raise Earl::Tmux::NotFound, "not found" }
+        stub_singleton(@tmux, :send_keys) { |_t, _txt| raise Earl::Tmux::NotFound, "not found" }
         result = @handler.call("manage_tmux_sessions",
                                { "action" => "send_input", "target" => "missing:1.0", "text" => "hi" })
         text = result[:content].first[:text]
@@ -426,7 +426,7 @@ module Earl
       end
 
       test "send_input returns error for generic tmux error" do
-        @tmux.define_singleton_method(:send_keys) { |_t, _txt| raise Earl::Tmux::Error, "pane dead" }
+        stub_singleton(@tmux, :send_keys) { |_t, _txt| raise Earl::Tmux::Error, "pane dead" }
         result = @handler.call("manage_tmux_sessions",
                                { "action" => "send_input", "target" => "x:1.0", "text" => "hi" })
         text = result[:content].first[:text]
@@ -502,7 +502,7 @@ module Earl
         handler = build_handler_with_api(post_success: true)
         api = handler.instance_variable_get(:@api)
         deletes = []
-        api.define_singleton_method(:delete) { |path| deletes << path }
+        stub_singleton(api, :delete) { |path| deletes << path }
         handler.send(:delete_confirmation_post, "post-1")
         assert_equal ["/posts/post-1"], deletes
       end
@@ -611,7 +611,7 @@ module Earl
       end
 
       test "wait_for_confirmation returns error when websocket connection fails" do
-        @handler.define_singleton_method(:connect_websocket) { nil }
+        stub_singleton(@handler, :connect_websocket) { nil }
         result = @handler.send(:wait_for_confirmation, "post-123")
         assert_equal :error, result
       end
@@ -658,21 +658,21 @@ module Earl
       end
 
       test "approve returns generic tmux error" do
-        @tmux.define_singleton_method(:send_keys_raw) { |_t, _k| raise Earl::Tmux::Error, "pane dead" }
+        stub_singleton(@tmux, :send_keys_raw) { |_t, _k| raise Earl::Tmux::Error, "pane dead" }
         result = @handler.call("manage_tmux_sessions", { "action" => "approve", "target" => "x:1.0" })
         text = result[:content].first[:text]
         assert_includes text, "pane dead"
       end
 
       test "deny returns generic tmux error" do
-        @tmux.define_singleton_method(:send_keys_raw) { |_t, _k| raise Earl::Tmux::Error, "pane dead" }
+        stub_singleton(@tmux, :send_keys_raw) { |_t, _k| raise Earl::Tmux::Error, "pane dead" }
         result = @handler.call("manage_tmux_sessions", { "action" => "deny", "target" => "x:1.0" })
         text = result[:content].first[:text]
         assert_includes text, "pane dead"
       end
 
       test "kill returns generic tmux error" do
-        @tmux.define_singleton_method(:kill_session) { |_n| raise Earl::Tmux::Error, "session locked" }
+        stub_singleton(@tmux, :kill_session) { |_n| raise Earl::Tmux::Error, "session locked" }
         result = @handler.call("manage_tmux_sessions", { "action" => "kill", "target" => "locked" })
         text = result[:content].first[:text]
         assert_includes text, "session locked"
@@ -680,8 +680,8 @@ module Earl
 
       test "spawn returns tmux error when session creation fails" do
         @tmux.session_exists_result = false
-        @handler.define_singleton_method(:request_spawn_confirmation) { |_| :approved }
-        @tmux.define_singleton_method(:create_session) { |**_| raise Earl::Tmux::Error, "tmux not running" }
+        stub_singleton(@handler, :request_spawn_confirmation) { |_| :approved }
+        stub_singleton(@tmux, :create_session) { |**_| raise Earl::Tmux::Error, "tmux not running" }
 
         result = @handler.call("manage_tmux_sessions", {
                                  "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
@@ -721,41 +721,41 @@ module Earl
 
       test "close_websocket handles IOError on close" do
         ws = Object.new
-        ws.define_singleton_method(:close) { raise IOError, "broken pipe" }
+        stub_singleton(ws, :close) { raise IOError, "broken pipe" }
         @handler.send(:close_websocket, ws)
       end
 
       test "parse_reaction_event returns nil for empty message data" do
         msg = Object.new
-        msg.define_singleton_method(:data) { "" }
+        stub_singleton(msg, :data) { "" }
         result = @handler.send(:parse_reaction_event, msg)
         assert_nil result
       end
 
       test "parse_reaction_event returns nil for nil message data" do
         msg = Object.new
-        msg.define_singleton_method(:data) { nil }
+        stub_singleton(msg, :data) { nil }
         result = @handler.send(:parse_reaction_event, msg)
         assert_nil result
       end
 
       test "parse_reaction_event returns nil for non-reaction events" do
         msg = Object.new
-        msg.define_singleton_method(:data) { JSON.generate({ "event" => "posted", "data" => {} }) }
+        stub_singleton(msg, :data) { JSON.generate({ "event" => "posted", "data" => {} }) }
         result = @handler.send(:parse_reaction_event, msg)
         assert_nil result
       end
 
       test "parse_reaction_event returns nil for unparsable JSON" do
         msg = Object.new
-        msg.define_singleton_method(:data) { "not json {{{" }
+        stub_singleton(msg, :data) { "not json {{{" }
         result = @handler.send(:parse_reaction_event, msg)
         assert_nil result
       end
 
       test "parse_reaction_event handles missing nested reaction key" do
         msg = Object.new
-        msg.define_singleton_method(:data) { JSON.generate({ "event" => "reaction_added", "data" => {} }) }
+        stub_singleton(msg, :data) { JSON.generate({ "event" => "reaction_added", "data" => {} }) }
         result = @handler.send(:parse_reaction_event, msg)
         assert_equal({}, result)
       end
@@ -767,7 +767,7 @@ module Earl
 
       test "post_confirmation_request returns nil on IOError" do
         api = Object.new
-        api.define_singleton_method(:post) { |_path, _body| raise IOError, "connection reset" }
+        stub_singleton(api, :post) { |_path, _body| raise IOError, "connection reset" }
         handler = Earl::Mcp::TmuxHandler.new(
           config: @config, api_client: api,
           tmux_store: @tmux_store, tmux_adapter: @tmux
@@ -781,9 +781,9 @@ module Earl
 
       test "post_to_channel returns nil for non-success response" do
         api = Object.new
-        api.define_singleton_method(:post) do |_path, _body|
+        stub_singleton(api, :post) do |_path, _body|
           response = Object.new
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :is_a?) do |klass|
             Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -817,7 +817,7 @@ module Earl
 
       test "delete_confirmation_post swallows errors" do
         api = Object.new
-        api.define_singleton_method(:delete) { |_path| raise StandardError, "api error" }
+        stub_singleton(api, :delete) { |_path| raise StandardError, "api error" }
         handler = Earl::Mcp::TmuxHandler.new(
           config: @config, api_client: api,
           tmux_store: @tmux_store, tmux_adapter: @tmux
@@ -832,7 +832,7 @@ module Earl
 
       test "add_reaction_options handles connection error" do
         api = Object.new
-        api.define_singleton_method(:post) { |_path, _body| raise IOError, "connection lost" }
+        stub_singleton(api, :post) { |_path, _body| raise IOError, "connection lost" }
         handler = Earl::Mcp::TmuxHandler.new(
           config: @config, api_client: api,
           tmux_store: @tmux_store, tmux_adapter: @tmux
@@ -843,7 +843,7 @@ module Earl
       test "request_spawn_confirmation deletes post and returns result on success" do
         handler = build_handler_with_api(post_success: true)
         mock_ws = build_mock_websocket
-        handler.define_singleton_method(:connect_websocket) { mock_ws }
+        stub_singleton(handler, :connect_websocket) { mock_ws }
 
         Thread.new do
           sleep 0.05
@@ -860,7 +860,7 @@ module Earl
       test "wait_for_confirmation polls websocket when connection succeeds" do
         handler = build_handler_with_api(post_success: true)
         mock_ws = build_mock_websocket
-        handler.define_singleton_method(:connect_websocket) { mock_ws }
+        stub_singleton(handler, :connect_websocket) { mock_ws }
 
         Thread.new do
           sleep 0.05
@@ -890,7 +890,7 @@ module Earl
 
       test "parse_reaction_event handles nil nested data with safe navigation" do
         msg = Object.new
-        msg.define_singleton_method(:data) do
+        stub_singleton(msg, :data) do
           JSON.generate({ "event" => "reaction_added", "data" => { "reaction" => nil } })
         end
         result = @handler.send(:parse_reaction_event, msg)
@@ -899,7 +899,7 @@ module Earl
 
       test "parse_reaction_event handles absent data key with safe navigation" do
         msg = Object.new
-        msg.define_singleton_method(:data) do
+        stub_singleton(msg, :data) do
           JSON.generate({ "event" => "reaction_added" })
         end
         result = @handler.send(:parse_reaction_event, msg)
@@ -909,9 +909,9 @@ module Earl
       test "allowed_reactor returns false when API returns non-success response" do
         config = build_mock_config(allowed_users: %w[alice])
         api = Object.new
-        api.define_singleton_method(:get) do |_path|
+        stub_singleton(api, :get) do |_path|
           response = Object.new
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :is_a?) do |klass|
             Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -1021,13 +1021,13 @@ module Earl
       def build_mock_config(allowed_users: [])
         config = Object.new
         users = allowed_users
-        config.define_singleton_method(:platform_channel_id) { "channel-123" }
-        config.define_singleton_method(:platform_thread_id) { "thread-123" }
-        config.define_singleton_method(:platform_bot_id) { "bot-123" }
-        config.define_singleton_method(:permission_timeout_ms) { 120_000 }
-        config.define_singleton_method(:websocket_url) { "wss://mm.example.com/api/v4/websocket" }
-        config.define_singleton_method(:platform_token) { "mock-token" }
-        config.define_singleton_method(:allowed_users) { users }
+        stub_singleton(config, :platform_channel_id) { "channel-123" }
+        stub_singleton(config, :platform_thread_id) { "thread-123" }
+        stub_singleton(config, :platform_bot_id) { "bot-123" }
+        stub_singleton(config, :permission_timeout_ms) { 120_000 }
+        stub_singleton(config, :websocket_url) { "wss://mm.example.com/api/v4/websocket" }
+        stub_singleton(config, :platform_token) { "mock-token" }
+        stub_singleton(config, :allowed_users) { users }
         config
       end
 
@@ -1039,36 +1039,36 @@ module Earl
         psts = tracked_posts
 
         if post_success
-          api.define_singleton_method(:post) do |path, body|
+          stub_singleton(api, :post) do |path, body|
             psts << { path: path, body: body }
             response = Object.new
-            response.define_singleton_method(:body) { JSON.generate({ "id" => "spawn-post-1" }) }
-            response.define_singleton_method(:is_a?) do |klass|
+            stub_singleton(response, :body) { JSON.generate({ "id" => "spawn-post-1" }) }
+            stub_singleton(response, :is_a?) do |klass|
               klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
             end
             response
           end
         else
-          api.define_singleton_method(:post) do |path, body|
+          stub_singleton(api, :post) do |path, body|
             psts << { path: path, body: body }
             response = Object.new
-            response.define_singleton_method(:body) { '{"error":"fail"}' }
-            response.define_singleton_method(:is_a?) do |klass|
+            stub_singleton(response, :body) { '{"error":"fail"}' }
+            stub_singleton(response, :is_a?) do |klass|
               Object.instance_method(:is_a?).bind_call(self, klass)
             end
             response
           end
         end
 
-        api.define_singleton_method(:delete) { |_path| Object.new }
+        stub_singleton(api, :delete) { |_path| Object.new }
 
-        api.define_singleton_method(:get) do |path|
+        stub_singleton(api, :get) do |path|
           response = Object.new
           # Return "alice" for alice-uid, "bob" for others
           username = path.include?("alice-uid") ? "alice" : "bob"
           uname = username
-          response.define_singleton_method(:body) { JSON.generate({ "id" => "user-1", "username" => uname }) }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { JSON.generate({ "id" => "user-1", "username" => uname }) }
+          stub_singleton(response, :is_a?) do |klass|
             klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -1080,7 +1080,7 @@ module Earl
         )
 
         # Speed up dequeue_reaction poll sleep from 0.5s to 0.01s for tests
-        handler.define_singleton_method(:dequeue_reaction) do |queue|
+        stub_singleton(handler, :dequeue_reaction) do |queue|
           queue.pop(true)
         rescue ThreadError
           sleep 0.01
@@ -1093,17 +1093,17 @@ module Earl
       def build_mock_websocket
         ws = Object.new
         ws.instance_variable_set(:@handlers, {})
-        ws.define_singleton_method(:on) do |event, &block|
+        stub_singleton(ws, :on) do |event, &block|
           @handlers[event] = block
         end
-        ws.define_singleton_method(:close) {}
-        ws.define_singleton_method(:fire_message) do |data|
+        stub_singleton(ws, :close) {}
+        stub_singleton(ws, :fire_message) do |data|
           handler = @handlers[:message]
           return unless handler
 
           msg = Object.new
-          msg.define_singleton_method(:data) { data }
-          msg.define_singleton_method(:empty?) { data.nil? || data.empty? }
+          stub_singleton(msg, :data) { data }
+          stub_singleton(msg, :empty?) { data.nil? || data.empty? }
           handler.call(msg)
         end
         ws

@@ -5,7 +5,7 @@ require "simplecov"
 SimpleCov.start do
   enable_coverage :branch
 
-  minimum_coverage line: 90, branch: 80
+  minimum_coverage line: 95, branch: 95
 
   add_filter "/test/"
   add_filter "/bin/"
@@ -53,4 +53,11 @@ class Minitest::Test
   def assert_nothing_raised
     yield
   end
+end
+
+# Redefine a singleton method without triggering "method redefined" warnings.
+# Works on any object (class singletons like Open3, fresh mock objects, etc.).
+def stub_singleton(target, method_name, &)
+  target.singleton_class.undef_method(method_name) if target.respond_to?(method_name, true)
+  target.define_singleton_method(method_name, &)
 end
