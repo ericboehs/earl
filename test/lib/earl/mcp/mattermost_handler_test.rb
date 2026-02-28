@@ -244,6 +244,12 @@ module Earl
         }
       end
 
+      test "format_timestamp returns unknown for non-integer create_at" do
+        handler = Earl::Mcp::MattermostHandler.new(api_client: @api)
+        result = handler.send(:format_timestamp, "not-an-integer")
+        assert_equal "unknown", result
+      end
+
       def build_multi_post_thread
         {
           "posts" => {

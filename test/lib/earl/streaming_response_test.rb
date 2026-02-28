@@ -575,6 +575,120 @@ module Earl
       assert_nothing_raised { response.on_complete }
     end
 
+    test "on_text handles error with nil backtrace" do
+      mock_mm = build_mock_mattermost
+      error = StandardError.new("nil trace")
+      mock_mm.define_singleton_method(:create_post) { |**_args| raise error }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      assert_nothing_raised { response.on_text("Hello") }
+    end
+
+    test "on_tool_use handles error with nil backtrace" do
+      mock_mm = build_mock_mattermost
+      error = StandardError.new("nil trace")
+      mock_mm.define_singleton_method(:create_post) { |**_args| raise error }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      assert_nothing_raised { response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } }) }
+    end
+
+    test "on_complete handles error with nil backtrace" do
+      mock_mm = build_mock_mattermost
+      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
+      mock_mm.define_singleton_method(:update_post) { |**_args| raise StandardError, "nil trace" }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      response.on_text("text")
+      assert_nothing_raised { response.on_complete }
+    end
+
+    test "on_text handles error with non-nil backtrace" do
+      mock_mm = build_mock_mattermost
+      error = StandardError.new("real trace")
+      error.set_backtrace(%w[line1 line2 line3])
+      mock_mm.define_singleton_method(:create_post) { |**_args| raise error }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      assert_nothing_raised { response.on_text("Hello") }
+    end
+
+    test "on_tool_use handles error with non-nil backtrace" do
+      mock_mm = build_mock_mattermost
+      error = StandardError.new("real trace")
+      error.set_backtrace(%w[line1 line2 line3])
+      mock_mm.define_singleton_method(:create_post) { |**_args| raise error }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      assert_nothing_raised { response.on_tool_use({ id: "tu-1", name: "Bash", input: { "command" => "ls" } }) }
+    end
+
+    test "on_complete handles error with non-nil backtrace" do
+      mock_mm = build_mock_mattermost
+      error = StandardError.new("real trace")
+      error.set_backtrace(%w[line1 line2 line3])
+      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
+      mock_mm.define_singleton_method(:update_post) { |**_args| raise error }
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      response.on_text("text")
+      assert_nothing_raised { response.on_complete }
+    end
+
+    test "finalize_empty returns true when text empty and no post_id" do
+      mock_mm = build_mock_mattermost
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      ps = response.instance_variable_get(:@post_state)
+      result = response.send(:finalize_empty?, ps)
+      assert result, "Expected finalize_empty? to be true for empty text and no post_id"
+    end
+
+    test "finalize joins active debounce timer" do
+      updated_posts = []
+      mock_mm = build_mock_mattermost
+      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
+      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+        updated_posts << { post_id: post_id, message: message }
+      end
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+
+      # First chunk creates the post
+      response.on_text("Part 1")
+
+      # Rapid second chunk schedules debounce timer (within DEBOUNCE_MS window)
+      response.on_text("Part 2")
+
+      # Verify debounce timer is active
+      ps = response.instance_variable_get(:@post_state)
+      assert ps.debounce_timer, "Expected debounce timer to be set"
+
+      # Call on_complete immediately — finalize should join the active timer
+      response.on_complete
+
+      # Timer should have been joined and completed
+      refute ps.debounce_timer&.alive?, "Expected debounce timer to have completed"
+    end
+
+    test "remove_trailing_text returns early when no tool segments" do
+      updated_posts = []
+      mock_mm = build_mock_mattermost
+      mock_mm.define_singleton_method(:create_post) { |**_args| { "id" => "reply-1" } }
+      mock_mm.define_singleton_method(:update_post) do |post_id:, message:|
+        updated_posts << { post_id: post_id, message: message }
+      end
+
+      response = Earl::StreamingResponse.new(thread_id: "thread-123", mattermost: mock_mm, channel_id: "ch-1")
+      response.on_text("Just text, no tools")
+
+      updated_posts.clear
+      response.send(:remove_trailing_text_from_streamed_post)
+
+      # No tool segments means last_tool_index is nil, so returns early
+      assert_empty updated_posts
+    end
+
     test "on_tool_use skips AskUserQuestion" do
       created_posts = []
       updated_posts = []

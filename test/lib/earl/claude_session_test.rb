@@ -326,6 +326,65 @@ module Earl
       assert_nothing_raised { session.send(:handle_event, event) }
     end
 
+    test "handle_system_event with message fires on_system callback" do
+      session = Earl::ClaudeSession.new
+      received = nil
+      session.on_system { |event| received = event }
+
+      event = { "type" => "system", "subtype" => "init", "message" => "Initializing..." }
+      session.send(:handle_event, event)
+
+      assert_not_nil received
+      assert_equal "init", received[:subtype]
+      assert_equal "Initializing...", received[:message]
+    end
+
+    test "handle_system_event without message does not fire on_system" do
+      session = Earl::ClaudeSession.new
+      called = false
+      session.on_system { |_event| called = true }
+
+      event = { "type" => "system", "subtype" => "init" }
+      session.send(:handle_event, event)
+
+      assert_not called
+    end
+
+    test "handle_system_event with message but no callback does not raise" do
+      session = Earl::ClaudeSession.new
+
+      event = { "type" => "system", "subtype" => "init", "message" => "test" }
+      assert_nothing_raised { session.send(:handle_event, event) }
+    end
+
+    test "model_args returns model flag when EARL_MODEL is set" do
+      original = ENV.fetch("EARL_MODEL", nil)
+      ENV["EARL_MODEL"] = "claude-opus-4-20250514"
+
+      session = Earl::ClaudeSession.new
+      args = session.send(:model_args)
+
+      assert_equal ["--model", "claude-opus-4-20250514"], args
+    ensure
+      if original
+        ENV["EARL_MODEL"] = original
+      else
+        ENV.delete("EARL_MODEL")
+      end
+    end
+
+    test "model_args returns empty when EARL_MODEL is not set" do
+      original = ENV.fetch("EARL_MODEL", nil)
+      ENV.delete("EARL_MODEL")
+
+      session = Earl::ClaudeSession.new
+      args = session.send(:model_args)
+
+      assert_empty args
+    ensure
+      ENV["EARL_MODEL"] = original if original
+    end
+
     test "handle_event handles unknown event types" do
       session = Earl::ClaudeSession.new
 
@@ -1165,6 +1224,15 @@ module Earl
       assert_includes log, "context used"
       assert_includes log, "cost=$0.0500"
       assert_includes log, "claude-sonnet-4-20250514"
+    end
+
+    test "stats tokens_per_second returns nil with nil turn_output_tokens" do
+      session = Earl::ClaudeSession.new
+      session.stats.first_token_at = Time.now - 2.0
+      session.stats.complete_at = Time.now
+      session.stats.turn_output_tokens = nil
+
+      assert_nil session.stats.tokens_per_second
     end
 
     private

@@ -516,6 +516,477 @@ module Earl
         assert_includes command, "sleep 300"
       end
 
+      # --- resolve_pearl_bin / find_pearl_in_path ---
+
+      test "resolve_pearl_bin returns PEARL_BIN env when set" do
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: @api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        env_val = "/custom/path/pearl"
+        ENV.stub(:fetch, ->(_key, _default) { env_val }) do
+          result = handler.send(:resolve_pearl_bin)
+          assert_equal "/custom/path/pearl", result
+        end
+      end
+
+      test "find_pearl_in_path returns path when which succeeds" do
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: @api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        mock_status = Minitest::Mock.new
+        mock_status.expect(:success?, true)
+
+        Open3.stub(:capture2e, ["/usr/local/bin/pearl\n", mock_status]) do
+          result = handler.send(:find_pearl_in_path)
+          assert_equal "/usr/local/bin/pearl", result
+        end
+        mock_status.verify
+      end
+
+      test "find_pearl_in_path returns nil when which fails" do
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: @api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        mock_status = Minitest::Mock.new
+        mock_status.expect(:success?, false)
+
+        Open3.stub(:capture2e, ["/usr/local/bin/pearl\n", mock_status]) do
+          result = handler.send(:find_pearl_in_path)
+          assert_nil result
+        end
+        mock_status.verify
+      end
+
+      test "find_pearl_in_path returns nil on ENOENT" do
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: @api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        Open3.stub(:capture2e, ->(*_) { raise Errno::ENOENT, "which" }) do
+          result = handler.send(:find_pearl_in_path)
+          assert_nil result
+        end
+      end
+
+      # --- find_agents_dir / pearl_agents_repo ---
+
+      test "find_agents_dir returns nil when pearl_agents_repo is nil" do
+        @handler.define_singleton_method(:pearl_agents_repo) { nil }
+        result = @handler.send(:find_agents_dir)
+        assert_nil result
+      end
+
+      test "find_agents_dir returns nil when agents dir does not exist" do
+        Dir.mktmpdir do |tmpdir|
+          @handler.define_singleton_method(:pearl_agents_repo) { tmpdir }
+          result = @handler.send(:find_agents_dir)
+          assert_nil result
+        end
+      end
+
+      test "find_agents_dir returns agents dir when it exists" do
+        Dir.mktmpdir do |tmpdir|
+          agents_dir = File.join(tmpdir, "agents")
+          FileUtils.mkdir_p(agents_dir)
+          @handler.define_singleton_method(:pearl_agents_repo) { tmpdir }
+          result = @handler.send(:find_agents_dir)
+          assert_equal agents_dir, result
+        end
+      end
+
+      test "pearl_agents_repo returns nil when resolve_pearl_bin is nil" do
+        @handler.define_singleton_method(:resolve_pearl_bin) { nil }
+        result = @handler.send(:pearl_agents_repo)
+        assert_nil result
+      end
+
+      test "pearl_agents_repo returns nil when agents subdir missing" do
+        Dir.mktmpdir do |tmpdir|
+          pearl_bin = File.join(tmpdir, "bin", "pearl")
+          FileUtils.mkdir_p(File.dirname(pearl_bin))
+          File.write(pearl_bin, "#!/bin/bash\n")
+          @handler.define_singleton_method(:resolve_pearl_bin) { pearl_bin }
+          result = @handler.send(:pearl_agents_repo)
+          assert_nil result
+        end
+      end
+
+      test "pearl_agents_repo returns repo path when agents subdir exists" do
+        Dir.mktmpdir do |tmpdir|
+          pearl_bin = File.join(tmpdir, "bin", "pearl")
+          agents_dir = File.join(tmpdir, "agents")
+          FileUtils.mkdir_p(File.dirname(pearl_bin))
+          FileUtils.mkdir_p(agents_dir)
+          File.write(pearl_bin, "#!/bin/bash\n")
+          @handler.define_singleton_method(:resolve_pearl_bin) { pearl_bin }
+          result = @handler.send(:pearl_agents_repo)
+          assert_equal tmpdir, result
+        end
+      end
+
+      # --- discover_agents edge cases ---
+
+      test "discover_agents skips directories without Dockerfile" do
+        Dir.mktmpdir do |agents_dir|
+          FileUtils.mkdir_p(File.join(agents_dir, "no-dockerfile-agent"))
+          File.write(File.join(agents_dir, "no-dockerfile-agent", "README.md"), "hi")
+          result = @handler.send(:discover_agents, agents_dir)
+          assert_empty result
+        end
+      end
+
+      test "discover_agents skips base directory even with Dockerfile" do
+        Dir.mktmpdir do |agents_dir|
+          FileUtils.mkdir_p(File.join(agents_dir, "base"))
+          File.write(File.join(agents_dir, "base", "Dockerfile"), "FROM node:22")
+          result = @handler.send(:discover_agents, agents_dir)
+          assert_empty result
+        end
+      end
+
+      test "discover_agents returns sorted agents with skill info" do
+        Dir.mktmpdir do |agents_dir|
+          create_agent_profile(agents_dir, "zebra", skills: false)
+          create_agent_profile(agents_dir, "alpha", skills: true)
+          result = @handler.send(:discover_agents, agents_dir)
+          assert_equal 2, result.size
+          assert_equal "alpha", result.first[:name]
+          assert result.first[:has_skills]
+          assert_equal "zebra", result.last[:name]
+          assert_not result.last[:has_skills]
+        end
+      end
+
+      # --- format_agent ---
+
+      test "format_agent includes skills badge when has_skills is true" do
+        result = @handler.send(:format_agent, { name: "code", has_skills: true })
+        assert_includes result, "(skills: yes)"
+        assert_includes result, "`code`"
+      end
+
+      test "format_agent omits skills badge when has_skills is false" do
+        result = @handler.send(:format_agent, { name: "pptx", has_skills: false })
+        assert_not_includes result, "skills"
+        assert_includes result, "`pptx`"
+      end
+
+      # --- handle_run error paths ---
+
+      test "handle_run catches Tmux::Error and returns error text" do
+        with_agents_dir do |agents_dir|
+          create_agent_profile(agents_dir, "code", skills: true)
+          @handler.define_singleton_method(:request_run_confirmation) { |_| :approved }
+          @tmux.define_singleton_method(:create_window) do |**_kwargs|
+            raise Earl::Tmux::Error, "tmux not available"
+          end
+
+          result = @handler.call("manage_pearl_agents", {
+                                   "action" => "run", "agent" => "code", "prompt" => "fix tests"
+                                 })
+          text = result[:content].first[:text]
+          assert_includes text, "tmux not available"
+        end
+      end
+
+      test "validate_agent_exists returns nil when agents_dir is nil" do
+        stub_pearl_bin("/usr/local/bin/pearl")
+        @handler.define_singleton_method(:find_agents_dir) { nil }
+        result = @handler.send(:validate_agent_exists, "code")
+        assert_nil result
+      end
+
+      test "validate_agent_exists returns nil when agent profile exists" do
+        with_agents_dir do |agents_dir|
+          create_agent_profile(agents_dir, "code", skills: true)
+          result = @handler.send(:validate_agent_exists, "code")
+          assert_nil result
+        end
+      end
+
+      # --- status error paths ---
+
+      test "status returns error on Tmux::Error" do
+        @tmux.capture_pane_error = Earl::Tmux::Error.new("tmux crashed")
+        result = @handler.call("manage_pearl_agents", {
+                                 "action" => "status", "target" => "pearl-agents:code-ab12"
+                               })
+        text = result[:content].first[:text]
+        assert_includes text, "tmux crashed"
+      end
+
+      test "status log fallback returns error when window name is nil" do
+        @tmux.capture_pane_error = Earl::Tmux::NotFound.new("not found")
+
+        Dir.mktmpdir do |tmpdir|
+          log_dir = File.join(tmpdir, "pearl-logs")
+          FileUtils.mkdir_p(log_dir)
+          @handler.define_singleton_method(:pearl_log_dir) { log_dir }
+
+          result = @handler.call("manage_pearl_agents", {
+                                   "action" => "status", "target" => "pearl-agents"
+                                 })
+          text = result[:content].first[:text]
+          assert_includes text, "not found"
+          assert_includes text, "no log file"
+        end
+      end
+
+      # --- WebSocket / confirmation edge cases ---
+
+      test "connect_websocket returns nil on SocketError" do
+        mock_ws_module = Module.new do
+          def self.connect(_url)
+            raise SocketError, "getaddrinfo failed"
+          end
+        end
+        ws_const = WebSocket::Client::Simple
+        WebSocket::Client.send(:remove_const, :Simple)
+        WebSocket::Client.const_set(:Simple, mock_ws_module)
+        begin
+          result = @handler.send(:connect_websocket)
+          assert_nil result
+        ensure
+          WebSocket::Client.send(:remove_const, :Simple)
+          WebSocket::Client.const_set(:Simple, ws_const)
+        end
+      end
+
+      test "close_websocket handles nil websocket" do
+        assert_nothing_raised do
+          @handler.send(:close_websocket, nil)
+        end
+      end
+
+      test "close_websocket handles IOError during close" do
+        ws = Object.new
+        ws.define_singleton_method(:close) { raise IOError, "broken" }
+        assert_nothing_raised do
+          @handler.send(:close_websocket, ws)
+        end
+      end
+
+      test "parse_reaction_event returns nil for empty data" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { "" }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_nil result
+      end
+
+      test "parse_reaction_event returns nil for nil data" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { nil }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_nil result
+      end
+
+      test "parse_reaction_event returns nil for non-reaction events" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { JSON.generate({ "event" => "posted", "data" => {} }) }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_nil result
+      end
+
+      test "parse_reaction_event returns nil for unparsable JSON" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { "not valid json" }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_nil result
+      end
+
+      test "parse_reaction_event returns reaction data for reaction_added events" do
+        reaction = JSON.generate({ "post_id" => "p1", "emoji_name" => "+1" })
+        msg = Object.new
+        event = JSON.generate({ "event" => "reaction_added", "data" => { "reaction" => reaction } })
+        msg.define_singleton_method(:data) { event }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_equal "p1", result["post_id"]
+      end
+
+      test "parse_reaction_event handles nil nested reaction" do
+        msg = Object.new
+        event = JSON.generate({ "event" => "reaction_added", "data" => {} })
+        msg.define_singleton_method(:data) { event }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_equal({}, result)
+      end
+
+      test "enqueue_reaction swallows errors" do
+        handler = build_handler_with_api(post_success: true)
+        ctx = Object.new
+        ctx.define_singleton_method(:enqueue) { |_| raise StandardError, "boom" }
+        msg = Object.new
+        assert_nothing_raised do
+          handler.send(:enqueue_reaction, ctx, msg)
+        end
+      end
+
+      test "wait_for_confirmation returns error on unexpected exception" do
+        @handler.define_singleton_method(:connect_websocket) do
+          raise StandardError, "unexpected"
+        end
+        result = @handler.send(:wait_for_confirmation, "post-123")
+        assert_equal :error, result
+      end
+
+      # --- classify_reaction edge cases ---
+
+      test "classify_reaction ignores unrecognized emoji" do
+        handler = build_handler_with_api(post_success: true)
+        reaction = { "user_id" => "user-42", "emoji_name" => "heart" }
+        result = handler.send(:classify_reaction, reaction)
+        assert_nil result
+      end
+
+      test "classify_reaction returns approved for white_check_mark" do
+        handler = build_handler_with_api(post_success: true)
+        reaction = { "user_id" => "user-42", "emoji_name" => "white_check_mark" }
+        result = handler.send(:classify_reaction, reaction)
+        assert_equal :approved, result
+      end
+
+      test "allowed_reactor returns true when allowed_users is empty" do
+        handler = build_handler_with_api(post_success: true, allowed_users: [])
+        result = handler.send(:allowed_reactor?, "any-user")
+        assert result
+      end
+
+      test "allowed_reactor returns true when user is in allowed list" do
+        handler = build_handler_with_api(post_success: true, allowed_users: %w[alice])
+        result = handler.send(:allowed_reactor?, "alice-uid")
+        assert result
+      end
+
+      test "allowed_reactor returns false when user is not in allowed list" do
+        handler = build_handler_with_api(post_success: true, allowed_users: %w[alice])
+        result = handler.send(:allowed_reactor?, "bob-uid")
+        assert_not result
+      end
+
+      test "allowed_reactor returns false when API call fails" do
+        config = build_mock_config(allowed_users: %w[alice])
+        api = Object.new
+        api.define_singleton_method(:post) { |_path, _body| nil }
+        api.define_singleton_method(:delete) { |_path| nil }
+        api.define_singleton_method(:get) do |_path|
+          response = Object.new
+          response.define_singleton_method(:body) { "{}" }
+          response.define_singleton_method(:is_a?) do |klass|
+            Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+        handler = Earl::Mcp::PearlHandler.new(
+          config: config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:allowed_reactor?, "user-1")
+        assert_not result
+      end
+
+      # --- add_reaction_options error paths ---
+
+      test "add_reaction_options logs warning on reaction failure" do
+        api = Object.new
+        api.define_singleton_method(:post) do |_path, _body|
+          response = Object.new
+          response.define_singleton_method(:is_a?) do |klass|
+            Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+        api.define_singleton_method(:delete) { |_path| nil }
+        api.define_singleton_method(:get) { |_path| nil }
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        assert_nothing_raised do
+          handler.send(:add_reaction_options, "post-1")
+        end
+      end
+
+      test "add_reaction_options handles IOError" do
+        api = Object.new
+        api.define_singleton_method(:post) { |_path, _body| raise IOError, "connection reset" }
+        api.define_singleton_method(:delete) { |_path| nil }
+        api.define_singleton_method(:get) { |_path| nil }
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        assert_nothing_raised do
+          handler.send(:add_reaction_options, "post-1")
+        end
+      end
+
+      test "delete_confirmation_post handles errors gracefully" do
+        api = Object.new
+        api.define_singleton_method(:post) { |_path, _body| nil }
+        api.define_singleton_method(:delete) { |_path| raise StandardError, "delete failed" }
+        api.define_singleton_method(:get) { |_path| nil }
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        assert_nothing_raised do
+          handler.send(:delete_confirmation_post, "post-1")
+        end
+      end
+
+      # --- post_confirmation_request error paths ---
+
+      test "post_confirmation_request returns nil on IOError" do
+        api = Object.new
+        api.define_singleton_method(:post) { |_path, _body| raise IOError, "broken pipe" }
+        api.define_singleton_method(:delete) { |_path| nil }
+        api.define_singleton_method(:get) { |_path| nil }
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hi", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+        )
+        result = handler.send(:post_confirmation_request, request)
+        assert_nil result
+      end
+
+      # --- MessageHandlerContext ---
+
+      test "MessageHandlerContext enqueue ignores non-matching post_id" do
+        queue = Queue.new
+        extractor = ->(msg) { { "post_id" => "other", "emoji_name" => msg } }
+        ctx = Earl::Mcp::PearlHandler::MessageHandlerContext.new(
+          ws: nil, post_id: "target-post", extractor: extractor, queue: queue
+        )
+        ctx.enqueue("+1")
+        assert queue.empty?
+      end
+
+      test "MessageHandlerContext enqueue pushes matching post_id" do
+        queue = Queue.new
+        extractor = ->(msg) { { "post_id" => "target-post", "emoji_name" => msg } }
+        ctx = Earl::Mcp::PearlHandler::MessageHandlerContext.new(
+          ws: nil, post_id: "target-post", extractor: extractor, queue: queue
+        )
+        ctx.enqueue("+1")
+        assert_equal 1, queue.size
+      end
+
+      test "MessageHandlerContext enqueue ignores nil reaction_data" do
+        queue = Queue.new
+        extractor = ->(_msg) {}
+        ctx = Earl::Mcp::PearlHandler::MessageHandlerContext.new(
+          ws: nil, post_id: "target-post", extractor: extractor, queue: queue
+        )
+        ctx.enqueue("anything")
+        assert queue.empty?
+      end
+
       # --- Mock helpers ---
 
       private

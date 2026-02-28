@@ -528,6 +528,27 @@ module Earl
 
       private
 
+      test "load_yaml returns default when YAML is not a Hash" do
+        File.write(@config_path, YAML.dump("just a string"))
+
+        result = @handler.call("manage_heartbeat", { "action" => "list" })
+        assert_includes result[:content].first[:text], "No heartbeats"
+      end
+
+      test "list shows no schedule for heartbeat without cron interval or run_at" do
+        write_heartbeats(
+          "orphan" => {
+            "schedule" => {},
+            "channel_id" => "ch",
+            "prompt" => "p",
+            "enabled" => true
+          }
+        )
+
+        result = @handler.call("manage_heartbeat", { "action" => "list" })
+        assert_includes result[:content].first[:text], "no schedule"
+      end
+
       def write_heartbeats(heartbeats)
         File.write(@config_path, YAML.dump("heartbeats" => heartbeats))
       end

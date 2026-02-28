@@ -338,6 +338,77 @@ module Earl
         assert_includes message, "30 days"
       end
 
+      test "extract_reaction returns empty hash when nested_data is nil" do
+        handler = build_handler_with_api(post_success: true)
+        msg = Object.new
+        data = JSON.generate({ "event" => "reaction_added", "data" => nil })
+        msg.define_singleton_method(:data) { data }
+        result = handler.send(:extract_reaction, msg)
+        assert_equal({}, result)
+      end
+
+      test "extract_reaction returns nil for non-reaction event" do
+        handler = build_handler_with_api(post_success: true)
+        msg = Object.new
+        data = JSON.generate({ "event" => "posted", "data" => {} })
+        msg.define_singleton_method(:data) { data }
+        result = handler.send(:extract_reaction, msg)
+        assert_nil result
+      end
+
+      test "extract_reaction returns nil for empty data" do
+        handler = build_handler_with_api(post_success: true)
+        msg = Object.new
+        msg.define_singleton_method(:data) { "" }
+        result = handler.send(:extract_reaction, msg)
+        assert_nil result
+      end
+
+      test "extract_reaction returns nil for nil data" do
+        handler = build_handler_with_api(post_success: true)
+        msg = Object.new
+        msg.define_singleton_method(:data) { nil }
+        result = handler.send(:extract_reaction, msg)
+        assert_nil result
+      end
+
+      test "extract_reaction returns nil for invalid JSON" do
+        handler = build_handler_with_api(post_success: true)
+        msg = Object.new
+        msg.define_singleton_method(:data) { "not json{{{" }
+        result = handler.send(:extract_reaction, msg)
+        assert_nil result
+      end
+
+      test "extract_http_status returns code for HTTPResponse" do
+        handler = build_handler_with_api(post_success: true)
+        response = Object.new
+        response.define_singleton_method(:code) { "200" }
+        response.define_singleton_method(:is_a?) do |klass|
+          klass == Net::HTTPResponse || Object.instance_method(:is_a?).bind_call(self, klass)
+        end
+        result = handler.send(:extract_http_status, response)
+        assert_equal "200", result
+      end
+
+      test "extract_http_status returns unknown for non-HTTPResponse" do
+        handler = build_handler_with_api(post_success: true)
+        result = handler.send(:extract_http_status, "not a response")
+        assert_equal "unknown", result
+      end
+
+      test "extract_http_status returns unknown for nil" do
+        handler = build_handler_with_api(post_success: true)
+        result = handler.send(:extract_http_status, nil)
+        assert_equal "unknown", result
+      end
+
+      test "add_reaction_options logs warning when API returns failure" do
+        handler = build_handler_with_api(post_success: false)
+        # Should not raise, just log warning
+        assert_nothing_raised { handler.send(:add_reaction_options, "post-1") }
+      end
+
       test "add_reaction_options adds all three emojis" do
         posts = []
         handler = build_handler_with_api(post_success: true, posts: posts)

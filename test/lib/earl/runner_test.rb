@@ -1418,6 +1418,36 @@ module Earl
       assert_nothing_raised { runner.send(:handle_response_complete, "thread-12345678") }
     end
 
+    test "handle_response_complete skips queue when analysis followup is sent" do
+      runner = Earl::Runner.new
+
+      sent_messages = []
+      mock_session = build_mock_session(on_send: ->(text) { sent_messages << text })
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      mm.define_singleton_method(:send_typing) { |**_args| }
+
+      analysis_text = "## Root Cause\n\n#{"x" * 300}\n\nThe problem went wrong due to a bad config."
+      response = Earl::StreamingResponse.new(thread_id: "thread-12345678", mattermost: mm, channel_id: "ch-1")
+
+      # Inject text segments so full_text returns analysis text
+      response.instance_variable_set(:@segments, [analysis_text])
+      response.instance_variable_get(:@post_state).full_text = analysis_text
+
+      runner.instance_variable_get(:@responses).active_responses["thread-12345678"] = response
+
+      # Add a queued message — it should NOT be processed because followup takes priority
+      runner.instance_variable_get(:@app_state).message_queue.enqueue("thread-12345678", "queued msg")
+
+      runner.send(:handle_response_complete, "thread-12345678")
+
+      # Follow-up was sent
+      assert_equal 1, sent_messages.size
+      assert_includes sent_messages.first, "Suggested Fixes"
+    end
+
     test "handle_incoming_message routes passthrough from command to enqueue" do
       runner = Earl::Runner.new
 
@@ -1741,6 +1771,30 @@ module Earl
 
       logs = capture_logs { runner.send(:send_analysis_followup_if_needed, bundle) }
       assert_match(/Analysis follow-up failed.*boom/, logs)
+    end
+
+    test "handle_tool_use stores question thread only when tool_use_id present" do
+      runner = Earl::Runner.new
+      mock_session = build_mock_session
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      qh = runner.instance_variable_get(:@services).question_handler
+      qh.define_singleton_method(:handle_tool_use) { |**_args| { tool_use_id: nil } }
+
+      runner.send(:handle_tool_use, thread_id: "thread-nil-id", tool_use: {}, channel_id: "ch-1")
+
+      question_threads = runner.instance_variable_get(:@responses).question_threads
+      assert_not question_threads.value?("thread-nil-id")
+    end
+
+    test "log_processing_error handles error with nil backtrace" do
+      runner = Earl::Runner.new
+      error = StandardError.new("no trace")
+
+      assert_nothing_raised do
+        capture_logs { runner.send(:log_processing_error, "thread-12345678", error) }
+      end
     end
 
     private

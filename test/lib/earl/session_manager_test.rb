@@ -405,6 +405,21 @@ module Earl
       assert_equal "bot-123", result.env["PLATFORM_BOT_ID"]
     end
 
+    test "build_permission_config merges PEARL_BIN env when set" do
+      ENV["EARL_SKIP_PERMISSIONS"] = nil
+      ENV.delete("EARL_SKIP_PERMISSIONS")
+      ENV["PEARL_BIN"] = "/usr/local/bin/pearl"
+      config = Earl::Config.new
+      manager = Earl::SessionManager.new(config: config)
+
+      result = manager.send(:build_permission_config, "thread-123", "channel-456")
+      assert_instance_of Earl::ClaudeSession::McpConfig, result
+      assert_equal "/usr/local/bin/pearl", result.env["PEARL_BIN"]
+      assert_equal "https://mattermost.example.com", result.env["PLATFORM_URL"]
+    ensure
+      ENV.delete("PEARL_BIN")
+    end
+
     test "claude_session_id_for returns active session id" do
       manager = Earl::SessionManager.new
       create_with_fake_session(manager, "thread-abc12345", alive: true)
@@ -495,6 +510,40 @@ module Earl
       assert_equal 0.42, saved.first[:persisted].total_cost
       assert_equal 8000, saved.first[:persisted].total_input_tokens
       assert_equal 3000, saved.first[:persisted].total_output_tokens
+    end
+
+    test "save_stats does nothing when session is nil" do
+      store = Object.new
+      saved = []
+      store.define_singleton_method(:load) { {} }
+      store.define_singleton_method(:save) { |tid, p| saved << { tid: tid, p: p } }
+
+      manager = Earl::SessionManager.new(session_store: store)
+      manager.save_stats("nonexistent-thread")
+
+      assert_empty saved
+    end
+
+    test "save_stats does nothing when session_store is nil" do
+      manager = Earl::SessionManager.new(session_store: nil)
+      create_with_fake_session(manager, "thread-no-store")
+
+      assert_nothing_raised { manager.save_stats("thread-no-store") }
+    end
+
+    test "save_stats does nothing when persisted session is nil" do
+      saved_during_stats = []
+      store = Object.new
+      store.define_singleton_method(:load) { {} }
+      store.define_singleton_method(:save) { |tid, p| saved_during_stats << { tid: tid, p: p } }
+
+      manager = Earl::SessionManager.new(session_store: store)
+      create_with_fake_session(manager, "thread-no-persist")
+
+      saved_during_stats.clear
+      manager.save_stats("thread-no-persist")
+
+      assert_empty saved_during_stats
     end
 
     private
