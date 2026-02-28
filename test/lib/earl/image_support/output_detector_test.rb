@@ -170,6 +170,44 @@ module Earl
           assert_equal "image/gif", refs[0].media_type
         end
       end
+
+      # --- Markdown-wrapped path detection ---
+
+      test "detects path wrapped in backticks" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "image.png")
+          File.write(path, "png data")
+
+          refs = @detector.detect_in_text("`#{path}`")
+
+          assert_equal 1, refs.size
+          assert_equal path, refs[0].data
+        end
+      end
+
+      test "detects path wrapped in bold backticks" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "image.png")
+          File.write(path, "png data")
+
+          refs = @detector.detect_in_text("**`#{path}`**")
+
+          assert_equal 1, refs.size
+          assert_equal path, refs[0].data
+        end
+      end
+
+      test "detects path followed by punctuation" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "image.png")
+          File.write(path, "png data")
+
+          refs = @detector.detect_in_text("Saved to #{path}.")
+
+          assert_equal 1, refs.size
+          assert_equal path, refs[0].data
+        end
+      end
     end
   end
 end

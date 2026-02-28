@@ -55,6 +55,7 @@ module Earl
     def on_text_with_images(text, image_refs)
       @mutex.synchronize do
         handle_text(text)
+        log(:info, "on_text_with_images: #{image_refs.size} refs detected") unless image_refs.empty?
         @post_state.image_refs.concat(image_refs)
       end
     rescue StandardError => error
@@ -214,6 +215,8 @@ module Earl
       def upload_collected_images
         refs = @post_state.image_refs
         return if refs.empty?
+
+        log(:info, "upload_collected_images: #{refs.size} refs to upload")
 
         file_ids = refs.filter_map { |ref| upload_image_ref(ref) }
         post_image_attachments(file_ids) unless file_ids.empty?

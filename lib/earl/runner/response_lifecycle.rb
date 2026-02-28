@@ -32,6 +32,7 @@ module Earl
         bundle.session.on_text do |text|
           tool_name = last_tool.pop
           refs = detect_images(detector, text, tool_name)
+          log(:info, "wire_text_callback: tool=#{tool_name} refs=#{refs.size} text=#{text[0..60]}") unless refs.empty?
           response.on_text_with_images(text, refs)
         end
       end

@@ -19,7 +19,7 @@ module Earl
         ".png" => "image/png", ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg",
         ".gif" => "image/gif", ".webp" => "image/webp"
       }.freeze
-      IMAGE_PATH_PATTERN = %r{(?:^|\s)(/\S+(?:\.png|\.jpe?g|\.gif|\.webp))(?:\s|$)}i
+      IMAGE_PATH_PATTERN = %r{(?:^|[\s`*\[("])(/[^\s`*\])"',]+(?:\.png|\.jpe?g|\.gif|\.webp))(?:[\s`*\])",.:;!?]|$)}i
 
       BASE64_SIGNATURES = [
         Base64Signature.new(pattern: %r{iVBOR[A-Za-z0-9+/=]{100,}}, media_type: "image/png",
