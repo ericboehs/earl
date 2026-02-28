@@ -83,7 +83,7 @@ module Earl
       stub_open3_with_tracking(calls)
 
       # Override sleep to not actually wait
-      Earl::Tmux.define_singleton_method(:sleep) { |_| nil }
+      stub_singleton(Earl::Tmux, :sleep) { |_| nil }
       Earl::Tmux.send_keys("dev", "hello")
 
       assert_equal 2, calls.size
@@ -160,7 +160,7 @@ module Earl
 
     test "wait_for_text returns output when pattern matches immediately" do
       stub_open3("Ready ❯ ", true)
-      Earl::Tmux.define_singleton_method(:sleep) { |_| nil }
+      stub_singleton(Earl::Tmux, :sleep) { |_| nil }
 
       result = Earl::Tmux.wait_for_text("dev", /❯/, timeout: 1, interval: 0.01)
       assert_equal "Ready ❯ ", result
@@ -177,7 +177,7 @@ module Earl
 
     test "wait_for_text accepts string patterns" do
       stub_open3("found the needle here", true)
-      Earl::Tmux.define_singleton_method(:sleep) { |_| nil }
+      stub_singleton(Earl::Tmux, :sleep) { |_| nil }
 
       result = Earl::Tmux.wait_for_text("dev", "needle", timeout: 1, interval: 0.01)
       assert_match(/needle/, result)
@@ -228,7 +228,7 @@ module Earl
 
       call_count = 0
       status = mock_status(true)
-      Open3.define_singleton_method(:capture2e) do |*_args|
+      stub_singleton(Open3, :capture2e) do |*_args|
         call_count += 1
         if call_count == 1
           [ps_output, status]
@@ -244,7 +244,7 @@ module Earl
     end
 
     test "pane_child_commands returns empty array on error" do
-      Open3.define_singleton_method(:capture2e) { |*_args| raise Errno::ENOENT, "ps not found" }
+      stub_singleton(Open3, :capture2e) { |*_args| raise Errno::ENOENT, "ps not found" }
       assert_equal [], Earl::Tmux.pane_child_commands(99_999)
     end
 
@@ -294,7 +294,7 @@ module Earl
     end
 
     test "claude_on_tty? returns false on error" do
-      Open3.define_singleton_method(:capture2e) { |*_args| raise Errno::ENOENT, "ps not found" }
+      stub_singleton(Open3, :capture2e) { |*_args| raise Errno::ENOENT, "ps not found" }
       assert_not Earl::Tmux.claude_on_tty?("/dev/ttys999")
     end
 
@@ -383,18 +383,18 @@ module Earl
 
     def mock_status(success)
       status = Object.new
-      status.define_singleton_method(:success?) { success }
+      stub_singleton(status, :success?) { success }
       status
     end
 
     def stub_open3(output, success)
       status = mock_status(success)
-      Open3.define_singleton_method(:capture2e) { |*_args| [output, status] }
+      stub_singleton(Open3, :capture2e) { |*_args| [output, status] }
     end
 
     def stub_open3_with_tracking(calls)
       status = mock_status(true)
-      Open3.define_singleton_method(:capture2e) do |*args|
+      stub_singleton(Open3, :capture2e) do |*args|
         calls << args
         ["", status]
       end
@@ -402,7 +402,7 @@ module Earl
 
     def restore_open3
       original = @original_capture2e
-      Open3.define_singleton_method(:capture2e) { |*args| original.call(*args) }
+      stub_singleton(Open3, :capture2e) { |*args| original.call(*args) }
     end
   end
 end

@@ -157,7 +157,7 @@ module Earl
     test "start initializes states and starts scheduler thread" do
       definition = build_definition(name: "test_beat", interval: 60)
       heartbeat_config = Object.new
-      heartbeat_config.define_singleton_method(:definitions) { [definition] }
+      stub_singleton(heartbeat_config, :definitions) { [definition] }
 
       scheduler = build_scheduler(heartbeat_config: heartbeat_config)
       scheduler.start
@@ -203,7 +203,7 @@ module Earl
       scheduler.instance_variable_get(:@states)["due_beat"] = state
 
       # Stub execute_heartbeat to avoid real Claude session
-      scheduler.define_singleton_method(:execute_heartbeat) { |_state| }
+      stub_singleton(scheduler, :execute_heartbeat) { |_state| }
 
       scheduler.send(:check_and_dispatch)
 
@@ -222,7 +222,7 @@ module Earl
       )
 
       # Stub execute_heartbeat to avoid real execution
-      scheduler.define_singleton_method(:execute_heartbeat) { |_state| }
+      stub_singleton(scheduler, :execute_heartbeat) { |_state| }
 
       scheduler.send(:dispatch_heartbeat, state, Time.now)
 
@@ -244,14 +244,14 @@ module Earl
       )
 
       # Stub session creation and run
-      scheduler.define_singleton_method(:build_heartbeat_session) do |_def, _state|
+      stub_singleton(scheduler, :build_heartbeat_session) do |_def, _state|
         session = Object.new
-        session.define_singleton_method(:on_text) { |&_block| }
-        session.define_singleton_method(:on_complete) { |&block| block.call(nil) } # complete immediately
-        session.define_singleton_method(:on_tool_use) { |&_block| }
-        session.define_singleton_method(:start) {}
-        session.define_singleton_method(:send_message) { |_text| }
-        session.define_singleton_method(:session_id) { "test-session" }
+        stub_singleton(session, :on_text) { |&_block| }
+        stub_singleton(session, :on_complete) { |&block| block.call(nil) } # complete immediately
+        stub_singleton(session, :on_tool_use) { |&_block| }
+        stub_singleton(session, :start) {}
+        stub_singleton(session, :send_message) { |_text| }
+        stub_singleton(session, :session_id) { "test-session" }
         session
       end
 
@@ -264,8 +264,8 @@ module Earl
 
     test "execute_heartbeat returns early when header post is nil" do
       mock_mm = Object.new
-      mock_mm.define_singleton_method(:create_post) { |**_args| nil }
-      mock_mm.define_singleton_method(:send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| nil }
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
 
       scheduler = build_scheduler(mattermost: mock_mm)
       definition = build_definition(name: "no_header")
@@ -274,7 +274,7 @@ module Earl
       )
 
       session_created = false
-      scheduler.define_singleton_method(:build_heartbeat_session) { |_def, _state| session_created = true }
+      stub_singleton(scheduler, :build_heartbeat_session) { |_def, _state| session_created = true }
 
       scheduler.send(:execute_heartbeat, state)
 
@@ -291,7 +291,7 @@ module Earl
         definition: definition, running: true, run_count: 0
       )
 
-      scheduler.define_singleton_method(:build_heartbeat_session) { |_def, _state| raise "session error" }
+      stub_singleton(scheduler, :build_heartbeat_session) { |_def, _state| raise "session error" }
 
       scheduler.send(:execute_heartbeat, state)
 
@@ -303,7 +303,7 @@ module Earl
     test "await_heartbeat_completion returns when heartbeat completes" do
       scheduler = build_scheduler
       session = Object.new
-      session.define_singleton_method(:kill) {}
+      stub_singleton(session, :kill) {}
 
       completed = false
       Thread.new do
@@ -320,7 +320,7 @@ module Earl
 
       killed = false
       session = Object.new
-      session.define_singleton_method(:kill) { killed = true }
+      stub_singleton(session, :kill) { killed = true }
 
       scheduler.send(:await_heartbeat_completion, session, 1) { false }
       assert killed
@@ -390,7 +390,7 @@ module Earl
       scheduler.instance_variable_get(:@control).config_mtime = File.mtime(config_path)
 
       reload_called = false
-      scheduler.define_singleton_method(:reload_definitions) { reload_called = true }
+      stub_singleton(scheduler, :reload_definitions) { reload_called = true }
 
       scheduler.send(:check_for_reload)
       assert_not reload_called
@@ -409,7 +409,7 @@ module Earl
       scheduler.instance_variable_get(:@control).config_mtime = Time.now - 60 # old mtime
 
       reload_called = false
-      scheduler.define_singleton_method(:reload_definitions) { reload_called = true }
+      stub_singleton(scheduler, :reload_definitions) { reload_called = true }
 
       scheduler.send(:check_for_reload)
       assert reload_called
@@ -423,8 +423,8 @@ module Earl
 
       definition = build_definition(name: "new_beat", interval: 60)
       hb_config = Object.new
-      hb_config.define_singleton_method(:definitions) { [definition] }
-      hb_config.define_singleton_method(:path) { config_path }
+      stub_singleton(hb_config, :definitions) { [definition] }
+      stub_singleton(hb_config, :path) { config_path }
 
       scheduler = build_scheduler(heartbeat_config: hb_config)
       scheduler.instance_variable_get(:@control).heartbeat_config_path = config_path
@@ -473,8 +473,8 @@ module Earl
     test "reload_definitions updates definitions for non-running heartbeats" do
       updated_def = build_definition(name: "updatable", interval: 120)
       hb_config = Object.new
-      hb_config.define_singleton_method(:definitions) { [updated_def] }
-      hb_config.define_singleton_method(:path) { "/tmp/fake.yml" }
+      stub_singleton(hb_config, :definitions) { [updated_def] }
+      stub_singleton(hb_config, :path) { "/tmp/fake.yml" }
 
       scheduler = build_scheduler(heartbeat_config: hb_config)
       scheduler.instance_variable_get(:@control).heartbeat_config_path = "/tmp/fake.yml"
@@ -767,11 +767,11 @@ module Earl
       scheduler = build_scheduler
 
       call_count = 0
-      scheduler.define_singleton_method(:check_for_reload) do
+      stub_singleton(scheduler, :check_for_reload) do
         call_count += 1
         raise "simulated error" if call_count == 1
       end
-      scheduler.define_singleton_method(:check_and_dispatch) {}
+      stub_singleton(scheduler, :check_and_dispatch) {}
 
       control = scheduler.instance_variable_get(:@control)
       control.stop_requested = false
@@ -794,7 +794,7 @@ module Earl
       scheduler.instance_variable_get(:@states)["not_due"] = state
 
       dispatched = false
-      scheduler.define_singleton_method(:dispatch_heartbeat) { |_s, _t| dispatched = true }
+      stub_singleton(scheduler, :dispatch_heartbeat) { |_s, _t| dispatched = true }
 
       scheduler.send(:check_and_dispatch)
       assert_not dispatched
@@ -807,7 +807,7 @@ module Earl
 
       # Speed up join timeout from 5s to 0.01s
       original_join = thread.method(:join)
-      thread.define_singleton_method(:join) { |_timeout = nil| original_join.call(0.01) }
+      stub_singleton(thread, :join) { |_timeout = nil| original_join.call(0.01) }
 
       scheduler.send(:join_and_kill_thread, thread)
       sleep 0.05
@@ -822,7 +822,7 @@ module Earl
 
       # Speed up join timeout from 3s to 0.01s
       original_join = blocking_thread.method(:join)
-      blocking_thread.define_singleton_method(:join) { |_timeout = nil| original_join.call(0.01) }
+      stub_singleton(blocking_thread, :join) { |_timeout = nil| original_join.call(0.01) }
 
       definition = build_definition
       state = Earl::HeartbeatScheduler::HeartbeatState.new(
@@ -877,8 +877,8 @@ module Earl
       scheduler = build_scheduler
       error = StandardError.new("no trace")
 
-      scheduler.define_singleton_method(:check_for_reload) { raise error }
-      scheduler.define_singleton_method(:check_and_dispatch) {}
+      stub_singleton(scheduler, :check_for_reload) { raise error }
+      stub_singleton(scheduler, :check_and_dispatch) {}
 
       control = scheduler.instance_variable_get(:@control)
       control.stop_requested = false
@@ -907,12 +907,12 @@ module Earl
     def build_mock_mattermost(posted: [])
       pstd = posted
       mock = Object.new
-      mock.define_singleton_method(:create_post) do |channel_id:, message:, root_id: nil|
+      stub_singleton(mock, :create_post) do |channel_id:, message:, root_id: nil|
         pstd << { channel_id: channel_id, message: message, root_id: root_id }
         { "id" => "header-post-1" }
       end
-      mock.define_singleton_method(:send_typing) { |**_args| }
-      mock.define_singleton_method(:update_post) { |**_args| }
+      stub_singleton(mock, :send_typing) { |**_args| }
+      stub_singleton(mock, :update_post) { |**_args| }
       mock
     end
 
@@ -937,15 +937,15 @@ module Earl
 
     def empty_config
       mock = Object.new
-      mock.define_singleton_method(:definitions) { [] }
-      mock.define_singleton_method(:path) { "/tmp/nonexistent-heartbeats.yml" }
+      stub_singleton(mock, :definitions) { [] }
+      stub_singleton(mock, :path) { "/tmp/nonexistent-heartbeats.yml" }
       mock
     end
 
     def empty_config_with_path
       mock = Object.new
-      mock.define_singleton_method(:definitions) { [] }
-      mock.define_singleton_method(:path) { "/tmp/nonexistent-heartbeats.yml" }
+      stub_singleton(mock, :definitions) { [] }
+      stub_singleton(mock, :path) { "/tmp/nonexistent-heartbeats.yml" }
       mock
     end
   end

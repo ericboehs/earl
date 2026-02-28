@@ -157,7 +157,7 @@ module Earl
       test "run creates window when confirmation is approved" do
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
-          @handler.define_singleton_method(:request_run_confirmation) { |_| :approved }
+          stub_singleton(@handler, :request_run_confirmation) { |_| :approved }
 
           result = @handler.call("manage_pearl_agents", {
                                    "action" => "run", "agent" => "code", "prompt" => "fix tests"
@@ -176,7 +176,7 @@ module Earl
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
           @tmux.session_exists_result = false
-          @handler.define_singleton_method(:request_run_confirmation) { |_| :approved }
+          stub_singleton(@handler, :request_run_confirmation) { |_| :approved }
 
           @handler.call("manage_pearl_agents", {
                           "action" => "run", "agent" => "code", "prompt" => "fix tests"
@@ -190,7 +190,7 @@ module Earl
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
           @tmux.session_exists_result = true
-          @handler.define_singleton_method(:request_run_confirmation) { |_| :approved }
+          stub_singleton(@handler, :request_run_confirmation) { |_| :approved }
 
           @handler.call("manage_pearl_agents", {
                           "action" => "run", "agent" => "code", "prompt" => "fix tests"
@@ -203,7 +203,7 @@ module Earl
       test "run returns denied message when confirmation is rejected" do
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
-          @handler.define_singleton_method(:request_run_confirmation) { |_| :denied }
+          stub_singleton(@handler, :request_run_confirmation) { |_| :denied }
 
           result = @handler.call("manage_pearl_agents", {
                                    "action" => "run", "agent" => "code", "prompt" => "fix tests"
@@ -218,7 +218,7 @@ module Earl
       test "run returns error when confirmation fails" do
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
-          @handler.define_singleton_method(:request_run_confirmation) { |_| :error }
+          stub_singleton(@handler, :request_run_confirmation) { |_| :error }
 
           result = @handler.call("manage_pearl_agents", {
                                    "action" => "run", "agent" => "code", "prompt" => "fix tests"
@@ -232,7 +232,7 @@ module Earl
       test "run persists session info with full target name" do
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
-          @handler.define_singleton_method(:request_run_confirmation) { |_| :approved }
+          stub_singleton(@handler, :request_run_confirmation) { |_| :approved }
 
           @handler.call("manage_pearl_agents", {
                           "action" => "run", "agent" => "code", "prompt" => "fix tests"
@@ -248,7 +248,7 @@ module Earl
       test "run result includes monitor instructions" do
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
-          @handler.define_singleton_method(:request_run_confirmation) { |_| :approved }
+          stub_singleton(@handler, :request_run_confirmation) { |_| :approved }
 
           result = @handler.call("manage_pearl_agents", {
                                    "action" => "run", "agent" => "code", "prompt" => "fix tests"
@@ -292,7 +292,7 @@ module Earl
           log_dir = File.join(tmpdir, "pearl-logs")
           FileUtils.mkdir_p(log_dir)
           File.write(File.join(log_dir, "code-ab12.log"), "Log output here")
-          @handler.define_singleton_method(:pearl_log_dir) { log_dir }
+          stub_singleton(@handler, :pearl_log_dir) { log_dir }
 
           result = @handler.call("manage_pearl_agents", {
                                    "action" => "status", "target" => "pearl-agents:code-ab12"
@@ -309,7 +309,7 @@ module Earl
         Dir.mktmpdir do |tmpdir|
           log_dir = File.join(tmpdir, "pearl-logs")
           FileUtils.mkdir_p(log_dir)
-          @handler.define_singleton_method(:pearl_log_dir) { log_dir }
+          stub_singleton(@handler, :pearl_log_dir) { log_dir }
 
           result = @handler.call("manage_pearl_agents", {
                                    "action" => "status", "target" => "pearl-agents:code-ab12"
@@ -438,7 +438,7 @@ module Earl
       end
 
       test "wait_for_confirmation returns error when websocket connection fails" do
-        @handler.define_singleton_method(:connect_websocket) { nil }
+        stub_singleton(@handler, :connect_websocket) { nil }
         result = @handler.send(:wait_for_confirmation, "post-123")
         assert_equal :error, result
       end
@@ -448,7 +448,7 @@ module Earl
         mock_ws = build_mock_websocket
 
         pong_sent = false
-        mock_ws.define_singleton_method(:send) do |_data, **kwargs|
+        stub_singleton(mock_ws, :send) do |_data, **kwargs|
           pong_sent = true if kwargs[:type] == :pong
         end
 
@@ -574,14 +574,14 @@ module Earl
       # --- find_agents_dir / pearl_agents_repo ---
 
       test "find_agents_dir returns nil when pearl_agents_repo is nil" do
-        @handler.define_singleton_method(:pearl_agents_repo) { nil }
+        stub_singleton(@handler, :pearl_agents_repo) { nil }
         result = @handler.send(:find_agents_dir)
         assert_nil result
       end
 
       test "find_agents_dir returns nil when agents dir does not exist" do
         Dir.mktmpdir do |tmpdir|
-          @handler.define_singleton_method(:pearl_agents_repo) { tmpdir }
+          stub_singleton(@handler, :pearl_agents_repo) { tmpdir }
           result = @handler.send(:find_agents_dir)
           assert_nil result
         end
@@ -591,14 +591,14 @@ module Earl
         Dir.mktmpdir do |tmpdir|
           agents_dir = File.join(tmpdir, "agents")
           FileUtils.mkdir_p(agents_dir)
-          @handler.define_singleton_method(:pearl_agents_repo) { tmpdir }
+          stub_singleton(@handler, :pearl_agents_repo) { tmpdir }
           result = @handler.send(:find_agents_dir)
           assert_equal agents_dir, result
         end
       end
 
       test "pearl_agents_repo returns nil when resolve_pearl_bin is nil" do
-        @handler.define_singleton_method(:resolve_pearl_bin) { nil }
+        stub_singleton(@handler, :resolve_pearl_bin) { nil }
         result = @handler.send(:pearl_agents_repo)
         assert_nil result
       end
@@ -608,7 +608,7 @@ module Earl
           pearl_bin = File.join(tmpdir, "bin", "pearl")
           FileUtils.mkdir_p(File.dirname(pearl_bin))
           File.write(pearl_bin, "#!/bin/bash\n")
-          @handler.define_singleton_method(:resolve_pearl_bin) { pearl_bin }
+          stub_singleton(@handler, :resolve_pearl_bin) { pearl_bin }
           result = @handler.send(:pearl_agents_repo)
           assert_nil result
         end
@@ -621,7 +621,7 @@ module Earl
           FileUtils.mkdir_p(File.dirname(pearl_bin))
           FileUtils.mkdir_p(agents_dir)
           File.write(pearl_bin, "#!/bin/bash\n")
-          @handler.define_singleton_method(:resolve_pearl_bin) { pearl_bin }
+          stub_singleton(@handler, :resolve_pearl_bin) { pearl_bin }
           result = @handler.send(:pearl_agents_repo)
           assert_equal tmpdir, result
         end
@@ -679,8 +679,8 @@ module Earl
       test "handle_run catches Tmux::Error and returns error text" do
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
-          @handler.define_singleton_method(:request_run_confirmation) { |_| :approved }
-          @tmux.define_singleton_method(:create_window) do |**_kwargs|
+          stub_singleton(@handler, :request_run_confirmation) { |_| :approved }
+          stub_singleton(@tmux, :create_window) do |**_kwargs|
             raise Earl::Tmux::Error, "tmux not available"
           end
 
@@ -694,7 +694,7 @@ module Earl
 
       test "validate_agent_exists returns nil when agents_dir is nil" do
         stub_pearl_bin("/usr/local/bin/pearl")
-        @handler.define_singleton_method(:find_agents_dir) { nil }
+        stub_singleton(@handler, :find_agents_dir) { nil }
         result = @handler.send(:validate_agent_exists, "code")
         assert_nil result
       end
@@ -724,7 +724,7 @@ module Earl
         Dir.mktmpdir do |tmpdir|
           log_dir = File.join(tmpdir, "pearl-logs")
           FileUtils.mkdir_p(log_dir)
-          @handler.define_singleton_method(:pearl_log_dir) { log_dir }
+          stub_singleton(@handler, :pearl_log_dir) { log_dir }
 
           result = @handler.call("manage_pearl_agents", {
                                    "action" => "status", "target" => "pearl-agents"
@@ -763,7 +763,7 @@ module Earl
 
       test "close_websocket handles IOError during close" do
         ws = Object.new
-        ws.define_singleton_method(:close) { raise IOError, "broken" }
+        stub_singleton(ws, :close) { raise IOError, "broken" }
         assert_nothing_raised do
           @handler.send(:close_websocket, ws)
         end
@@ -771,28 +771,28 @@ module Earl
 
       test "parse_reaction_event returns nil for empty data" do
         msg = Object.new
-        msg.define_singleton_method(:data) { "" }
+        stub_singleton(msg, :data) { "" }
         result = @handler.send(:parse_reaction_event, msg)
         assert_nil result
       end
 
       test "parse_reaction_event returns nil for nil data" do
         msg = Object.new
-        msg.define_singleton_method(:data) { nil }
+        stub_singleton(msg, :data) { nil }
         result = @handler.send(:parse_reaction_event, msg)
         assert_nil result
       end
 
       test "parse_reaction_event returns nil for non-reaction events" do
         msg = Object.new
-        msg.define_singleton_method(:data) { JSON.generate({ "event" => "posted", "data" => {} }) }
+        stub_singleton(msg, :data) { JSON.generate({ "event" => "posted", "data" => {} }) }
         result = @handler.send(:parse_reaction_event, msg)
         assert_nil result
       end
 
       test "parse_reaction_event returns nil for unparsable JSON" do
         msg = Object.new
-        msg.define_singleton_method(:data) { "not valid json" }
+        stub_singleton(msg, :data) { "not valid json" }
         result = @handler.send(:parse_reaction_event, msg)
         assert_nil result
       end
@@ -801,7 +801,7 @@ module Earl
         reaction = JSON.generate({ "post_id" => "p1", "emoji_name" => "+1" })
         msg = Object.new
         event = JSON.generate({ "event" => "reaction_added", "data" => { "reaction" => reaction } })
-        msg.define_singleton_method(:data) { event }
+        stub_singleton(msg, :data) { event }
         result = @handler.send(:parse_reaction_event, msg)
         assert_equal "p1", result["post_id"]
       end
@@ -809,7 +809,7 @@ module Earl
       test "parse_reaction_event handles nil nested reaction" do
         msg = Object.new
         event = JSON.generate({ "event" => "reaction_added", "data" => {} })
-        msg.define_singleton_method(:data) { event }
+        stub_singleton(msg, :data) { event }
         result = @handler.send(:parse_reaction_event, msg)
         assert_equal({}, result)
       end
@@ -817,7 +817,7 @@ module Earl
       test "enqueue_reaction swallows errors" do
         handler = build_handler_with_api(post_success: true)
         ctx = Object.new
-        ctx.define_singleton_method(:enqueue) { |_| raise StandardError, "boom" }
+        stub_singleton(ctx, :enqueue) { |_| raise StandardError, "boom" }
         msg = Object.new
         assert_nothing_raised do
           handler.send(:enqueue_reaction, ctx, msg)
@@ -825,7 +825,7 @@ module Earl
       end
 
       test "wait_for_confirmation returns error on unexpected exception" do
-        @handler.define_singleton_method(:connect_websocket) do
+        stub_singleton(@handler, :connect_websocket) do
           raise StandardError, "unexpected"
         end
         result = @handler.send(:wait_for_confirmation, "post-123")
@@ -869,12 +869,12 @@ module Earl
       test "allowed_reactor returns false when API call fails" do
         config = build_mock_config(allowed_users: %w[alice])
         api = Object.new
-        api.define_singleton_method(:post) { |_path, _body| nil }
-        api.define_singleton_method(:delete) { |_path| nil }
-        api.define_singleton_method(:get) do |_path|
+        stub_singleton(api, :post) { |_path, _body| nil }
+        stub_singleton(api, :delete) { |_path| nil }
+        stub_singleton(api, :get) do |_path|
           response = Object.new
-          response.define_singleton_method(:body) { "{}" }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { "{}" }
+          stub_singleton(response, :is_a?) do |klass|
             Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -891,15 +891,15 @@ module Earl
 
       test "add_reaction_options logs warning on reaction failure" do
         api = Object.new
-        api.define_singleton_method(:post) do |_path, _body|
+        stub_singleton(api, :post) do |_path, _body|
           response = Object.new
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :is_a?) do |klass|
             Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
         end
-        api.define_singleton_method(:delete) { |_path| nil }
-        api.define_singleton_method(:get) { |_path| nil }
+        stub_singleton(api, :delete) { |_path| nil }
+        stub_singleton(api, :get) { |_path| nil }
         handler = Earl::Mcp::PearlHandler.new(
           config: @config, api_client: api,
           tmux_store: @tmux_store, tmux_adapter: @tmux
@@ -911,9 +911,9 @@ module Earl
 
       test "add_reaction_options handles IOError" do
         api = Object.new
-        api.define_singleton_method(:post) { |_path, _body| raise IOError, "connection reset" }
-        api.define_singleton_method(:delete) { |_path| nil }
-        api.define_singleton_method(:get) { |_path| nil }
+        stub_singleton(api, :post) { |_path, _body| raise IOError, "connection reset" }
+        stub_singleton(api, :delete) { |_path| nil }
+        stub_singleton(api, :get) { |_path| nil }
         handler = Earl::Mcp::PearlHandler.new(
           config: @config, api_client: api,
           tmux_store: @tmux_store, tmux_adapter: @tmux
@@ -925,9 +925,9 @@ module Earl
 
       test "delete_confirmation_post handles errors gracefully" do
         api = Object.new
-        api.define_singleton_method(:post) { |_path, _body| nil }
-        api.define_singleton_method(:delete) { |_path| raise StandardError, "delete failed" }
-        api.define_singleton_method(:get) { |_path| nil }
+        stub_singleton(api, :post) { |_path, _body| nil }
+        stub_singleton(api, :delete) { |_path| raise StandardError, "delete failed" }
+        stub_singleton(api, :get) { |_path| nil }
         handler = Earl::Mcp::PearlHandler.new(
           config: @config, api_client: api,
           tmux_store: @tmux_store, tmux_adapter: @tmux
@@ -941,9 +941,9 @@ module Earl
 
       test "post_confirmation_request returns nil on IOError" do
         api = Object.new
-        api.define_singleton_method(:post) { |_path, _body| raise IOError, "broken pipe" }
-        api.define_singleton_method(:delete) { |_path| nil }
-        api.define_singleton_method(:get) { |_path| nil }
+        stub_singleton(api, :post) { |_path, _body| raise IOError, "broken pipe" }
+        stub_singleton(api, :delete) { |_path| nil }
+        stub_singleton(api, :get) { |_path| nil }
         handler = Earl::Mcp::PearlHandler.new(
           config: @config, api_client: api,
           tmux_store: @tmux_store, tmux_adapter: @tmux
@@ -1041,18 +1041,18 @@ module Earl
       def build_mock_config(allowed_users: [])
         config = Object.new
         users = allowed_users
-        config.define_singleton_method(:platform_channel_id) { "channel-123" }
-        config.define_singleton_method(:platform_thread_id) { "thread-123" }
-        config.define_singleton_method(:platform_bot_id) { "bot-123" }
-        config.define_singleton_method(:permission_timeout_ms) { 120_000 }
-        config.define_singleton_method(:websocket_url) { "wss://mm.example.com/api/v4/websocket" }
-        config.define_singleton_method(:platform_token) { "mock-token" }
-        config.define_singleton_method(:allowed_users) { users }
+        stub_singleton(config, :platform_channel_id) { "channel-123" }
+        stub_singleton(config, :platform_thread_id) { "thread-123" }
+        stub_singleton(config, :platform_bot_id) { "bot-123" }
+        stub_singleton(config, :permission_timeout_ms) { 120_000 }
+        stub_singleton(config, :websocket_url) { "wss://mm.example.com/api/v4/websocket" }
+        stub_singleton(config, :platform_token) { "mock-token" }
+        stub_singleton(config, :allowed_users) { users }
         config
       end
 
       def stub_pearl_bin(path)
-        @handler.define_singleton_method(:resolve_pearl_bin) { path }
+        stub_singleton(@handler, :resolve_pearl_bin) { path }
       end
 
       def with_agents_dir
@@ -1087,35 +1087,35 @@ module Earl
         psts = tracked_posts
 
         if post_success
-          api.define_singleton_method(:post) do |path, body|
+          stub_singleton(api, :post) do |path, body|
             psts << { path: path, body: body }
             response = Object.new
-            response.define_singleton_method(:body) { JSON.generate({ "id" => "spawn-post-1" }) }
-            response.define_singleton_method(:is_a?) do |klass|
+            stub_singleton(response, :body) { JSON.generate({ "id" => "spawn-post-1" }) }
+            stub_singleton(response, :is_a?) do |klass|
               klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
             end
             response
           end
         else
-          api.define_singleton_method(:post) do |path, body|
+          stub_singleton(api, :post) do |path, body|
             psts << { path: path, body: body }
             response = Object.new
-            response.define_singleton_method(:body) { '{"error":"fail"}' }
-            response.define_singleton_method(:is_a?) do |klass|
+            stub_singleton(response, :body) { '{"error":"fail"}' }
+            stub_singleton(response, :is_a?) do |klass|
               Object.instance_method(:is_a?).bind_call(self, klass)
             end
             response
           end
         end
 
-        api.define_singleton_method(:delete) { |_path| Object.new }
+        stub_singleton(api, :delete) { |_path| Object.new }
 
-        api.define_singleton_method(:get) do |path|
+        stub_singleton(api, :get) do |path|
           response = Object.new
           username = path.include?("alice-uid") ? "alice" : "bob"
           uname = username
-          response.define_singleton_method(:body) { JSON.generate({ "id" => "user-1", "username" => uname }) }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { JSON.generate({ "id" => "user-1", "username" => uname }) }
+          stub_singleton(response, :is_a?) do |klass|
             klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -1126,7 +1126,7 @@ module Earl
           tmux_store: @tmux_store, tmux_adapter: @tmux
         )
 
-        handler.define_singleton_method(:dequeue_reaction) do |queue|
+        stub_singleton(handler, :dequeue_reaction) do |queue|
           queue.pop(true)
         rescue ThreadError
           sleep 0.01
@@ -1139,20 +1139,20 @@ module Earl
       def build_mock_websocket
         ws = Object.new
         ws.instance_variable_set(:@handlers, {})
-        ws.define_singleton_method(:on) do |event, &block|
+        stub_singleton(ws, :on) do |event, &block|
           @handlers[event] = block
         end
-        ws.define_singleton_method(:close) {}
-        ws.define_singleton_method(:send) { |*_args, **_kwargs| nil }
-        ws.define_singleton_method(:fire_message) do |data, type: :text|
+        stub_singleton(ws, :close) {}
+        stub_singleton(ws, :send) { |*_args, **_kwargs| nil }
+        stub_singleton(ws, :fire_message) do |data, type: :text|
           handler = @handlers[:message]
           return unless handler
 
           msg_type = type
           msg = Object.new
-          msg.define_singleton_method(:type) { msg_type }
-          msg.define_singleton_method(:data) { data }
-          msg.define_singleton_method(:empty?) { data.nil? || data.empty? }
+          stub_singleton(msg, :type) { msg_type }
+          stub_singleton(msg, :data) { data }
+          stub_singleton(msg, :empty?) { data.nil? || data.empty? }
           handler.call(msg)
         end
         ws

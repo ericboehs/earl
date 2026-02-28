@@ -79,7 +79,7 @@ module Earl
       success = mock_status(true)
       failure = mock_status(false)
 
-      Open3.define_singleton_method(:capture2e) do |*args|
+      stub_singleton(Open3, :capture2e) do |*args|
         if args.include?("alive")
           ["", success]
         else
@@ -97,7 +97,7 @@ module Earl
       @store.save(build_info(name: "alive"))
 
       success = mock_status(true)
-      Open3.define_singleton_method(:capture2e) do |*_args|
+      stub_singleton(Open3, :capture2e) do |*_args|
         ["", success]
       end
 
@@ -259,7 +259,7 @@ module Earl
       @store.save(build_info(name: "alive-2"))
 
       success = mock_status(true)
-      Open3.define_singleton_method(:capture2e) { |*_args| ["", success] }
+      stub_singleton(Open3, :capture2e) { |*_args| ["", success] }
 
       dead = @store.cleanup!
       assert_empty dead
@@ -284,7 +284,7 @@ module Earl
       # Force the struct creation to fail with ArgumentError by writing
       # JSON that passes parsing but fails member construction
       original_new = Earl::TmuxSessionStore::TmuxSessionInfo.method(:new)
-      Earl::TmuxSessionStore::TmuxSessionInfo.define_singleton_method(:new) do |**_kwargs|
+      stub_singleton(Earl::TmuxSessionStore::TmuxSessionInfo, :new) do |**_kwargs|
         raise ArgumentError, "bad struct member"
       end
 
@@ -296,7 +296,7 @@ module Earl
       backups = Dir.glob("#{@store_path}.corrupt.*")
       assert_equal 1, backups.size
     ensure
-      Earl::TmuxSessionStore::TmuxSessionInfo.define_singleton_method(:new) do |**kwargs|
+      stub_singleton(Earl::TmuxSessionStore::TmuxSessionInfo, :new) do |**kwargs|
         original_new.call(**kwargs)
       end
     end
@@ -307,7 +307,7 @@ module Earl
 
       # Stub File.rename to raise, simulating a filesystem error
       original_rename = File.method(:rename)
-      File.define_singleton_method(:rename) { |*_args| raise Errno::ENOSPC, "no space" }
+      stub_singleton(File, :rename) { |*_args| raise Errno::ENOSPC, "no space" }
 
       store.save(build_info(name: "session-2"))
 
@@ -315,7 +315,7 @@ module Earl
       tmp_files = Dir.glob("#{@store_path}.tmp.*")
       assert_empty tmp_files
     ensure
-      File.define_singleton_method(:rename) do |*args|
+      stub_singleton(File, :rename) do |*args|
         original_rename.call(*args)
       end
     end
@@ -354,13 +354,13 @@ module Earl
 
     def mock_status(success)
       status = Object.new
-      status.define_singleton_method(:success?) { success }
+      stub_singleton(status, :success?) { success }
       status
     end
 
     def restore_open3
       original = @original_capture2e
-      Open3.define_singleton_method(:capture2e) { |*args| original.call(*args) }
+      stub_singleton(Open3, :capture2e) { |*args| original.call(*args) }
     end
   end
 end

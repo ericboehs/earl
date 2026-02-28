@@ -278,8 +278,7 @@ module Earl
 
     test "stats tracks time to first token" do
       session = Earl::ClaudeSession.new
-      text_received = nil
-      session.on_text { |text| text_received = text }
+      session.on_text { |_text| }
 
       # Simulate send_message timing
       session.stats.message_sent_at = Time.now - 1.5
@@ -1322,6 +1321,98 @@ module Earl
       session.stats.turn_output_tokens = nil
 
       assert_nil session.stats.tokens_per_second
+    end
+
+    # --- content_preview branch: Array content ---
+
+    test "content_preview returns block count for Array content" do
+      session = Earl::ClaudeSession.new
+      content = [{ "type" => "text", "text" => "hello" }, { "type" => "image" }]
+      result = session.send(:content_preview, content)
+      assert_equal "[2 content blocks]", result
+    end
+
+    # --- handle_user_event branch: non-Array content ---
+
+    test "handle_user_event skips non-Array content" do
+      session = Earl::ClaudeSession.new
+      called = false
+      session.on_tool_result { |_result| called = true }
+
+      event = { "type" => "user", "message" => { "content" => "plain string" } }
+      session.send(:handle_event, event)
+
+      assert_not called
+    end
+
+    test "handle_user_event skips nil content" do
+      session = Earl::ClaudeSession.new
+      called = false
+      session.on_tool_result { |_result| called = true }
+
+      event = { "type" => "user", "message" => {} }
+      session.send(:handle_event, event)
+
+      assert_not called
+    end
+
+    # --- emit_tool_result_images branch: items without tool_result type ---
+
+    test "emit_tool_result_images skips non-tool_result items" do
+      session = Earl::ClaudeSession.new
+      called = false
+      session.on_tool_result { |_result| called = true }
+
+      event = {
+        "type" => "user",
+        "message" => {
+          "content" => [
+            { "type" => "text", "text" => "just text" },
+            { "type" => "image", "source" => {} }
+          ]
+        }
+      }
+      session.send(:handle_event, event)
+
+      assert_not called
+    end
+
+    # --- emit_images_from_result branch: non-Array nested content ---
+
+    test "emit_images_from_result skips tool_result with non-Array content" do
+      session = Earl::ClaudeSession.new
+      called = false
+      session.on_tool_result { |_result| called = true }
+
+      event = {
+        "type" => "user",
+        "message" => {
+          "content" => [
+            { "type" => "tool_result", "content" => "plain string result" }
+          ]
+        }
+      }
+      session.send(:handle_event, event)
+
+      assert_not called
+    end
+
+    test "emit_images_from_result skips tool_result with nil content" do
+      session = Earl::ClaudeSession.new
+      called = false
+      session.on_tool_result { |_result| called = true }
+
+      event = {
+        "type" => "user",
+        "message" => {
+          "content" => [
+            { "type" => "tool_result" }
+          ]
+        }
+      }
+      session.send(:handle_event, event)
+
+      assert_not called
     end
 
     private

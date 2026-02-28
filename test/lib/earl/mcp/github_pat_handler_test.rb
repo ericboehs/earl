@@ -15,7 +15,7 @@ module Earl
 
         # Skip the sleep 2 in run_safari_automation (page load wait) for tests
         safari = @safari
-        @handler.define_singleton_method(:run_safari_automation) do |request|
+        stub_singleton(@handler, :run_safari_automation) do |request|
           safari.navigate("https://github.com/settings/personal-access-tokens/new")
           safari.fill_token_name(request.name)
           safari.apply_expiration(request.expiration)
@@ -172,7 +172,7 @@ module Earl
       # --- permission normalization ---
 
       test "create normalizes permission access levels to lowercase" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.extract_token_result = "github_pat_test"
 
         args = valid_create_args.merge("permissions" => { "contents" => "Write" })
@@ -185,7 +185,7 @@ module Earl
       # --- expiration validation ---
 
       test "create returns error when expiration_days is zero" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
 
         args = valid_create_args.merge("expiration_days" => 0)
         result = @handler.call("manage_github_pats", args)
@@ -194,7 +194,7 @@ module Earl
       end
 
       test "create returns error when expiration_days is negative" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
 
         args = valid_create_args.merge("expiration_days" => -30)
         result = @handler.call("manage_github_pats", args)
@@ -203,7 +203,7 @@ module Earl
       end
 
       test "create returns error when expiration_days is non-numeric string" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
 
         args = valid_create_args.merge("expiration_days" => "abc")
         result = @handler.call("manage_github_pats", args)
@@ -214,7 +214,7 @@ module Earl
       # --- create approval flow ---
 
       test "create returns denied when confirmation is rejected" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :denied }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :denied }
 
         result = @handler.call("manage_github_pats", valid_create_args)
         text = result[:content].first[:text]
@@ -222,7 +222,7 @@ module Earl
       end
 
       test "create returns error when confirmation fails" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :error }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :error }
 
         result = @handler.call("manage_github_pats", valid_create_args)
         text = result[:content].first[:text]
@@ -230,7 +230,7 @@ module Earl
       end
 
       test "create calls safari automation on approval and returns token" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.extract_token_result = "github_pat_ABC123_secret"
 
         result = @handler.call("manage_github_pats", valid_create_args)
@@ -242,7 +242,7 @@ module Earl
       end
 
       test "create returns error when token extraction fails" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.extract_token_result = ""
 
         result = @handler.call("manage_github_pats", valid_create_args)
@@ -251,8 +251,8 @@ module Earl
       end
 
       test "create returns error when token extraction returns nil" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
-        @safari.define_singleton_method(:extract_token) { nil }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
+        stub_singleton(@safari, :extract_token) { nil }
 
         result = @handler.call("manage_github_pats", valid_create_args)
         text = result[:content].first[:text]
@@ -260,7 +260,7 @@ module Earl
       end
 
       test "create returns error when safari automation raises" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.raise_on_navigate = true
 
         result = @handler.call("manage_github_pats", valid_create_args)
@@ -269,7 +269,7 @@ module Earl
       end
 
       test "create uses default 365 day expiration" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.extract_token_result = "github_pat_test"
 
         @handler.call("manage_github_pats", valid_create_args)
@@ -277,7 +277,7 @@ module Earl
       end
 
       test "create uses custom expiration when provided" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.extract_token_result = "github_pat_test"
 
         args = valid_create_args.merge("expiration_days" => 30)
@@ -286,7 +286,7 @@ module Earl
       end
 
       test "create navigates to correct GitHub URL" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.extract_token_result = "github_pat_test"
 
         @handler.call("manage_github_pats", valid_create_args)
@@ -294,7 +294,7 @@ module Earl
       end
 
       test "create sets all requested permissions" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.extract_token_result = "github_pat_test"
 
         args = valid_create_args.merge("permissions" => { "contents" => "write", "issues" => "read" })
@@ -303,7 +303,7 @@ module Earl
       end
 
       test "create calls safari methods in correct order" do
-        @handler.define_singleton_method(:request_create_confirmation) { |_| :approved }
+        stub_singleton(@handler, :request_create_confirmation) { |_| :approved }
         @safari.extract_token_result = "github_pat_test"
 
         @handler.call("manage_github_pats", valid_create_args)
@@ -342,7 +342,7 @@ module Earl
         handler = build_handler_with_api(post_success: true)
         msg = Object.new
         data = JSON.generate({ "event" => "reaction_added", "data" => nil })
-        msg.define_singleton_method(:data) { data }
+        stub_singleton(msg, :data) { data }
         result = handler.send(:extract_reaction, msg)
         assert_equal({}, result)
       end
@@ -351,7 +351,7 @@ module Earl
         handler = build_handler_with_api(post_success: true)
         msg = Object.new
         data = JSON.generate({ "event" => "posted", "data" => {} })
-        msg.define_singleton_method(:data) { data }
+        stub_singleton(msg, :data) { data }
         result = handler.send(:extract_reaction, msg)
         assert_nil result
       end
@@ -359,7 +359,7 @@ module Earl
       test "extract_reaction returns nil for empty data" do
         handler = build_handler_with_api(post_success: true)
         msg = Object.new
-        msg.define_singleton_method(:data) { "" }
+        stub_singleton(msg, :data) { "" }
         result = handler.send(:extract_reaction, msg)
         assert_nil result
       end
@@ -367,7 +367,7 @@ module Earl
       test "extract_reaction returns nil for nil data" do
         handler = build_handler_with_api(post_success: true)
         msg = Object.new
-        msg.define_singleton_method(:data) { nil }
+        stub_singleton(msg, :data) { nil }
         result = handler.send(:extract_reaction, msg)
         assert_nil result
       end
@@ -375,7 +375,7 @@ module Earl
       test "extract_reaction returns nil for invalid JSON" do
         handler = build_handler_with_api(post_success: true)
         msg = Object.new
-        msg.define_singleton_method(:data) { "not json{{{" }
+        stub_singleton(msg, :data) { "not json{{{" }
         result = handler.send(:extract_reaction, msg)
         assert_nil result
       end
@@ -383,8 +383,8 @@ module Earl
       test "extract_http_status returns code for HTTPResponse" do
         handler = build_handler_with_api(post_success: true)
         response = Object.new
-        response.define_singleton_method(:code) { "200" }
-        response.define_singleton_method(:is_a?) do |klass|
+        stub_singleton(response, :code) { "200" }
+        stub_singleton(response, :is_a?) do |klass|
           klass == Net::HTTPResponse || Object.instance_method(:is_a?).bind_call(self, klass)
         end
         result = handler.send(:extract_http_status, response)
@@ -422,7 +422,7 @@ module Earl
         handler = build_handler_with_api(post_success: true)
         api = handler.instance_variable_get(:@api)
         deletes = []
-        api.define_singleton_method(:delete) { |path| deletes << path }
+        stub_singleton(api, :delete) { |path| deletes << path }
         handler.send(:delete_confirmation_post, "post-1")
         assert_equal ["/posts/post-1"], deletes
       end
@@ -549,7 +549,7 @@ module Earl
       test "allowed_reactor? returns false when user lookup fails" do
         config = build_mock_config(allowed_users: %w[alice])
         api = Object.new
-        api.define_singleton_method(:get) { |_| raise IOError, "connection reset" }
+        stub_singleton(api, :get) { |_| raise IOError, "connection reset" }
         handler = Earl::Mcp::GithubPatHandler.new(
           config: config, api_client: api, safari_adapter: @safari
         )
@@ -557,7 +557,7 @@ module Earl
       end
 
       test "wait_for_confirmation returns error when websocket connection fails" do
-        @handler.define_singleton_method(:connect_websocket) { nil }
+        stub_singleton(@handler, :connect_websocket) { nil }
         result = @handler.send(:wait_for_confirmation, "post-123")
         assert_equal :error, result
       end
@@ -571,11 +571,11 @@ module Earl
       test "request_create_confirmation cleans up confirmation post via ensure" do
         posts = []
         handler = build_handler_with_api(post_success: true, posts: posts)
-        handler.define_singleton_method(:wait_for_confirmation) { |_| :denied }
+        stub_singleton(handler, :wait_for_confirmation) { |_| :denied }
 
         api = handler.instance_variable_get(:@api)
         deletes = []
-        api.define_singleton_method(:delete) { |path| deletes << path }
+        stub_singleton(api, :delete) { |path| deletes << path }
 
         handler.send(:request_create_confirmation, sample_pat_request)
         assert_equal ["/posts/pat-post-1"], deletes
@@ -585,10 +585,10 @@ module Earl
 
       test "SafariAutomation.execute_js raises Error when osascript fails" do
         original = Open3.method(:capture2e)
-        Open3.define_singleton_method(:capture2e) do |*_args|
+        stub_singleton(Open3, :capture2e) do |*_args|
           status = Object.new
-          status.define_singleton_method(:success?) { false }
-          status.define_singleton_method(:exitstatus) { 1 }
+          stub_singleton(status, :success?) { false }
+          stub_singleton(status, :exitstatus) { 1 }
           ["error output", status]
         end
 
@@ -598,21 +598,21 @@ module Earl
         assert_includes error.message, "osascript failed"
         assert_includes error.message, "exit 1"
       ensure
-        Open3.define_singleton_method(:capture2e, original)
+        stub_singleton(Open3, :capture2e, &original)
       end
 
       test "SafariAutomation.execute_js returns output on success" do
         original = Open3.method(:capture2e)
-        Open3.define_singleton_method(:capture2e) do |*_args|
+        stub_singleton(Open3, :capture2e) do |*_args|
           status = Object.new
-          status.define_singleton_method(:success?) { true }
+          stub_singleton(status, :success?) { true }
           ["OK\n", status]
         end
 
         result = Earl::SafariAutomation.execute_js("good script")
         assert_equal "OK\n", result
       ensure
-        Open3.define_singleton_method(:capture2e, original)
+        stub_singleton(Open3, :capture2e, &original)
       end
 
       test "SafariAutomation.check_result! raises on NOT_FOUND" do
@@ -751,13 +751,13 @@ module Earl
       def build_mock_config(allowed_users: [])
         config = Object.new
         users = allowed_users
-        config.define_singleton_method(:platform_channel_id) { "channel-123" }
-        config.define_singleton_method(:platform_thread_id) { "thread-123" }
-        config.define_singleton_method(:platform_bot_id) { "bot-123" }
-        config.define_singleton_method(:permission_timeout_ms) { 120_000 }
-        config.define_singleton_method(:websocket_url) { "wss://mm.example.com/api/v4/websocket" }
-        config.define_singleton_method(:platform_token) { "mock-token" }
-        config.define_singleton_method(:allowed_users) { users }
+        stub_singleton(config, :platform_channel_id) { "channel-123" }
+        stub_singleton(config, :platform_thread_id) { "thread-123" }
+        stub_singleton(config, :platform_bot_id) { "bot-123" }
+        stub_singleton(config, :permission_timeout_ms) { 120_000 }
+        stub_singleton(config, :websocket_url) { "wss://mm.example.com/api/v4/websocket" }
+        stub_singleton(config, :platform_token) { "mock-token" }
+        stub_singleton(config, :allowed_users) { users }
         config
       end
 
@@ -770,35 +770,35 @@ module Earl
         safari = @safari
 
         if post_success
-          api.define_singleton_method(:post) do |path, body|
+          stub_singleton(api, :post) do |path, body|
             psts << { path: path, body: body }
             response = Object.new
-            response.define_singleton_method(:body) { JSON.generate({ "id" => "pat-post-1" }) }
-            response.define_singleton_method(:is_a?) do |klass|
+            stub_singleton(response, :body) { JSON.generate({ "id" => "pat-post-1" }) }
+            stub_singleton(response, :is_a?) do |klass|
               klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
             end
             response
           end
         else
-          api.define_singleton_method(:post) do |path, body|
+          stub_singleton(api, :post) do |path, body|
             psts << { path: path, body: body }
             response = Object.new
-            response.define_singleton_method(:body) { '{"error":"fail"}' }
-            response.define_singleton_method(:is_a?) do |klass|
+            stub_singleton(response, :body) { '{"error":"fail"}' }
+            stub_singleton(response, :is_a?) do |klass|
               Object.instance_method(:is_a?).bind_call(self, klass)
             end
             response
           end
         end
 
-        api.define_singleton_method(:delete) { |_path| Object.new }
+        stub_singleton(api, :delete) { |_path| Object.new }
 
-        api.define_singleton_method(:get) do |path|
+        stub_singleton(api, :get) do |path|
           response = Object.new
           username = path.include?("alice-uid") ? "alice" : "bob"
           uname = username
-          response.define_singleton_method(:body) { JSON.generate({ "id" => "user-1", "username" => uname }) }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { JSON.generate({ "id" => "user-1", "username" => uname }) }
+          stub_singleton(response, :is_a?) do |klass|
             klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
           end
           response
@@ -809,7 +809,7 @@ module Earl
         )
 
         # Speed up dequeue_reaction poll sleep from 0.5s to 0.01s for tests
-        handler.define_singleton_method(:dequeue_reaction) do |queue|
+        stub_singleton(handler, :dequeue_reaction) do |queue|
           queue.pop(true)
         rescue ThreadError
           sleep 0.01
@@ -828,7 +828,7 @@ module Earl
         event_json = JSON.generate({ "event" => "reaction_added", "data" => { "reaction" => reaction_json } })
         msg = Object.new
         data = event_json
-        msg.define_singleton_method(:data) { data }
+        stub_singleton(msg, :data) { data }
         mock_ws.emit(:message, msg)
       end
     end

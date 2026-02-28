@@ -189,8 +189,8 @@ module Earl
 
         def stub_download(file_id, body)
           response = Object.new
-          response.define_singleton_method(:body) { body }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { body }
+          stub_singleton(response, :is_a?) do |klass|
             klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
           end
           @downloads[file_id] = response
@@ -198,9 +198,9 @@ module Earl
 
         def stub_download_failure(file_id)
           response = Object.new
-          response.define_singleton_method(:body) { "" }
-          response.define_singleton_method(:code) { "500" }
-          response.define_singleton_method(:is_a?) do |klass|
+          stub_singleton(response, :body) { "" }
+          stub_singleton(response, :code) { "500" }
+          stub_singleton(response, :is_a?) do |klass|
             Object.instance_method(:is_a?).bind_call(self, klass)
           end
           @downloads[file_id] = response
