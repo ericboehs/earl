@@ -318,13 +318,17 @@ module Earl
         end
 
         def scan_output_dir(target)
-          window_name = target.split(":").last
-          return [] unless window_name
-
-          dir = File.join(Earl.config_root, "pearl-output", window_name)
-          return [] unless Dir.exist?(dir)
+          dir = output_dir_for_target(target)
+          return [] unless dir && Dir.exist?(dir)
 
           Dir.glob(File.join(dir, "**", IMAGE_EXTENSIONS)).filter_map { |path| build_output_ref(path) }
+        end
+
+        def output_dir_for_target(target)
+          name = target.split(":").last
+          return unless name && !name.include?("/") && !name.include?("..")
+
+          File.join(Earl.config_root, "pearl-output", name)
         end
 
         def build_output_ref(path)
@@ -351,9 +355,11 @@ module Earl
 
           path = File.expand_path(ref.data)
           config = Earl.config_root
-          SAFE_UPLOAD_DIRS.any? { |dir| path.start_with?(dir) } ||
-            path.start_with?(File.join(config, "pearl-images")) ||
-            path.start_with?(File.join(config, "pearl-output"))
+          allowed = SAFE_UPLOAD_DIRS.map { |dir| "#{dir}/" } + [
+            "#{File.join(config, "pearl-images")}/",
+            "#{File.join(config, "pearl-output")}/"
+          ]
+          allowed.any? { |prefix| path.start_with?(prefix) }
         end
 
         def upload_context

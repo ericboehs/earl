@@ -156,7 +156,7 @@ module Earl
         end
 
         def file_part(boundary, upload)
-          safe_name = File.basename(upload.filename).gsub('"', '\\"')
+          safe_name = File.basename(upload.filename).gsub(/[\r\n\t]/, "_").gsub('"', '\\"')
           "--#{boundary}\r\n" \
             "Content-Disposition: form-data; name=\"files\"; filename=\"#{safe_name}\"\r\n" \
             "Content-Type: #{upload.content_type}\r\n\r\n"

@@ -908,6 +908,16 @@ module Earl
         assert_empty refs
       end
 
+      test "scan_output_dir rejects path traversal in target" do
+        refs = @handler.send(:scan_output_dir, "pearl-agents:../../etc")
+        assert_empty refs
+      end
+
+      test "scan_output_dir rejects slash in window name" do
+        refs = @handler.send(:scan_output_dir, "pearl-agents:code/../../etc")
+        assert_empty refs
+      end
+
       test "scan_output_dir skips empty files" do
         Dir.mktmpdir do |tmpdir|
           Earl.stub(:config_root, tmpdir) do
@@ -927,6 +937,13 @@ module Earl
           source: :file_path, data: pearl_path, media_type: "image/png", filename: "screenshot.png"
         )
         assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? rejects prefix-spoofed paths" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: "/tmp2/evil.png", media_type: "image/png", filename: "evil.png"
+        )
+        refute @handler.send(:safe_upload_path?, ref)
       end
 
       test "RunRequest pearl_command includes PEARL_OUTPUT env when output_dir present" do
