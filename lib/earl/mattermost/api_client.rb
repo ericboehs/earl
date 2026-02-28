@@ -110,24 +110,22 @@ module Earl
         end
 
         def encode_multipart_body(boundary, upload)
-          parts = [
-            field_part(boundary, "channel_id", upload.channel_id),
-            file_part(boundary, upload)
-          ]
-          "#{parts.join}\r\n--#{boundary}--\r\n"
+          [
+            field_part(boundary, upload.channel_id),
+            file_part(boundary, upload),
+            upload.content.b,
+            "\r\n--#{boundary}--\r\n"
+          ].join.b
         end
 
-        def field_part(boundary, name, value)
-          "--#{boundary}\r\n" \
-            "Content-Disposition: form-data; name=\"#{name}\"\r\n\r\n" \
-            "#{value}\r\n"
+        def field_part(boundary, channel_id)
+          "--#{boundary}\r\nContent-Disposition: form-data; name=\"channel_id\"\r\n\r\n#{channel_id}\r\n"
         end
 
         def file_part(boundary, upload)
           "--#{boundary}\r\n" \
             "Content-Disposition: form-data; name=\"files\"; filename=\"#{upload.filename}\"\r\n" \
-            "Content-Type: #{upload.content_type}\r\n\r\n" \
-            "#{upload.content}\r\n"
+            "Content-Type: #{upload.content_type}\r\n\r\n"
         end
       end
 

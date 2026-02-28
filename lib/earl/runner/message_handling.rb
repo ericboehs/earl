@@ -129,7 +129,11 @@ module Earl
         queued = @app_state.message_queue.dequeue(thread_id)
         return unless queued
 
-        msg = queued.is_a?(UserMessage) ? queued : UserMessage.new(thread_id: thread_id, text: queued)
+        msg = if queued.is_a?(UserMessage)
+                queued
+              else
+                UserMessage.new(thread_id: thread_id, text: queued, channel_id: nil, sender_name: nil)
+              end
         process_message(msg)
       end
 
