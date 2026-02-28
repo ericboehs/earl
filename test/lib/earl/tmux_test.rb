@@ -365,6 +365,20 @@ module Earl
       assert_equal 4, cmd.flatten.size
     end
 
+    test "parse_process_entries skips lines with fewer than 3 fields" do
+      output = " 100  1 /usr/bin/zsh\n12345\n\n 200  1 /usr/bin/bash\n"
+
+      entries = Earl::Tmux.send(:parse_process_entries, output)
+      assert_equal 2, entries.size
+      assert_equal "/usr/bin/zsh", entries[0][:comm]
+      assert_equal "/usr/bin/bash", entries[1][:comm]
+    end
+
+    test "parse_process_entries returns empty array for blank output" do
+      entries = Earl::Tmux.send(:parse_process_entries, "")
+      assert_equal [], entries
+    end
+
     private
 
     def mock_status(success)

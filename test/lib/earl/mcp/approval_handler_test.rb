@@ -80,6 +80,26 @@ module Earl
         assert_includes result, "new content"
       end
 
+      test "format_input for Edit falls back to content when new_string missing" do
+        handler = build_handler
+        result = handler.send(:format_input, "Edit", {
+                                "file_path" => "/tmp/foo.rb",
+                                "content" => "fallback content"
+                              })
+
+        assert_includes result, "/tmp/foo.rb"
+        assert_includes result, "fallback content"
+      end
+
+      test "format_input for Edit returns empty when both new_string and content missing" do
+        handler = build_handler
+        result = handler.send(:format_input, "Edit", {
+                                "file_path" => "/tmp/foo.rb"
+                              })
+
+        assert_includes result, "/tmp/foo.rb"
+      end
+
       test "format_input returns file_path for Write tool" do
         handler = build_handler
         result = handler.send(:format_input, "Write", {
@@ -89,6 +109,17 @@ module Earl
 
         assert_includes result, "/tmp/bar.rb"
         assert_includes result, "file content"
+      end
+
+      test "format_input for Write falls back to content when new_string missing" do
+        handler = build_handler
+        result = handler.send(:format_input, "Write", {
+                                "file_path" => "/tmp/bar.rb",
+                                "content" => "write fallback"
+                              })
+
+        assert_includes result, "/tmp/bar.rb"
+        assert_includes result, "write fallback"
       end
 
       test "format_input returns JSON for unknown tool" do
@@ -261,6 +292,59 @@ module Earl
         assert handler.send(:allowed_reactor?, "any-user-id")
       end
 
+      test "allowed_reactor? checks username when allowed_users is not empty" do
+        config = build_mock_config
+        config.define_singleton_method(:allowed_users) { %w[alice] }
+        api = build_mock_api(post_success: true)
+        handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api)
+
+        assert handler.send(:allowed_reactor?, "user-1")
+      end
+
+      test "allowed_reactor? returns false when API call fails" do
+        config = build_mock_config
+        config.define_singleton_method(:allowed_users) { %w[alice] }
+        api = build_mock_api(post_success: true)
+
+        # Override get to return failure
+        api.define_singleton_method(:get) do |_path|
+          response = Object.new
+          response.define_singleton_method(:body) { '{"error":"forbidden"}' }
+          response.define_singleton_method(:code) { "403" }
+          response.define_singleton_method(:is_a?) do |klass|
+            Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+
+        handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api)
+
+        assert_not handler.send(:allowed_reactor?, "user-1")
+      end
+
+      test "safe_close handles IOError from websocket close" do
+        handler = build_handler
+        ws = Object.new
+        ws.define_singleton_method(:close) { raise IOError, "broken pipe" }
+
+        assert_nothing_raised { handler.send(:safe_close, ws) }
+      end
+
+      test "safe_close handles nil websocket" do
+        handler = build_handler
+        assert_nothing_raised { handler.send(:safe_close, nil) }
+      end
+
+      test "extract_reaction_data parses valid reaction with nil nested reaction key" do
+        handler = build_handler
+        data = JSON.generate({
+                               "event" => "reaction_added",
+                               "data" => { "reaction" => nil }
+                             })
+        result = handler.send(:extract_reaction_data, data)
+        assert_equal({}, result)
+      end
+
       # --- Handler interface tests ---
 
       test "tool_definitions returns permission_prompt tool" do
@@ -376,6 +460,38 @@ module Earl
         result = handler.send(:poll_for_reaction, context)
 
         assert_equal "deny", result[:behavior]
+      end
+
+      test "extract_reaction_data returns empty hash when event_data is nil" do
+        handler = build_handler
+        data = JSON.generate({ "event" => "reaction_added", "data" => nil })
+        result = handler.send(:extract_reaction_data, data)
+        assert_equal({}, result)
+      end
+
+      test "extract_reaction_data returns nil for non-reaction event" do
+        handler = build_handler
+        data = JSON.generate({ "event" => "posted", "data" => { "post" => "{}" } })
+        result = handler.send(:extract_reaction_data, data)
+        assert_nil result
+      end
+
+      test "extract_reaction_data returns nil for empty string" do
+        handler = build_handler
+        result = handler.send(:extract_reaction_data, "")
+        assert_nil result
+      end
+
+      test "extract_reaction_data returns nil for nil" do
+        handler = build_handler
+        result = handler.send(:extract_reaction_data, nil)
+        assert_nil result
+      end
+
+      test "extract_reaction_data returns nil for invalid JSON" do
+        handler = build_handler
+        result = handler.send(:extract_reaction_data, "not json{{{")
+        assert_nil result
       end
 
       test "poll_for_reaction returns nil on timeout" do

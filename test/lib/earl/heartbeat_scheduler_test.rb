@@ -862,6 +862,35 @@ module Earl
       assert_nothing_raised { scheduler.send(:handle_heartbeat_error, state, "err", error) }
     end
 
+    test "stop_heartbeat_threads handles nil run_thread gracefully" do
+      scheduler = build_scheduler
+      definition = build_definition
+      state = Earl::HeartbeatScheduler::HeartbeatState.new(
+        definition: definition, running: true, run_count: 0, run_thread: nil
+      )
+      scheduler.instance_variable_get(:@states)["nil_thread"] = state
+
+      assert_nothing_raised { scheduler.send(:stop_heartbeat_threads) }
+    end
+
+    test "scheduler_loop handles error with nil backtrace" do
+      scheduler = build_scheduler
+      error = StandardError.new("no trace")
+
+      scheduler.define_singleton_method(:check_for_reload) { raise error }
+      scheduler.define_singleton_method(:check_and_dispatch) {}
+
+      control = scheduler.instance_variable_get(:@control)
+      control.stop_requested = false
+
+      thread = Thread.new { scheduler.send(:scheduler_loop) }
+      sleep 0.05
+      control.stop_requested = true
+      thread.join(1)
+
+      assert_not thread.alive?
+    end
+
     private
 
     def build_scheduler(mattermost: nil, heartbeat_config: nil)

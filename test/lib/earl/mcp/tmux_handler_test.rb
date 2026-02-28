@@ -624,6 +624,306 @@ module Earl
         assert_equal :error, result
       end
 
+      # --- additional branch coverage ---
+
+      test "capture uses explicit lines argument when provided" do
+        @tmux.capture_pane_result = "explicit line output"
+        result = @handler.call("manage_tmux_sessions",
+                               { "action" => "capture", "target" => "x:1.0", "lines" => 50 })
+        text = result[:content].first[:text]
+        assert_includes text, "last 50 lines"
+        assert_includes text, "explicit line output"
+      end
+
+      test "capture floors lines at 1 for zero value" do
+        @tmux.capture_pane_result = "output"
+        result = @handler.call("manage_tmux_sessions",
+                               { "action" => "capture", "target" => "x:1.0", "lines" => 0 })
+        text = result[:content].first[:text]
+        assert_includes text, "last 1 lines"
+      end
+
+      test "status returns not found error for missing session" do
+        @tmux.capture_pane_error = Earl::Tmux::NotFound.new("pane gone")
+        result = @handler.call("manage_tmux_sessions", { "action" => "status", "target" => "gone:1.0" })
+        text = result[:content].first[:text]
+        assert_includes text, "session/pane 'gone:1.0' not found"
+      end
+
+      test "status returns generic tmux error" do
+        @tmux.capture_pane_error = Earl::Tmux::Error.new("tmux crashed")
+        result = @handler.call("manage_tmux_sessions", { "action" => "status", "target" => "x:1.0" })
+        text = result[:content].first[:text]
+        assert_includes text, "tmux crashed"
+      end
+
+      test "approve returns generic tmux error" do
+        @tmux.define_singleton_method(:send_keys_raw) { |_t, _k| raise Earl::Tmux::Error, "pane dead" }
+        result = @handler.call("manage_tmux_sessions", { "action" => "approve", "target" => "x:1.0" })
+        text = result[:content].first[:text]
+        assert_includes text, "pane dead"
+      end
+
+      test "deny returns generic tmux error" do
+        @tmux.define_singleton_method(:send_keys_raw) { |_t, _k| raise Earl::Tmux::Error, "pane dead" }
+        result = @handler.call("manage_tmux_sessions", { "action" => "deny", "target" => "x:1.0" })
+        text = result[:content].first[:text]
+        assert_includes text, "pane dead"
+      end
+
+      test "kill returns generic tmux error" do
+        @tmux.define_singleton_method(:kill_session) { |_n| raise Earl::Tmux::Error, "session locked" }
+        result = @handler.call("manage_tmux_sessions", { "action" => "kill", "target" => "locked" })
+        text = result[:content].first[:text]
+        assert_includes text, "session locked"
+      end
+
+      test "spawn returns tmux error when session creation fails" do
+        @tmux.session_exists_result = false
+        @handler.define_singleton_method(:request_spawn_confirmation) { |_| :approved }
+        @tmux.define_singleton_method(:create_session) { |**_| raise Earl::Tmux::Error, "tmux not running" }
+
+        result = @handler.call("manage_tmux_sessions", {
+                                 "action" => "spawn", "prompt" => "fix tests", "name" => "test-session"
+                               })
+        text = result[:content].first[:text]
+        assert_includes text, "tmux not running"
+      end
+
+      test "validate_call_args returns nil for valid action with target" do
+        result = @handler.send(:validate_call_args, { "action" => "capture", "target" => "x:1.0" })
+        assert_nil result
+      end
+
+      test "target_required_but_missing returns false for list action" do
+        result = @handler.send(:target_required_but_missing?, "list", {})
+        assert_equal false, result
+      end
+
+      test "target_required_but_missing returns false for spawn action" do
+        result = @handler.send(:target_required_but_missing?, "spawn", {})
+        assert_equal false, result
+      end
+
+      test "target_required_but_missing returns false when target is present" do
+        result = @handler.send(:target_required_but_missing?, "capture", { "target" => "x:1.0" })
+        assert_equal false, result
+      end
+
+      test "target_required_but_missing returns true when target is absent" do
+        result = @handler.send(:target_required_but_missing?, "capture", {})
+        assert_equal true, result
+      end
+
+      test "close_websocket handles nil websocket gracefully" do
+        @handler.send(:close_websocket, nil)
+      end
+
+      test "close_websocket handles IOError on close" do
+        ws = Object.new
+        ws.define_singleton_method(:close) { raise IOError, "broken pipe" }
+        @handler.send(:close_websocket, ws)
+      end
+
+      test "parse_reaction_event returns nil for empty message data" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { "" }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_nil result
+      end
+
+      test "parse_reaction_event returns nil for nil message data" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { nil }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_nil result
+      end
+
+      test "parse_reaction_event returns nil for non-reaction events" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { JSON.generate({ "event" => "posted", "data" => {} }) }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_nil result
+      end
+
+      test "parse_reaction_event returns nil for unparsable JSON" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { "not json {{{" }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_nil result
+      end
+
+      test "parse_reaction_event handles missing nested reaction key" do
+        msg = Object.new
+        msg.define_singleton_method(:data) { JSON.generate({ "event" => "reaction_added", "data" => {} }) }
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_equal({}, result)
+      end
+
+      test "classify_reaction returns nil for unrecognized emoji" do
+        result = @handler.send(:classify_reaction, { "user_id" => "user-42", "emoji_name" => "smile" })
+        assert_nil result
+      end
+
+      test "post_confirmation_request returns nil on IOError" do
+        api = Object.new
+        api.define_singleton_method(:post) { |_path, _body| raise IOError, "connection reset" }
+        handler = Earl::Mcp::TmuxHandler.new(
+          config: @config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        request = Earl::Mcp::TmuxHandler::SpawnRequest.new(
+          name: "test", prompt: "hi", working_dir: nil, session: nil
+        )
+        result = handler.send(:post_confirmation_request, request)
+        assert_nil result
+      end
+
+      test "post_to_channel returns nil for non-success response" do
+        api = Object.new
+        api.define_singleton_method(:post) do |_path, _body|
+          response = Object.new
+          response.define_singleton_method(:is_a?) do |klass|
+            Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+        handler = Earl::Mcp::TmuxHandler.new(
+          config: @config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:post_to_channel, "test message")
+        assert_nil result
+      end
+
+      test "build_confirmation_message omits dir line when working_dir is nil" do
+        request = Earl::Mcp::TmuxHandler::SpawnRequest.new(
+          name: "test", prompt: "fix tests", working_dir: nil, session: nil
+        )
+        message = @handler.send(:build_confirmation_message, request)
+        assert_not_includes message, "**Dir:**"
+        assert_includes message, "session"
+      end
+
+      test "build_confirmation_message includes session line for window spawn" do
+        request = Earl::Mcp::TmuxHandler::SpawnRequest.new(
+          name: "test-win", prompt: "fix tests", working_dir: "/tmp", session: "code"
+        )
+        message = @handler.send(:build_confirmation_message, request)
+        assert_includes message, "**Dir:** /tmp"
+        assert_includes message, "**Session:** code"
+        assert_includes message, "window"
+      end
+
+      test "delete_confirmation_post swallows errors" do
+        api = Object.new
+        api.define_singleton_method(:delete) { |_path| raise StandardError, "api error" }
+        handler = Earl::Mcp::TmuxHandler.new(
+          config: @config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        handler.send(:delete_confirmation_post, "post-99")
+      end
+
+      test "add_reaction_options logs warning when reaction post fails" do
+        handler = build_handler_with_api(post_success: false)
+        handler.send(:add_reaction_options, "post-1")
+      end
+
+      test "add_reaction_options handles connection error" do
+        api = Object.new
+        api.define_singleton_method(:post) { |_path, _body| raise IOError, "connection lost" }
+        handler = Earl::Mcp::TmuxHandler.new(
+          config: @config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        handler.send(:add_reaction_options, "post-1")
+      end
+
+      test "request_spawn_confirmation deletes post and returns result on success" do
+        handler = build_handler_with_api(post_success: true)
+        mock_ws = build_mock_websocket
+        handler.define_singleton_method(:connect_websocket) { mock_ws }
+
+        Thread.new do
+          sleep 0.05
+          emit_reaction(mock_ws, post_id: "spawn-post-1", emoji_name: "+1", user_id: "user-42")
+        end
+
+        request = Earl::Mcp::TmuxHandler::SpawnRequest.new(
+          name: "test", prompt: "hi", working_dir: "/tmp", session: nil
+        )
+        result = handler.send(:request_spawn_confirmation, request)
+        assert_equal :approved, result
+      end
+
+      test "wait_for_confirmation polls websocket when connection succeeds" do
+        handler = build_handler_with_api(post_success: true)
+        mock_ws = build_mock_websocket
+        handler.define_singleton_method(:connect_websocket) { mock_ws }
+
+        Thread.new do
+          sleep 0.05
+          emit_reaction(mock_ws, post_id: "post-123", emoji_name: "-1", user_id: "user-42")
+        end
+
+        result = handler.send(:wait_for_confirmation, "post-123")
+        assert_equal :denied, result
+      end
+
+      test "setup_reaction_listener skips messages where parse returns nil" do
+        handler = build_handler_with_api(post_success: true)
+        mock_ws = build_mock_websocket
+
+        Thread.new do
+          sleep 0.02
+          mock_ws.fire_message("")
+          mock_ws.fire_message("not json")
+          sleep 0.02
+          emit_reaction(mock_ws, post_id: "post-123", emoji_name: "+1", user_id: "user-42")
+        end
+
+        deadline = Time.now + 5
+        result = handler.send(:poll_confirmation, mock_ws, "post-123", deadline)
+        assert_equal :approved, result
+      end
+
+      test "parse_reaction_event handles nil nested data with safe navigation" do
+        msg = Object.new
+        msg.define_singleton_method(:data) do
+          JSON.generate({ "event" => "reaction_added", "data" => { "reaction" => nil } })
+        end
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_equal({}, result)
+      end
+
+      test "parse_reaction_event handles absent data key with safe navigation" do
+        msg = Object.new
+        msg.define_singleton_method(:data) do
+          JSON.generate({ "event" => "reaction_added" })
+        end
+        result = @handler.send(:parse_reaction_event, msg)
+        assert_equal({}, result)
+      end
+
+      test "allowed_reactor returns false when API returns non-success response" do
+        config = build_mock_config(allowed_users: %w[alice])
+        api = Object.new
+        api.define_singleton_method(:get) do |_path|
+          response = Object.new
+          response.define_singleton_method(:is_a?) do |klass|
+            Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+        handler = Earl::Mcp::TmuxHandler.new(
+          config: config, api_client: api,
+          tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:allowed_reactor?, "unknown-user-id")
+        assert_equal false, result
+      end
+
       # --- Mock helpers ---
 
       private

@@ -275,6 +275,70 @@ module Earl
       assert_equal ["ghost"], result
     end
 
+    test "read_store handles ArgumentError as non-ENOENT error" do
+      # Write valid JSON that will cause ArgumentError during deserialization
+      # by including a member that doesn't exist on the struct
+      bad_json = { "my-session" => { "name" => 12_345 } }
+      File.write(@store_path, JSON.pretty_generate(bad_json))
+
+      # Force the struct creation to fail with ArgumentError by writing
+      # JSON that passes parsing but fails member construction
+      original_new = Earl::TmuxSessionStore::TmuxSessionInfo.method(:new)
+      Earl::TmuxSessionStore::TmuxSessionInfo.define_singleton_method(:new) do |**_kwargs|
+        raise ArgumentError, "bad struct member"
+      end
+
+      store = Earl::TmuxSessionStore.new(path: @store_path)
+      result = store.all
+      assert_equal({}, result)
+
+      # Verify backup was created (non-ENOENT triggers backup)
+      backups = Dir.glob("#{@store_path}.corrupt.*")
+      assert_equal 1, backups.size
+    ensure
+      Earl::TmuxSessionStore::TmuxSessionInfo.define_singleton_method(:new) do |**kwargs|
+        original_new.call(**kwargs)
+      end
+    end
+
+    test "serialize_and_write cleans up tmp file on rename error" do
+      store = Earl::TmuxSessionStore.new(path: @store_path)
+      store.save(build_info(name: "session-1"))
+
+      # Stub File.rename to raise, simulating a filesystem error
+      original_rename = File.method(:rename)
+      File.define_singleton_method(:rename) { |*_args| raise Errno::ENOSPC, "no space" }
+
+      store.save(build_info(name: "session-2"))
+
+      # Verify no tmp files left behind (cleanup in rescue)
+      tmp_files = Dir.glob("#{@store_path}.tmp.*")
+      assert_empty tmp_files
+    ensure
+      File.define_singleton_method(:rename) do |*args|
+        original_rename.call(*args)
+      end
+    end
+
+    test "serialize_and_write rescue handles nil tmp_path when error before assignment" do
+      store = Earl::TmuxSessionStore.new(path: @store_path)
+      store.save(build_info(name: "session-1"))
+
+      # Corrupt the cache with a non-serializable value to trigger error
+      # before tmp_path is assigned in serialize_and_write
+      cache = store.instance_variable_get(:@cache)
+      cache["broken"] = "not a struct"
+
+      # write_store rescues StandardError, sets @dirty
+      store.send(:write_store, cache)
+
+      assert store.instance_variable_get(:@dirty),
+             "Expected @dirty to be true after failed write"
+
+      # Clean up corrupt entry so teardown doesn't fail
+      cache.delete("broken")
+    end
+
     private
 
     def build_info(name: "test-session")

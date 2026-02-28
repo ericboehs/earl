@@ -3,6 +3,9 @@ AllCops:
   NewCops: enable
   SuggestExtensions: false
   Exclude:
+    - ".bundle/**/*"
+    - ".claude/**/*"
+    - ".ruby-lsp/**/*"
     - "bin/**/*"
     - "vendor/**/*"
 

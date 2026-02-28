@@ -720,6 +720,59 @@ module Earl
       assert_nil captured_req.body
     end
 
+    test "get_thread_posts skips order IDs not present in posts hash" do
+      mm = Earl::Mattermost.new(@config)
+      api = mm.instance_variable_get(:@api)
+
+      thread_data = {
+        "posts" => {
+          "post-1" => { "id" => "post-1", "user_id" => "user-999", "message" => "Hello", "props" => {} }
+        },
+        "order" => %w[post-3 post-2 post-1]
+      }
+
+      api.define_singleton_method(:get) do |_path|
+        response = Object.new
+        response.define_singleton_method(:body) { JSON.generate(thread_data) }
+        response.define_singleton_method(:is_a?) do |klass|
+          klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+        end
+        response
+      end
+
+      posts = mm.get_thread_posts("post-1")
+      assert_equal 1, posts.size
+      assert_equal "Hello", posts[0][:message]
+    end
+
+    test "dispatch_reaction with no on_reaction callback does not raise" do
+      fake_ws = build_fake_ws
+      install_fake_ws(fake_ws)
+
+      mm = Earl::Mattermost.new(@config)
+      # Do NOT set on_reaction — callback is nil
+      mm.connect
+
+      reaction_data = { "user_id" => "user-999", "post_id" => "post-abc", "emoji_name" => "+1" }
+      event = { "event" => "reaction_added", "data" => { "reaction" => JSON.generate(reaction_data) } }
+
+      assert_nothing_raised { fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event))) }
+    end
+
+    test "handle_websocket_message rescues error with non-nil backtrace" do
+      fake_ws = build_fake_ws
+      install_fake_ws(fake_ws)
+
+      mm = Earl::Mattermost.new(@config)
+      mm.on_message { |**_kwargs| raise "kaboom" }
+      mm.connect
+
+      post = { "user_id" => "user-999", "channel_id" => "channel-456", "message" => "hi" }
+      event = { "event" => "posted", "data" => { "post" => JSON.generate(post) } }
+
+      assert_nothing_raised { fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event))) }
+    end
+
     private
 
     def build_testable_mattermost

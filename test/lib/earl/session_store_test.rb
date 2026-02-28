@@ -141,6 +141,20 @@ module Earl
       File.chmod(0o755, readonly_dir) if Dir.exist?(readonly_dir)
     end
 
+    test "write_store rescues IOError during write" do
+      store = Earl::SessionStore.new(path: @store_path)
+      session = build_session(id: "sess-1")
+      store.save("thread-1", session)
+
+      # Stub File.write to raise IOError
+      original_write = File.method(:write)
+      File.define_singleton_method(:write) { |*_args| raise IOError, "disk full" }
+
+      assert_nothing_raised { store.save("thread-2", build_session(id: "sess-2")) }
+    ensure
+      File.define_singleton_method(:write) { |*args, **kwargs| original_write.call(*args, **kwargs) }
+    end
+
     private
 
     def build_session(id: "sess-1")

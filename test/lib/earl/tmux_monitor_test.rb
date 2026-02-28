@@ -742,6 +742,47 @@ module Earl
       assert_equal 1, perm_posts.size
     end
 
+    test "OutputAnalyzer.completed? returns false for single non-prompt line" do
+      assert_not Earl::TmuxMonitor::OutputAnalyzer.completed?(["still running\n"])
+    end
+
+    test "OutputAnalyzer.completed? returns false for empty array" do
+      assert_not Earl::TmuxMonitor::OutputAnalyzer.completed?([])
+    end
+
+    test "OutputAnalyzer.state_from_patterns returns nil for empty lines" do
+      assert_nil Earl::TmuxMonitor::OutputAnalyzer.state_from_patterns([])
+    end
+
+    test "OutputAnalyzer.state_from_patterns returns nil for short non-matching output" do
+      assert_nil Earl::TmuxMonitor::OutputAnalyzer.state_from_patterns(["normal line\n"])
+    end
+
+    test "ThreadControl stop with no thread does not raise" do
+      ctl = Earl::TmuxMonitor::ThreadControl.new
+      assert_nothing_raised { ctl.stop }
+      assert_not ctl.alive?
+    end
+
+    test "error_message includes last 10 lines of output" do
+      output = (1..15).map { |i| "line #{i}\n" }.join
+      info = build_info(name: "err-test")
+      @tmux_store.save(info)
+      @tmux_store.get("err-test")
+
+      msg = @monitor.send(:error_message, "err-test", output)
+      assert_includes msg, ":x:"
+      assert_includes msg, "err-test"
+      assert_includes msg, "line 15"
+      assert_not_includes msg, "line 4"
+    end
+
+    test "error_message handles empty output" do
+      msg = @monitor.send(:error_message, "empty-sess", "")
+      assert_includes msg, ":x:"
+      assert_includes msg, "empty-sess"
+    end
+
     private
 
     # -- Helpers: access internal state ------------------------------------------

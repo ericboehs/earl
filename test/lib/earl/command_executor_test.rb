@@ -825,6 +825,31 @@ module Earl
       assert_includes tmux_store[:deleted], "dev"
     end
 
+    test "!session <name> kill works with nil tmux_store" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      executor = build_executor(posted: posted, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :session_kill, args: ["dev"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_equal ["dev"], tmux.killed_sessions
+      assert_includes posted.first[:message], "killed"
+    end
+
+    test "!session <name> kill cleans up store when NotFound with nil store" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.kill_session_error = Earl::Tmux::NotFound.new("not found")
+      executor = build_executor(posted: posted, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :session_kill, args: ["dev"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "not found"
+      assert_includes posted.first[:message], "cleaned up"
+    end
+
     test "!session <name> nudge sends nudge message" do
       posted = []
       tmux = build_mock_tmux_adapter
@@ -1055,6 +1080,21 @@ module Earl
       assert_includes posted.first[:message], "bad:name"
     end
 
+    test "!spawn works with nil tmux_store" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.session_exists_result = false
+      executor = build_executor(posted: posted, tmux_store: nil, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :spawn, args: ["fix tests", " --name my-fix --dir /tmp"])
+      assert_nothing_raised do
+        executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+      end
+
+      assert_equal 1, tmux.created_sessions.size
+      assert_includes posted.first[:message], "Spawned"
+    end
+
     test "!spawn shell-escapes prompt to prevent injection" do
       posted = []
       tmux = build_mock_tmux_adapter
@@ -1084,7 +1124,7 @@ module Earl
     class MockTmuxAdapter
       attr_accessor :available_result, :session_exists_result, :capture_pane_result,
                     :capture_pane_error, :list_sessions_result, :list_panes_result,
-                    :send_keys_error, :pane_child_commands_result,
+                    :send_keys_error, :kill_session_error, :pane_child_commands_result,
                     :list_all_panes_result, :claude_on_tty_results
       attr_reader :send_keys_calls, :send_keys_raw_calls, :created_sessions, :killed_sessions
 
@@ -1096,6 +1136,7 @@ module Earl
         @list_sessions_result = []
         @list_panes_result = []
         @send_keys_error = nil
+        @kill_session_error = nil
         @send_keys_calls = []
         @send_keys_raw_calls = []
         @created_sessions = []
@@ -1142,6 +1183,8 @@ module Earl
       end
 
       def kill_session(name)
+        raise @kill_session_error if @kill_session_error
+
         @killed_sessions << name
       end
 
