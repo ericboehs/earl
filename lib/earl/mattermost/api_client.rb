@@ -103,7 +103,11 @@ module Earl
 
       def rate_limited?(response, attempts)
         return false unless response.code == "429"
-        return false if attempts > RATE_LIMIT_MAX_RETRIES
+
+        if attempts > RATE_LIMIT_MAX_RETRIES
+          log(:error, "Mattermost API rate limit retries exhausted after #{RATE_LIMIT_MAX_RETRIES} attempts")
+          return false
+        end
 
         log(:warn, "Mattermost API rate limited (attempt #{attempts}/#{RATE_LIMIT_MAX_RETRIES})")
         true
@@ -150,8 +154,9 @@ module Earl
         end
 
         def file_part(boundary, upload)
+          safe_name = File.basename(upload.filename).gsub('"', '\\"')
           "--#{boundary}\r\n" \
-            "Content-Disposition: form-data; name=\"files\"; filename=\"#{upload.filename}\"\r\n" \
+            "Content-Disposition: form-data; name=\"files\"; filename=\"#{safe_name}\"\r\n" \
             "Content-Type: #{upload.content_type}\r\n\r\n"
         end
       end

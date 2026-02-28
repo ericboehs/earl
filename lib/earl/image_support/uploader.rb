@@ -15,10 +15,10 @@ module Earl
       module_function
 
       def read_image_content(ref)
-        source, data, _media_type, filename = ref.deconstruct
-        source == :file_path ? File.binread(data) : Base64.decode64(data)
-      rescue StandardError => error
-        Earl.logger.warn("Uploader: failed to read image #{filename}: #{error.message}")
+        data = ref.data
+        ref.source == :file_path ? File.binread(data) : Base64.decode64(data)
+      rescue Errno::ENOENT, Errno::EACCES, Errno::EISDIR, IOError => error
+        Earl.logger.warn("Uploader: failed to read image #{ref.filename}: #{error.message}")
         nil
       end
 
@@ -26,12 +26,13 @@ module Earl
         content = read_image_content(ref)
         return nil unless content
 
+        filename = ref.filename
         upload = Mattermost::ApiClient::FileUpload.new(
-          channel_id: context.channel_id, filename: ref.filename,
-          content: content, content_type: ref.media_type
+          channel_id: context.channel_id, filename: filename, content: content, content_type: ref.media_type
         )
-        result = context.mattermost.upload_file(upload)
-        result.dig("file_infos", 0, "id")
+        file_id = context.mattermost.upload_file(upload).dig("file_infos", 0, "id")
+        Earl.logger.warn("Uploader: upload returned no file_id for #{filename}") unless file_id
+        file_id
       end
 
       def upload_refs(context, refs)

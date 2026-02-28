@@ -629,14 +629,14 @@ module Earl
         assert_nil result
       end
 
-      test "pearl_agents_repo returns nil when agents subdir missing" do
+      test "pearl_agents_repo returns repo path even when agents subdir missing" do
         Dir.mktmpdir do |tmpdir|
           pearl_bin = File.join(tmpdir, "bin", "pearl")
           FileUtils.mkdir_p(File.dirname(pearl_bin))
           File.write(pearl_bin, "#!/bin/bash\n")
           stub_singleton(@handler, :resolve_pearl_bin) { pearl_bin }
           result = @handler.send(:pearl_agents_repo)
-          assert_nil result
+          assert_equal tmpdir, result
         end
       end
 
@@ -836,7 +836,7 @@ module Earl
       end
 
       test "write_inbound_images returns nil on error" do
-        stub_singleton(@handler, :write_single_image) { |_dir, _img| raise StandardError, "disk full" }
+        stub_singleton(@handler, :write_single_image) { |_dir, _img| raise Errno::ENOSPC, "disk full" }
         Dir.mktmpdir do |tmpdir|
           Earl.stub(:config_root, tmpdir) do
             images = [{ "filename" => "a.png", "base64_data" => Base64.encode64("data") }]
@@ -897,6 +897,7 @@ module Earl
         api = Object.new
         stub_singleton(api, :post_multipart) do |_path, _upload|
           response = Object.new
+          stub_singleton(response, :code) { "403" }
           stub_singleton(response, :is_a?) do |klass|
             Object.instance_method(:is_a?).bind_call(self, klass)
           end

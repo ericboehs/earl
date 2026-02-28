@@ -30,6 +30,14 @@ module Earl
           "#{TMUX_SESSION}:#{window_name}"
         end
 
+        def result_text
+          "Spawned PEARL agent `#{agent}` in tmux window `#{target}`.\n" \
+            "- **Prompt:** #{prompt}\n" \
+            "- **Log:** `#{log_path}`\n" \
+            "- **Monitor:** Use `manage_pearl_agents` with action `status` and " \
+            "target `#{target}` to check output."
+        end
+
         def pearl_command(pearl_bin)
           base = [pearl_bin, agent, "-p", prompt].map { |arg| Shellwords.shellescape(arg) }.join(" ")
           escaped_log = Shellwords.shellescape(log_path)
@@ -104,8 +112,7 @@ module Earl
           pearl = resolve_pearl_bin
           return unless pearl
 
-          repo = File.dirname(pearl, 2)
-          repo if File.exist?(File.join(repo, "agents"))
+          File.dirname(pearl, 2)
         end
 
         def discover_agents(agents_dir)
@@ -208,14 +215,7 @@ module Earl
         end
 
         def format_run_result(request)
-          agent, prompt, window_name, log_path, _image_dir = request.deconstruct
-          target = "#{TMUX_SESSION}:#{window_name}"
-          text_content(
-            "Spawned PEARL agent `#{agent}` in tmux window `#{target}`.\n" \
-            "- **Prompt:** #{prompt}\n" \
-            "- **Log:** `#{log_path}`\n" \
-            "- **Monitor:** Use `manage_pearl_agents` with action `status` and target `#{target}` to check output."
-          )
+          text_content(request.result_text)
         end
 
         def ensure_log_dir
@@ -234,13 +234,13 @@ module Earl
           FileUtils.mkdir_p(dir)
           images.each { |img| write_single_image(dir, img) }
           dir
-        rescue StandardError => error
-          log(:warn, "PEARL inbound image write failed: #{error.message}")
+        rescue Errno::ENOENT, Errno::EACCES, Errno::ENOSPC, IOError => error
+          log(:error, "PEARL inbound image write failed: #{error.class}: #{error.message}")
           nil
         end
 
         def write_single_image(dir, img)
-          filename = img["filename"] || "image.png"
+          filename = File.basename(img["filename"] || "image.png")
           data = Base64.decode64(img["base64_data"] || "")
           File.binwrite(File.join(dir, filename), data)
         end
@@ -270,7 +270,7 @@ module Earl
         end
 
         def detect_and_upload_images(result)
-          text = result.dig(:content, 0, :text) || result.dig(:content, 0, "text")
+          text = result.dig(:content, 0, :text)
           return unless text
 
           refs = ImageSupport::OutputDetector.new.detect_in_text(text)
@@ -280,7 +280,7 @@ module Earl
           file_ids = ImageSupport::Uploader.upload_refs(context, refs)
           ImageSupport::Uploader.post_with_images(context, root_id: @config.platform_thread_id, file_ids: file_ids)
         rescue StandardError => error
-          log(:warn, "PEARL image upload failed: #{error.message}")
+          log(:error, "PEARL image upload failed: #{error.class}: #{error.message}")
         end
 
         def upload_context
@@ -289,12 +289,17 @@ module Earl
           )
         end
 
+        LOG_READ_LIMIT = 50_000
+        private_constant :LOG_READ_LIMIT
+
         def read_log_fallback(target)
           log_file = find_log_for_target(target)
           return text_content("Error: pane '#{target}' not found and no log file available") unless log_file
 
-          content = File.read(log_file)
+          content = File.read(log_file, LOG_READ_LIMIT)
           text_content("**`#{target}` log** (pane closed):\n```\n#{content}\n```")
+        rescue Errno::ENOENT, Errno::EACCES, IOError => error
+          text_content("Error: could not read log file #{log_file}: #{error.message}")
         end
 
         def find_log_for_target(target)
@@ -457,7 +462,7 @@ module Earl
         def enqueue_reaction(ctx, msg)
           ctx.enqueue(msg)
         rescue StandardError => error
-          log(:debug, "PEARL confirmation: error processing WebSocket message: #{error.message}")
+          log(:warn, "PEARL confirmation: error processing WebSocket message: #{error.message}")
         end
 
         def parse_reaction_event(msg)
@@ -614,10 +619,15 @@ module Earl
         private
 
         def parse_response(response)
-          return {} unless response.is_a?(Net::HTTPSuccess)
+          logger = Earl.logger
+          unless response.is_a?(Net::HTTPSuccess)
+            logger.warn("PearlHandler: API request failed (HTTP #{response.code})")
+            return {}
+          end
 
           JSON.parse(response.body)
-        rescue JSON::ParserError
+        rescue JSON::ParserError => error
+          logger.warn("PearlHandler: JSON parse failed: #{error.message}")
           {}
         end
       end

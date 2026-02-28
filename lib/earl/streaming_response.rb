@@ -231,6 +231,8 @@ module Earl
         context = upload_context
         file_ids = ImageSupport::Uploader.upload_refs(context, refs)
         ImageSupport::Uploader.post_with_images(context, root_id: @context.thread_id, file_ids: file_ids)
+      rescue StandardError => error
+        log(:error, "Image upload failed: #{error.message}")
       ensure
         @post_state.image_refs = []
       end
