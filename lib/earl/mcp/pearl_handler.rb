@@ -287,7 +287,8 @@ module Earl
           text = result.dig(:content, 0, :text)
           return [] unless text
 
-          ImageSupport::OutputDetector.new.detect_in_text(text).select { |ref| safe_upload_path?(ref) }
+          refs = ImageSupport::OutputDetector.new.detect_in_text(text)
+          refs.select { |ref| safe_upload_path?(ref) }.uniq(&:data)
         end
 
         def safe_upload_path?(ref)

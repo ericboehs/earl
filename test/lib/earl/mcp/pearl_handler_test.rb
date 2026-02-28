@@ -839,6 +839,18 @@ module Earl
         assert_empty refs
       end
 
+      test "detect_safe_image_refs deduplicates refs with same path" do
+        path = "/tmp/dedup-test-#{SecureRandom.hex(4)}.png"
+        File.binwrite(path, "fake png")
+        text = "Found image at #{path} and also #{path} again"
+        result = { content: [{ type: "text", text: text }] }
+        refs = @handler.send(:detect_safe_image_refs, result)
+        assert_equal 1, refs.size
+        assert_equal path, refs.first.data
+      ensure
+        File.delete(path) if path && File.exist?(path)
+      end
+
       # --- inbound images ---
 
       test "tool_definitions includes image_data property" do
