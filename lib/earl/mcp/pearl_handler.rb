@@ -178,8 +178,14 @@ module Earl
           window_name = "#{agent}-#{SecureRandom.hex(2)}"
           log_path = File.join(pearl_log_dir, "#{window_name}.log")
           image_dir = write_inbound_images(resolve_image_data(arguments), window_name)
-          RunRequest.new(agent: agent, prompt: prompt, window_name: window_name,
+          full_prompt = image_dir ? augment_prompt_with_images(prompt) : prompt
+          RunRequest.new(agent: agent, prompt: full_prompt, window_name: window_name,
                          log_path: log_path, image_dir: image_dir)
+        end
+
+        def augment_prompt_with_images(prompt)
+          "#{prompt}\n\nImages are available at /pearl-images/ inside the container. " \
+            "Use the Read tool to view them."
         end
 
         def execute_run(request)
