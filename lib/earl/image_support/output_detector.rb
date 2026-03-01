@@ -17,12 +17,13 @@ module Earl
 
       MEDIA_TYPES = {
         ".png" => "image/png", ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg",
-        ".gif" => "image/gif", ".webp" => "image/webp"
+        ".gif" => "image/gif", ".webp" => "image/webp", ".svg" => "image/svg+xml"
       }.freeze
-      IMAGE_PATH_PATTERN = %r{(?:^|[\s`*\[("])(/[^\s`*\])"',]+(?:\.png|\.jpe?g|\.gif|\.webp))(?:[\s`*\])",.:;!?]|$)}i
+      IMAGE_PATH_PATTERN =
+        %r{(?:^|[\s`*\[("])(/[^\s`*\])"',]+(?:\.png|\.jpe?g|\.gif|\.webp|\.svg))(?:[\s`*\])",.:;!?]|$)}i
       RELATIVE_IMAGE_PATTERN = %r{
         (?:^|[\s`*\[("]) # leading context
-        (\.?[a-zA-Z0-9_.-]+/[^\s`*\])"',]+(?:\.png|\.jpe?g|\.gif|\.webp)) # relative path
+        (\.?[a-zA-Z0-9_.-]+/[^\s`*\])"',]+(?:\.png|\.jpe?g|\.gif|\.webp|\.svg)) # relative path
         (?:[\s`*\])",.:;!?]|$) # trailing context
       }ix
 

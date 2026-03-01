@@ -228,40 +228,19 @@ module Earl
 
         log(:info, "upload_collected_images: #{refs.size} refs to upload")
 
-        file_ids = refs.filter_map { |ref| upload_image_ref(ref) }
-        post_image_attachments(file_ids) unless file_ids.empty?
-      end
-
-      def upload_image_ref(ref)
-        content = read_image_content(ref)
-        return nil unless content
-
-        upload = Mattermost::ApiClient::FileUpload.new(
-          channel_id: @context.channel_id, filename: ref.filename,
-          content: content, content_type: ref.media_type
-        )
-        result = @context.mattermost.upload_file(upload)
-        extract_file_id(result)
-      end
-
-      def read_image_content(ref)
-        source, data, _media_type, filename = ref.deconstruct
-        source == :file_path ? File.binread(data) : Base64.decode64(data)
+        context = upload_context
+        file_ids = ImageSupport::Uploader.upload_refs(context, refs)
+        ImageSupport::Uploader.post_with_images(context, root_id: @context.thread_id, file_ids: file_ids)
       rescue StandardError => error
-        log(:warn, "Failed to read image #{filename}: #{error.message}")
-        nil
+        log(:error, "Image upload failed: #{error.message}")
+      ensure
+        @post_state.image_refs = []
       end
 
-      def extract_file_id(result)
-        result.dig("file_infos", 0, "id")
-      end
-
-      def post_image_attachments(file_ids)
-        file_post = Mattermost::FileHandling::FilePost.new(
-          channel_id: @context.channel_id, message: "",
-          root_id: @context.thread_id, file_ids: file_ids
+      def upload_context
+        ImageSupport::Uploader::UploadContext.new(
+          mattermost: @context.mattermost, channel_id: @context.channel_id
         )
-        @context.mattermost.create_post_with_files(file_post)
       end
     end
 

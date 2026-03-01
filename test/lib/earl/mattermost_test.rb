@@ -864,6 +864,44 @@ module Earl
       assert_nothing_raised { fake_ws.fire(:message, ws_message(type: :text, data: JSON.generate(event))) }
     end
 
+    # --- Rate limiting (429) tests ---
+
+    test "api_client retries on 429 with X-RateLimit-Reset-After header" do
+      mm = Earl::Mattermost.new(@config)
+      api = mm.instance_variable_get(:@api)
+      call_count = 0
+
+      with_rate_limit_mock(api, retry_after: "0.01", fail_count: 1) do |counter|
+        api.post("/test/path", { key: "value" })
+        call_count = counter.call
+      end
+
+      assert_equal 2, call_count
+    end
+
+    test "api_client returns 429 response after max rate limit retries" do
+      mm = Earl::Mattermost.new(@config)
+      api = mm.instance_variable_get(:@api)
+
+      with_rate_limit_mock(api, retry_after: "0.01", fail_count: 4) do |_counter|
+        response = api.post("/test/path", { key: "value" })
+        assert_equal "429", response.code
+      end
+    end
+
+    test "api_client uses exponential backoff when no rate limit header" do
+      mm = Earl::Mattermost.new(@config)
+      api = mm.instance_variable_get(:@api)
+      call_count = 0
+
+      with_rate_limit_mock(api, retry_after: nil, fail_count: 1) do |counter|
+        api.get("/test/path")
+        call_count = counter.call
+      end
+
+      assert_equal 2, call_count
+    end
+
     private
 
     def build_testable_mattermost
@@ -928,6 +966,42 @@ module Earl
       yield
     ensure
       stub_singleton(Net::HTTP, :start, &original_start)
+    end
+
+    def with_rate_limit_mock(api, retry_after:, fail_count:)
+      original_start = Net::HTTP.method(:start)
+      call_count = 0
+      response_builder = method(:build_rate_limit_response)
+
+      stub_singleton(Net::HTTP, :start) do |_host, _port, **_kwargs, &block|
+        mock_http = Object.new
+        stub_singleton(mock_http, :request) do |_req|
+          call_count += 1
+          response_builder.call(call_count, fail_count, retry_after)
+        end
+        block ? block.call(mock_http) : mock_http
+      end
+      yield -> { call_count }
+    ensure
+      stub_singleton(Net::HTTP, :start, &original_start)
+    end
+
+    def build_rate_limit_response(call_count, fail_count, retry_after)
+      resp = Object.new
+      if call_count <= fail_count
+        stub_singleton(resp, :body) { '{"error":"rate limited"}' }
+        stub_singleton(resp, :code) { "429" }
+        stub_singleton(resp, :[]) { |h| h == "X-RateLimit-Reset-After" ? retry_after : nil }
+        stub_singleton(resp, :is_a?) { |k| Object.instance_method(:is_a?).bind_call(self, k) }
+      else
+        stub_singleton(resp, :body) { '{"ok":true}' }
+        stub_singleton(resp, :code) { "200" }
+        stub_singleton(resp, :[]) { |_h| nil }
+        stub_singleton(resp, :is_a?) do |k|
+          k == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, k)
+        end
+      end
+      resp
     end
 
     # Fake WebSocket that executes handlers with instance_exec like the real gem

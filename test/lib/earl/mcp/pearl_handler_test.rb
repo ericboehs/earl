@@ -241,7 +241,7 @@ module Earl
           assert info.name.start_with?("pearl-agents:code-")
           assert_equal "channel-123", info.channel_id
           assert_equal "thread-123", info.thread_id
-          assert_equal "fix tests", info.prompt
+          assert info.prompt.start_with?("fix tests"), "Expected prompt to start with original text"
         end
       end
 
@@ -325,7 +325,8 @@ module Earl
       test "post_confirmation_request posts to correct channel and thread" do
         handler = build_handler_with_api(post_success: true)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "fix tests", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+          agent: "code", prompt: "fix tests", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         post_id = handler.send(:post_confirmation_request, request)
         assert_equal "spawn-post-1", post_id
@@ -334,7 +335,8 @@ module Earl
       test "post_confirmation_request returns nil when API fails" do
         handler = build_handler_with_api(post_success: false)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "fix tests", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+          agent: "code", prompt: "fix tests", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         post_id = handler.send(:post_confirmation_request, request)
         assert_nil post_id
@@ -343,7 +345,8 @@ module Earl
       test "confirmation message includes agent and prompt" do
         handler = build_handler_with_api(post_success: true)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "fix tests", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+          agent: "code", prompt: "fix tests", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         message = handler.send(:build_confirmation_message, request)
         assert_includes message, "code"
@@ -470,7 +473,8 @@ module Earl
       test "request_run_confirmation returns error when post fails" do
         handler = build_handler_with_api(post_success: false)
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "hi", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+          agent: "code", prompt: "hi", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         result = handler.send(:request_run_confirmation, request)
         assert_equal :error, result
@@ -480,14 +484,16 @@ module Earl
 
       test "RunRequest target returns session:window format" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "hello", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         assert_equal "pearl-agents:code-ab12", request.target
       end
 
       test "RunRequest pearl_command builds correct command" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "fix the bug", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+          agent: "code", prompt: "fix the bug", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         command = request.pearl_command("/usr/local/bin/pearl")
         assert_includes command, "/usr/local/bin/pearl"
@@ -500,7 +506,8 @@ module Earl
 
       test "RunRequest pearl_command escapes pearl_bin path" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "hello", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         command = request.pearl_command("/path with spaces/pearl")
         assert_includes command, '/path\\ with\\ spaces/pearl'
@@ -508,12 +515,31 @@ module Earl
 
       test "RunRequest pearl_command includes log path and keep-alive" do
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "hello", window_name: "code-ab12", log_path: "/tmp/pearl-logs/code-ab12.log"
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/pearl-logs/code-ab12.log", image_dir: nil, output_dir: nil
         )
         command = request.pearl_command("/usr/local/bin/pearl")
         assert_includes command, "tee /tmp/pearl-logs/code-ab12.log"
         assert_includes command, "PEARL agent exited"
         assert_includes command, "sleep 300"
+      end
+
+      test "RunRequest pearl_command includes PEARL_IMAGES env when image_dir present" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: "/tmp/pearl-images/code-ab12", output_dir: nil
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_includes command, "PEARL_IMAGES=/tmp/pearl-images/code-ab12"
+      end
+
+      test "RunRequest pearl_command omits PEARL_IMAGES env when image_dir is nil" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_not_includes command, "PEARL_IMAGES"
       end
 
       # --- resolve_pearl_bin / find_pearl_in_path ---
@@ -603,14 +629,14 @@ module Earl
         assert_nil result
       end
 
-      test "pearl_agents_repo returns nil when agents subdir missing" do
+      test "pearl_agents_repo returns repo path even when agents subdir missing" do
         Dir.mktmpdir do |tmpdir|
           pearl_bin = File.join(tmpdir, "bin", "pearl")
           FileUtils.mkdir_p(File.dirname(pearl_bin))
           File.write(pearl_bin, "#!/bin/bash\n")
           stub_singleton(@handler, :resolve_pearl_bin) { pearl_bin }
           result = @handler.send(:pearl_agents_repo)
-          assert_nil result
+          assert_equal tmpdir, result
         end
       end
 
@@ -733,6 +759,469 @@ module Earl
           assert_includes text, "not found"
           assert_includes text, "no log file"
         end
+      end
+
+      # --- status image detection ---
+
+      test "status detects image paths in output and uploads them" do
+        uploaded_refs = []
+        stub_singleton(@handler, :detect_and_upload_images) do |result, _target|
+          text = result.dig(:content, 0, :text)
+          uploaded_refs << text
+        end
+
+        @tmux.capture_pane_result = "Generated /tmp/chart.png for review"
+        @handler.call("manage_pearl_agents", {
+                        "action" => "status", "target" => "pearl-agents:code-ab12"
+                      })
+        assert_equal 1, uploaded_refs.size
+        assert_includes uploaded_refs.first, "/tmp/chart.png"
+      end
+
+      test "status handles image upload errors gracefully" do
+        stub_singleton(@handler, :upload_context) { raise StandardError, "upload boom" }
+
+        @tmux.capture_pane_result = "Some output"
+        result = @handler.call("manage_pearl_agents", {
+                                 "action" => "status", "target" => "pearl-agents:code-ab12"
+                               })
+        text = result[:content].first[:text]
+        assert_includes text, "Some output"
+      end
+
+      # --- safe_upload_path? ---
+
+      test "safe_upload_path? allows base64 refs" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :base64, data: "abc", media_type: "image/png", filename: "img.png"
+        )
+        assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? allows paths under /tmp" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: "/tmp/chart.png", media_type: "image/png", filename: "chart.png"
+        )
+        assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? allows paths under pearl-images" do
+        pearl_path = File.join(Earl.config_root, "pearl-images", "test.png")
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: pearl_path, media_type: "image/png", filename: "test.png"
+        )
+        assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? rejects paths outside safe dirs" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: "/home/user/.ssh/id_rsa", media_type: "image/png", filename: "id_rsa"
+        )
+        refute @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? rejects traversal attempts" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: "/tmp/../etc/passwd", media_type: "image/png", filename: "passwd"
+        )
+        refute @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "detect_safe_image_refs returns empty for nil text" do
+        result = { content: [{ type: "text" }] }
+        refs = @handler.send(:detect_safe_image_refs, result)
+        assert_empty refs
+      end
+
+      test "detect_safe_image_refs returns empty for text with no images" do
+        result = { content: [{ type: "text", text: "No images here" }] }
+        refs = @handler.send(:detect_safe_image_refs, result)
+        assert_empty refs
+      end
+
+      test "detect_safe_image_refs deduplicates refs with same path" do
+        path = "/tmp/dedup-test-#{SecureRandom.hex(4)}.png"
+        File.binwrite(path, "fake png")
+        text = "Found image at #{path} and also #{path} again"
+        result = { content: [{ type: "text", text: text }] }
+        refs = @handler.send(:detect_safe_image_refs, result)
+        assert_equal 1, refs.size
+        assert_equal path, refs.first.data
+      ensure
+        File.delete(path) if path && File.exist?(path)
+      end
+
+      # --- output pipeline ---
+
+      test "create_output_dir creates the directory" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            dir = @handler.send(:create_output_dir, "code-ab12")
+            assert_equal File.join(tmpdir, "pearl-output", "code-ab12"), dir
+            assert Dir.exist?(dir)
+          end
+        end
+      end
+
+      test "scan_output_dir finds images in output directory" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            output_dir = File.join(tmpdir, "pearl-output", "code-ab12")
+            FileUtils.mkdir_p(output_dir)
+            File.binwrite(File.join(output_dir, "screenshot.png"), "png data")
+            File.binwrite(File.join(output_dir, "chart.jpg"), "jpg data")
+
+            refs = @handler.send(:scan_output_dir, "pearl-agents:code-ab12")
+            assert_equal 2, refs.size
+            filenames = refs.map(&:filename).sort
+            assert_equal %w[chart.jpg screenshot.png], filenames
+            assert(refs.all? { |r| r.source == :file_path })
+          end
+        end
+      end
+
+      test "scan_output_dir finds images in subdirectories" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            sub_dir = File.join(tmpdir, "pearl-output", "code-ab12", "subdir")
+            FileUtils.mkdir_p(sub_dir)
+            File.binwrite(File.join(sub_dir, "nested.png"), "png data")
+
+            refs = @handler.send(:scan_output_dir, "pearl-agents:code-ab12")
+            assert_equal 1, refs.size
+            assert_equal "nested.png", refs.first.filename
+          end
+        end
+      end
+
+      test "scan_output_dir returns empty for nonexistent directory" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            refs = @handler.send(:scan_output_dir, "pearl-agents:code-ab12")
+            assert_empty refs
+          end
+        end
+      end
+
+      test "scan_output_dir returns empty when target has no window name" do
+        refs = @handler.send(:scan_output_dir, "pearl-agents")
+        assert_empty refs
+      end
+
+      test "scan_output_dir rejects path traversal in target" do
+        refs = @handler.send(:scan_output_dir, "pearl-agents:../../etc")
+        assert_empty refs
+      end
+
+      test "scan_output_dir rejects slash in window name" do
+        refs = @handler.send(:scan_output_dir, "pearl-agents:code/../../etc")
+        assert_empty refs
+      end
+
+      test "scan_output_dir skips empty files" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            output_dir = File.join(tmpdir, "pearl-output", "code-ab12")
+            FileUtils.mkdir_p(output_dir)
+            File.binwrite(File.join(output_dir, "empty.png"), "")
+
+            refs = @handler.send(:scan_output_dir, "pearl-agents:code-ab12")
+            assert_empty refs
+          end
+        end
+      end
+
+      test "safe_upload_path? allows paths under pearl-output" do
+        pearl_path = File.join(Earl.config_root, "pearl-output", "code-ab12", "screenshot.png")
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: pearl_path, media_type: "image/png", filename: "screenshot.png"
+        )
+        assert @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "safe_upload_path? rejects prefix-spoofed paths" do
+        ref = Earl::ImageSupport::OutputDetector::ImageReference.new(
+          source: :file_path, data: "/tmp2/evil.png", media_type: "image/png", filename: "evil.png"
+        )
+        refute @handler.send(:safe_upload_path?, ref)
+      end
+
+      test "RunRequest pearl_command includes PEARL_OUTPUT env when output_dir present" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil,
+          output_dir: "/tmp/pearl-output/code-ab12"
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_includes command, "PEARL_OUTPUT=/tmp/pearl-output/code-ab12"
+      end
+
+      test "RunRequest pearl_command omits PEARL_OUTPUT env when output_dir is nil" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_not_includes command, "PEARL_OUTPUT"
+      end
+
+      test "RunRequest pearl_command includes both env vars when both dirs present" do
+        request = Earl::Mcp::PearlHandler::RunRequest.new(
+          agent: "code", prompt: "hello", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: "/tmp/pearl-images/code-ab12",
+          output_dir: "/tmp/pearl-output/code-ab12"
+        )
+        command = request.pearl_command("/usr/local/bin/pearl")
+        assert_includes command, "PEARL_IMAGES=/tmp/pearl-images/code-ab12"
+        assert_includes command, "PEARL_OUTPUT=/tmp/pearl-output/code-ab12"
+      end
+
+      test "build_run_request includes output dir hint in prompt" do
+        with_agents_dir do |_agents_dir|
+          stub_singleton(@handler, :request_run_confirmation) { |_| :approved }
+
+          request = @handler.send(:build_run_request, { "agent" => "code", "prompt" => "do stuff" })
+          assert_includes request.prompt, "/pearl-output/"
+          assert_includes request.prompt, "automatically uploaded"
+        end
+      end
+
+      test "build_run_request includes image hint only when images present" do
+        with_agents_dir do |_agents_dir|
+          request = @handler.send(:build_run_request, { "agent" => "code", "prompt" => "do stuff" })
+          assert_not_includes request.prompt, "/pearl-images/"
+          assert_includes request.prompt, "/pearl-output/"
+        end
+      end
+
+      # --- inbound images ---
+
+      test "tool_definitions includes image_data property" do
+        schema = @handler.tool_definitions.first[:inputSchema]
+        assert schema[:properties].key?(:image_data), "Expected image_data property in schema"
+        assert_equal "array", schema[:properties][:image_data][:type]
+      end
+
+      test "write_inbound_images creates directory and writes files" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            images = [
+              { "filename" => "chart.png", "base64_data" => Base64.encode64("png data") },
+              { "filename" => "photo.jpg", "base64_data" => Base64.encode64("jpg data") }
+            ]
+            dir = @handler.send(:write_inbound_images, images, "code-ab12")
+
+            assert_equal File.join(tmpdir, "pearl-images", "code-ab12"), dir
+            assert_equal "png data", File.binread(File.join(dir, "chart.png"))
+            assert_equal "jpg data", File.binread(File.join(dir, "photo.jpg"))
+          end
+        end
+      end
+
+      test "write_inbound_images returns nil for empty array" do
+        result = @handler.send(:write_inbound_images, [], "code-ab12")
+        assert_nil result
+      end
+
+      test "write_inbound_images returns nil for nil input" do
+        result = @handler.send(:write_inbound_images, nil, "code-ab12")
+        assert_nil result
+      end
+
+      test "write_inbound_images uses default filename when missing" do
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            images = [{ "base64_data" => Base64.encode64("data") }]
+            dir = @handler.send(:write_inbound_images, images, "code-ab12")
+            assert File.exist?(File.join(dir, "image.png"))
+          end
+        end
+      end
+
+      test "write_inbound_images returns nil on error" do
+        stub_singleton(@handler, :write_single_image) { |_dir, _img| raise Errno::ENOSPC, "disk full" }
+        Dir.mktmpdir do |tmpdir|
+          Earl.stub(:config_root, tmpdir) do
+            images = [{ "filename" => "a.png", "base64_data" => Base64.encode64("data") }]
+            result = @handler.send(:write_inbound_images, images, "code-ab12")
+            assert_nil result
+          end
+        end
+      end
+
+      # --- file_ids support ---
+
+      test "tool_definitions includes file_ids property" do
+        schema = @handler.tool_definitions.first[:inputSchema]
+        assert schema[:properties].key?(:file_ids), "Expected file_ids property in schema"
+        assert_equal "array", schema[:properties][:file_ids][:type]
+      end
+
+      test "resolve_image_data prefers explicit image_data over file_ids" do
+        images = [{ "filename" => "a.png", "base64_data" => "abc" }]
+        args = { "image_data" => images, "file_ids" => ["fid-1"] }
+        result = @handler.send(:resolve_image_data, args)
+        assert_equal images, result
+      end
+
+      test "resolve_image_data downloads from Mattermost when no image_data" do
+        api = Object.new
+        info_body = JSON.generate({ "name" => "photo.png", "mime_type" => "image/png" })
+        file_body = "raw png bytes"
+        stub_singleton(api, :get) do |path|
+          response = Object.new
+          body = path.end_with?("/info") ? info_body : file_body
+          stub_singleton(response, :body) { body }
+          stub_singleton(response, :is_a?) do |klass|
+            klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api, tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:resolve_image_data, { "file_ids" => ["fid-1"] })
+
+        assert_equal 1, result.size
+        assert_equal "photo.png", result.first["filename"]
+        assert_equal Base64.strict_encode64("raw png bytes"), result.first["base64_data"]
+        assert_equal "image/png", result.first["media_type"]
+      end
+
+      test "resolve_image_data returns empty array when neither provided" do
+        result = @handler.send(:resolve_image_data, {})
+        assert_equal [], result
+      end
+
+      test "download_single_file returns nil when info request fails" do
+        result = @handler.send(:download_single_file, "bad-fid")
+        assert_nil result
+      end
+
+      test "download_single_file returns nil when data request fails" do
+        api = Object.new
+        call_count = 0
+        stub_singleton(api, :get) do |_path|
+          call_count += 1
+          response = Object.new
+          if call_count == 1
+            stub_singleton(response, :body) { '{"name":"x.png","mime_type":"image/png"}' }
+            stub_singleton(response, :is_a?) do |klass|
+              klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+            end
+          else
+            stub_singleton(response, :is_a?) { |_klass| false }
+          end
+          response
+        end
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api, tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:download_single_file, "fid-1")
+        assert_nil result
+      end
+
+      test "build_file_data uses defaults when name and mime_type are nil" do
+        result = @handler.send(:build_file_data, {}, "raw bytes")
+        assert_equal "image.png", result["filename"]
+        assert_equal "image/png", result["media_type"]
+        assert_equal Base64.strict_encode64("raw bytes"), result["base64_data"]
+      end
+
+      test "download_single_file returns nil on JSON parse error" do
+        api = Object.new
+        stub_singleton(api, :get) do |_path|
+          response = Object.new
+          stub_singleton(response, :body) { "not json" }
+          stub_singleton(response, :is_a?) do |klass|
+            klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+        handler = Earl::Mcp::PearlHandler.new(
+          config: @config, api_client: api, tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        result = handler.send(:download_single_file, "fid-1")
+        assert_nil result
+      end
+
+      # --- ApiClientAdapter ---
+
+      test "ApiClientAdapter upload_file delegates to api post_multipart" do
+        uploaded = []
+        api = Object.new
+        stub_singleton(api, :post_multipart) do |path, upload|
+          uploaded << { path: path, upload: upload }
+          response = Object.new
+          stub_singleton(response, :body) { '{"file_infos":[{"id":"f1"}]}' }
+          stub_singleton(response, :is_a?) do |klass|
+            klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+
+        adapter = Earl::Mcp::PearlHandler::ApiClientAdapter.new(api)
+        result = adapter.upload_file("fake-upload")
+
+        assert_equal 1, uploaded.size
+        assert_equal "/files", uploaded.first[:path]
+        assert_equal "f1", result.dig("file_infos", 0, "id")
+      end
+
+      test "ApiClientAdapter create_post_with_files delegates to api post" do
+        posted = []
+        api = Object.new
+        stub_singleton(api, :post) do |path, body|
+          posted << { path: path, body: body }
+          response = Object.new
+          stub_singleton(response, :body) { '{"id":"post-1"}' }
+          stub_singleton(response, :is_a?) do |klass|
+            klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+
+        adapter = Earl::Mcp::PearlHandler::ApiClientAdapter.new(api)
+        file_post = Earl::Mattermost::FileHandling::FilePost.new(
+          channel_id: "ch-1", message: "", root_id: "t-1", file_ids: %w[f1]
+        )
+        result = adapter.create_post_with_files(file_post)
+
+        assert_equal 1, posted.size
+        assert_equal "/posts", posted.first[:path]
+        assert_equal "post-1", result["id"]
+      end
+
+      test "ApiClientAdapter returns empty hash on non-success response" do
+        api = Object.new
+        stub_singleton(api, :post_multipart) do |_path, _upload|
+          response = Object.new
+          stub_singleton(response, :code) { "403" }
+          stub_singleton(response, :is_a?) do |klass|
+            Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+
+        adapter = Earl::Mcp::PearlHandler::ApiClientAdapter.new(api)
+        result = adapter.upload_file("fake-upload")
+        assert_equal({}, result)
+      end
+
+      test "ApiClientAdapter returns empty hash on JSON parse error" do
+        api = Object.new
+        stub_singleton(api, :post_multipart) do |_path, _upload|
+          response = Object.new
+          stub_singleton(response, :body) { "not json" }
+          stub_singleton(response, :is_a?) do |klass|
+            klass == Net::HTTPSuccess || Object.instance_method(:is_a?).bind_call(self, klass)
+          end
+          response
+        end
+
+        adapter = Earl::Mcp::PearlHandler::ApiClientAdapter.new(api)
+        result = adapter.upload_file("fake-upload")
+        assert_equal({}, result)
       end
 
       # --- WebSocket / confirmation edge cases ---
@@ -949,7 +1438,8 @@ module Earl
           tmux_store: @tmux_store, tmux_adapter: @tmux
         )
         request = Earl::Mcp::PearlHandler::RunRequest.new(
-          agent: "code", prompt: "hi", window_name: "code-ab12", log_path: "/tmp/code-ab12.log"
+          agent: "code", prompt: "hi", window_name: "code-ab12",
+          log_path: "/tmp/code-ab12.log", image_dir: nil, output_dir: nil
         )
         result = handler.send(:post_confirmation_request, request)
         assert_nil result

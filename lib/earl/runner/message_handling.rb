@@ -68,9 +68,10 @@ module Earl
         effective_channel = msg.channel_id || @services.config.channel_id
         existing_session, session = prepare_session(thread_id, effective_channel, msg.sender_name)
         prepare_response(session, thread_id, effective_channel)
-        raw_text = msg.text
+        file_ids = msg.file_ids
+        raw_text = annotate_file_metadata(msg.text, file_ids)
         text = existing_session ? raw_text : build_contextual_text(thread_id, raw_text)
-        content = attach_images(text, msg.file_ids)
+        content = attach_images(text, file_ids)
         send_and_touch(session, thread_id, content)
       end
 
@@ -82,6 +83,13 @@ module Earl
       # Image content assembly: attaches and merges image blocks with text.
       module ContentAssembly
         private
+
+        def annotate_file_metadata(text, file_ids)
+          return text if file_ids.empty?
+
+          ids = file_ids.join(", ")
+          "#{text}\n\n[Attached Mattermost file IDs: #{ids}]"
+        end
 
         def attach_images(content, file_ids)
           return content if file_ids.empty?

@@ -2,6 +2,7 @@
 
 require "securerandom"
 require "shellwords"
+require "base64"
 
 module Earl
   module Mcp
@@ -24,16 +25,34 @@ module Earl
       KEEP_ALIVE_SECONDS = 300
 
       # Bundles run parameters that travel together through the confirmation and creation flow.
-      RunRequest = Data.define(:agent, :prompt, :window_name, :log_path) do
+      RunRequest = Data.define(:agent, :prompt, :window_name, :log_path, :image_dir, :output_dir) do
         def target
           "#{TMUX_SESSION}:#{window_name}"
+        end
+
+        def result_text
+          "Spawned PEARL agent `#{agent}` in tmux window `#{target}`.\n" \
+            "- **Prompt:** #{prompt}\n" \
+            "- **Log:** `#{log_path}`\n" \
+            "- **Monitor:** Use `manage_pearl_agents` with action `status` and " \
+            "target `#{target}` to check output."
         end
 
         def pearl_command(pearl_bin)
           base = [pearl_bin, agent, "-p", prompt].map { |arg| Shellwords.shellescape(arg) }.join(" ")
           escaped_log = Shellwords.shellescape(log_path)
           trailer = "echo '--- PEARL agent exited ---' | tee -a #{escaped_log}"
-          "#{base} 2>&1 | tee #{escaped_log}; #{trailer}; sleep #{KEEP_ALIVE_SECONDS}"
+          env_prefix = build_env_prefix
+          "#{env_prefix}#{base} 2>&1 | tee #{escaped_log}; #{trailer}; sleep #{KEEP_ALIVE_SECONDS}"
+        end
+
+        private
+
+        def build_env_prefix
+          vars = []
+          vars << "PEARL_IMAGES=#{Shellwords.shellescape(image_dir)}" if image_dir
+          vars << "PEARL_OUTPUT=#{Shellwords.shellescape(output_dir)}" if output_dir
+          vars.empty? ? "" : "#{vars.join(" ")} "
         end
       end
 
@@ -102,8 +121,7 @@ module Earl
           pearl = resolve_pearl_bin
           return unless pearl
 
-          repo = File.dirname(pearl, 2)
-          repo if File.exist?(File.join(repo, "agents"))
+          File.dirname(pearl, 2)
         end
 
         def discover_agents(agents_dir)
@@ -130,6 +148,11 @@ module Earl
 
       # Spawns PEARL agents in the pearl-agents tmux session with Mattermost confirmation.
       module AgentRunner
+        INBOUND_IMAGES_HINT = "Images are available at /pearl-images/ inside the container. " \
+                              "Use the Read tool to view them."
+        OUTPUT_DIR_HINT = "Save any output files (screenshots, images, artifacts) to /pearl-output/. " \
+                          "Files placed there are automatically uploaded to the chat."
+
         private
 
         def handle_run(arguments)
@@ -168,7 +191,18 @@ module Earl
           agent, prompt = arguments.values_at("agent", "prompt")
           window_name = "#{agent}-#{SecureRandom.hex(2)}"
           log_path = File.join(pearl_log_dir, "#{window_name}.log")
-          RunRequest.new(agent: agent, prompt: prompt, window_name: window_name, log_path: log_path)
+          image_dir = write_inbound_images(resolve_image_data(arguments), window_name)
+          output_dir = create_output_dir(window_name)
+          hints = [INBOUND_IMAGES_HINT].select { image_dir } + [OUTPUT_DIR_HINT]
+          full_prompt = [prompt, *hints].join("\n\n")
+          RunRequest.new(agent: agent, prompt: full_prompt, window_name: window_name,
+                         log_path: log_path, image_dir: image_dir, output_dir: output_dir)
+        end
+
+        def create_output_dir(window_name)
+          dir = File.join(Earl.config_root, "pearl-output", window_name)
+          FileUtils.mkdir_p(dir)
+          dir
         end
 
         def execute_run(request)
@@ -204,14 +238,7 @@ module Earl
         end
 
         def format_run_result(request)
-          agent, prompt, window_name, log_path = request.deconstruct
-          target = "#{TMUX_SESSION}:#{window_name}"
-          text_content(
-            "Spawned PEARL agent `#{agent}` in tmux window `#{target}`.\n" \
-            "- **Prompt:** #{prompt}\n" \
-            "- **Log:** `#{log_path}`\n" \
-            "- **Monitor:** Use `manage_pearl_agents` with action `status` and target `#{target}` to check output."
-          )
+          text_content(request.result_text)
         end
 
         def ensure_log_dir
@@ -221,9 +248,29 @@ module Earl
         def pearl_log_dir
           File.join(Earl.config_root, "pearl-logs")
         end
+
+        def write_inbound_images(image_data, window_name)
+          images = Array(image_data)
+          return nil if images.empty?
+
+          dir = File.join(Earl.config_root, "pearl-images", window_name)
+          FileUtils.mkdir_p(dir)
+          images.each { |img| write_single_image(dir, img) }
+          dir
+        rescue Errno::ENOENT, Errno::EACCES, Errno::ENOSPC, IOError => error
+          log(:error, "PEARL inbound image write failed: #{error.class}: #{error.message}")
+          nil
+        end
+
+        def write_single_image(dir, img)
+          filename = File.basename(img["filename"] || "image.png")
+          data = Base64.decode64(img["base64_data"] || "")
+          File.binwrite(File.join(dir, filename), data)
+        end
       end
 
       # Checks PEARL agent output by capturing the tmux pane or reading the log file.
+      # When output contains image references, uploads them to Mattermost.
       module AgentStatus
         private
 
@@ -231,7 +278,9 @@ module Earl
           target = arguments["target"]
           return text_content("Error: target is required for status") unless target && !target.strip.empty?
 
-          capture_agent_output(target)
+          result = capture_agent_output(target)
+          detect_and_upload_images(result, target)
+          result
         end
 
         def capture_agent_output(target)
@@ -243,12 +292,93 @@ module Earl
           text_content("Error: #{error.message}")
         end
 
+        SAFE_UPLOAD_DIRS = %w[/tmp /var/tmp].freeze
+        IMAGE_EXTENSIONS = "*.{png,jpg,jpeg,gif,webp,svg}"
+        private_constant :SAFE_UPLOAD_DIRS, :IMAGE_EXTENSIONS
+
+        def detect_and_upload_images(result, target)
+          text_refs = detect_safe_image_refs(result)
+          output_refs = scan_output_dir(target)
+          refs = (text_refs + output_refs).uniq(&:data)
+          return if refs.empty?
+
+          context = upload_context
+          file_ids = ImageSupport::Uploader.upload_refs(context, refs)
+          ImageSupport::Uploader.post_with_images(context, root_id: @config.platform_thread_id, file_ids: file_ids)
+        rescue StandardError => error
+          log(:error, "PEARL image upload failed: #{error.class}: #{error.message}")
+        end
+
+        def detect_safe_image_refs(result)
+          text = result.dig(:content, 0, :text)
+          return [] unless text
+
+          refs = ImageSupport::OutputDetector.new.detect_in_text(text)
+          refs.select { |ref| safe_upload_path?(ref) }.uniq(&:data)
+        end
+
+        def scan_output_dir(target)
+          dir = output_dir_for_target(target)
+          return [] unless dir && Dir.exist?(dir)
+
+          Dir.glob(File.join(dir, "**", IMAGE_EXTENSIONS)).filter_map { |path| build_output_ref(path) }
+        end
+
+        def output_dir_for_target(target)
+          name = target.split(":").last
+          return unless name && !name.include?("/") && !name.include?("..")
+
+          File.join(Earl.config_root, "pearl-output", name)
+        end
+
+        def build_output_ref(path)
+          return unless File.file?(path) && File.size(path).positive?
+
+          ImageSupport::OutputDetector::ImageReference.new(
+            source: :file_path, data: path,
+            media_type: media_type_for_output(path), filename: File.basename(path)
+          )
+        end
+
+        MEDIA_TYPES = {
+          ".png" => "image/png", ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg",
+          ".gif" => "image/gif", ".webp" => "image/webp", ".svg" => "image/svg+xml"
+        }.freeze
+        private_constant :MEDIA_TYPES
+
+        def media_type_for_output(path)
+          MEDIA_TYPES.fetch(File.extname(path).downcase, "application/octet-stream")
+        end
+
+        def safe_upload_path?(ref)
+          return true unless ref.source == :file_path
+
+          path = File.expand_path(ref.data)
+          config = Earl.config_root
+          allowed = SAFE_UPLOAD_DIRS.map { |dir| "#{dir}/" } + [
+            "#{File.join(config, "pearl-images")}/",
+            "#{File.join(config, "pearl-output")}/"
+          ]
+          allowed.any? { |prefix| path.start_with?(prefix) }
+        end
+
+        def upload_context
+          ImageSupport::Uploader::UploadContext.new(
+            mattermost: ApiClientAdapter.new(@api), channel_id: @config.platform_channel_id
+          )
+        end
+
+        LOG_READ_LIMIT = 50_000
+        private_constant :LOG_READ_LIMIT
+
         def read_log_fallback(target)
           log_file = find_log_for_target(target)
           return text_content("Error: pane '#{target}' not found and no log file available") unless log_file
 
-          content = File.read(log_file)
+          content = File.read(log_file, LOG_READ_LIMIT)
           text_content("**`#{target}` log** (pane closed):\n```\n#{content}\n```")
+        rescue Errno::ENOENT, Errno::EACCES, IOError => error
+          text_content("Error: could not read log file #{log_file}: #{error.message}")
         end
 
         def find_log_for_target(target)
@@ -411,7 +541,7 @@ module Earl
         def enqueue_reaction(ctx, msg)
           ctx.enqueue(msg)
         rescue StandardError => error
-          log(:debug, "PEARL confirmation: error processing WebSocket message: #{error.message}")
+          log(:warn, "PEARL confirmation: error processing WebSocket message: #{error.message}")
         end
 
         def parse_reaction_event(msg)
@@ -501,15 +631,86 @@ module Earl
             action: action_property,
             agent: { type: "string", description: "Agent profile name (e.g., 'code'). Required for run." },
             prompt: { type: "string", description: "Prompt for the PEARL agent session. Required for run." },
-            target: {
-              type: "string",
-              description: "Tmux target (e.g., 'pearl-agents:code-ab12'). Required for status."
-            }
+            target: target_property,
+            image_data: image_data_property,
+            file_ids: file_ids_property
           }
+        end
+
+        def target_property
+          { type: "string", description: "Tmux target (e.g., 'pearl-agents:code-ab12'). Required for status." }
         end
 
         def action_property
           { type: "string", enum: VALID_ACTIONS, description: "Action to perform" }
+        end
+
+        def image_data_property
+          {
+            type: "array",
+            description: "Optional images to pass to the agent. Each item has filename, base64_data, media_type.",
+            items: image_data_item_schema
+          }
+        end
+
+        def image_data_item_schema
+          {
+            type: "object",
+            properties: {
+              filename: { type: "string", description: "Image filename (e.g., 'screenshot.png')" },
+              base64_data: { type: "string", description: "Base64-encoded image content" },
+              media_type: { type: "string", description: "MIME type (e.g., 'image/png')" }
+            },
+            required: %w[base64_data]
+          }
+        end
+
+        def file_ids_property
+          {
+            type: "array",
+            description: "Mattermost file IDs to download and pass as images to the agent. " \
+                         "Alternative to image_data — the handler downloads files automatically.",
+            items: { type: "string" }
+          }
+        end
+      end
+
+      # Downloads Mattermost files by ID, converting them to the image_data format
+      # used by write_inbound_images.
+      module MattermostDownload
+        private
+
+        def resolve_image_data(arguments)
+          image_data, file_ids = arguments.values_at("image_data", "file_ids")
+          explicit = Array(image_data)
+          return explicit unless explicit.empty?
+
+          download_mattermost_files(Array(file_ids))
+        end
+
+        def download_mattermost_files(file_ids)
+          file_ids.filter_map { |fid| download_single_file(fid) }
+        end
+
+        def download_single_file(file_id)
+          info_response = @api.get("/files/#{file_id}/info")
+          return unless info_response.is_a?(Net::HTTPSuccess)
+
+          data_response = @api.get("/files/#{file_id}")
+          return unless data_response.is_a?(Net::HTTPSuccess)
+
+          info = JSON.parse(info_response.body)
+          build_file_data(info, data_response.body)
+        rescue JSON::ParserError
+          nil
+        end
+
+        def build_file_data(info, body)
+          {
+            "filename" => info["name"] || "image.png",
+            "base64_data" => Base64.strict_encode64(body),
+            "media_type" => info["mime_type"] || "image/png"
+          }
         end
       end
 
@@ -529,6 +730,37 @@ module Earl
         end
       end
 
+      # Thin adapter wrapping ApiClient with Mattermost-compatible upload/post
+      # methods, so Uploader can work without a full Mattermost instance.
+      class ApiClientAdapter
+        def initialize(api)
+          @api = api
+        end
+
+        def upload_file(upload)
+          parse_response(@api.post_multipart("/files", upload))
+        end
+
+        def create_post_with_files(file_post)
+          parse_response(@api.post("/posts", file_post.to_h))
+        end
+
+        private
+
+        def parse_response(response)
+          logger = Earl.logger
+          unless response.is_a?(Net::HTTPSuccess)
+            logger.warn("PearlHandler: API request failed (HTTP #{response.code})")
+            return {}
+          end
+
+          JSON.parse(response.body)
+        rescue JSON::ParserError => error
+          logger.warn("PearlHandler: JSON parse failed: #{error.message}")
+          {}
+        end
+      end
+
       include AgentDiscovery
       include AgentRunner
       include AgentStatus
@@ -536,6 +768,7 @@ module Earl
       include RunPolling
       include ReactionClassification
       include ToolDefinitionBuilder
+      include MattermostDownload
       include PearlBinResolver
     end
   end

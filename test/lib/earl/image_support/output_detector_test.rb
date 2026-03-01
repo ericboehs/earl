@@ -171,6 +171,32 @@ module Earl
         end
       end
 
+      test "maps svg extension correctly" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "diagram.svg")
+          File.write(path, "<svg></svg>")
+
+          refs = @detector.detect_in_text("#{path} ")
+
+          assert_equal 1, refs.size
+          assert_equal "image/svg+xml", refs[0].media_type
+          assert_equal "diagram.svg", refs[0].filename
+        end
+      end
+
+      test "detects SVG file path in tool result text" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "chart.svg")
+          File.write(path, "<svg></svg>")
+
+          refs = @detector.detect_in_tool_result("Write", "Created #{path} successfully")
+
+          assert_equal 1, refs.size
+          assert_equal :file_path, refs[0].source
+          assert_equal "image/svg+xml", refs[0].media_type
+        end
+      end
+
       # --- Markdown-wrapped path detection ---
 
       test "detects path wrapped in backticks" do
