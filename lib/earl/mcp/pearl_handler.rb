@@ -35,7 +35,9 @@ module Earl
             "- **Prompt:** #{prompt}\n" \
             "- **Log:** `#{log_path}`\n" \
             "- **Monitor:** Use `manage_pearl_agents` with action `status` and " \
-            "target `#{target}` to check output."
+            "target `#{target}` to check output.\n" \
+            "- **Important:** Always call `status` one final time after the agent exits — " \
+            "this triggers auto-upload of any files saved to /pearl-output/."
         end
 
         def pearl_command(pearl_bin)
@@ -632,8 +634,9 @@ module Earl
             agent: { type: "string", description: "Agent profile name (e.g., 'code'). Required for run." },
             prompt: { type: "string", description: "Prompt for the PEARL agent session. Required for run." },
             target: target_property,
+            file_ids: file_ids_property,
             image_data: image_data_property,
-            file_ids: file_ids_property
+            file_paths: file_paths_local_property
           }
         end
 
@@ -648,7 +651,8 @@ module Earl
         def image_data_property
           {
             type: "array",
-            description: "Optional images to pass to the agent. Each item has filename, base64_data, media_type.",
+            description: "Raw base64-encoded images. Prefer file_ids instead — large base64 " \
+                         "payloads may be truncated. Only use for programmatically generated images.",
             items: image_data_item_schema
           }
         end
@@ -668,24 +672,58 @@ module Earl
         def file_ids_property
           {
             type: "array",
-            description: "Mattermost file IDs to download and pass as images to the agent. " \
-                         "Alternative to image_data — the handler downloads files automatically.",
+            description: "Mattermost file IDs to forward to the agent (PREFERRED over image_data). " \
+                         "Pass the file IDs from the user's message — the handler downloads and " \
+                         "writes them to the agent's /pearl-images/ directory automatically.",
+            items: { type: "string" }
+          }
+        end
+
+        def file_paths_local_property
+          {
+            type: "array",
+            description: "Local filesystem paths to read and pass as images to the agent. " \
+                         "Alternative to image_data — the handler reads files directly. " \
+                         "Useful when the caller cannot easily base64-encode large files.",
             items: { type: "string" }
           }
         end
       end
 
-      # Downloads Mattermost files by ID, converting them to the image_data format
-      # used by write_inbound_images.
+      # Downloads Mattermost files by ID or reads local filesystem paths, converting
+      # them to the image_data format used by write_inbound_images.
       module MattermostDownload
+        LOCAL_FILE_MEDIA_TYPES = {
+          ".png" => "image/png", ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg",
+          ".gif" => "image/gif", ".webp" => "image/webp", ".svg" => "image/svg+xml"
+        }.freeze
+        private_constant :LOCAL_FILE_MEDIA_TYPES
+
         private
 
         def resolve_image_data(arguments)
-          image_data, file_ids = arguments.values_at("image_data", "file_ids")
-          explicit = Array(image_data)
-          return explicit unless explicit.empty?
+          image_data = Array(arguments["image_data"])
+          local = read_local_files(Array(arguments["file_paths"]))
+          downloaded = download_mattermost_files(Array(arguments["file_ids"]))
+          image_data + local + downloaded
+        end
 
-          download_mattermost_files(Array(file_ids))
+        def read_local_files(paths)
+          paths.filter_map { |path| read_single_local_file(path) }
+        end
+
+        def read_single_local_file(path)
+          return unless File.readable?(path)
+
+          ext = File.extname(path).downcase
+          {
+            "filename" => File.basename(path),
+            "base64_data" => Base64.strict_encode64(File.binread(path)),
+            "media_type" => LOCAL_FILE_MEDIA_TYPES.fetch(ext, "image/png")
+          }
+        rescue Errno::ENOENT, Errno::EACCES, IOError => error
+          log(:error, "PEARL local file read failed: #{path}: #{error.message}")
+          nil
         end
 
         def download_mattermost_files(file_ids)

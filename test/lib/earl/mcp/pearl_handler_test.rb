@@ -258,6 +258,7 @@ module Earl
           assert_includes text, "status"
           assert_includes text, "Log"
           assert_includes text, "Monitor"
+          assert_includes text, "auto-upload"
         end
       end
 
@@ -1051,15 +1052,21 @@ module Earl
 
       # --- file_ids support ---
 
+      test "tool_definitions lists file_ids before image_data in properties" do
+        keys = @handler.tool_definitions.first[:inputSchema][:properties].keys
+        assert_operator keys.index(:file_ids), :<, keys.index(:image_data),
+                        "file_ids should appear before image_data to guide Claude to prefer it"
+      end
+
       test "tool_definitions includes file_ids property" do
         schema = @handler.tool_definitions.first[:inputSchema]
         assert schema[:properties].key?(:file_ids), "Expected file_ids property in schema"
         assert_equal "array", schema[:properties][:file_ids][:type]
       end
 
-      test "resolve_image_data prefers explicit image_data over file_ids" do
+      test "resolve_image_data combines image_data and file_ids" do
         images = [{ "filename" => "a.png", "base64_data" => "abc" }]
-        args = { "image_data" => images, "file_ids" => ["fid-1"] }
+        args = { "image_data" => images, "file_ids" => [] }
         result = @handler.send(:resolve_image_data, args)
         assert_equal images, result
       end
@@ -1091,6 +1098,52 @@ module Earl
       test "resolve_image_data returns empty array when neither provided" do
         result = @handler.send(:resolve_image_data, {})
         assert_equal [], result
+      end
+
+      # --- file_paths support ---
+
+      test "tool_definitions includes file_paths property" do
+        schema = @handler.tool_definitions.first[:inputSchema]
+        assert schema[:properties].key?(:file_paths), "Expected file_paths property in schema"
+        assert_equal "array", schema[:properties][:file_paths][:type]
+      end
+
+      test "resolve_image_data reads local file_paths" do
+        Tempfile.create(["test", ".png"]) do |f|
+          f.write("fake png data")
+          f.flush
+          result = @handler.send(:resolve_image_data, { "file_paths" => [f.path] })
+          assert_equal 1, result.size
+          assert_equal File.basename(f.path), result.first["filename"]
+          assert_equal Base64.strict_encode64("fake png data"), result.first["base64_data"]
+          assert_equal "image/png", result.first["media_type"]
+        end
+      end
+
+      test "resolve_image_data infers media_type from extension for file_paths" do
+        Tempfile.create(["test", ".jpg"]) do |f|
+          f.write("fake jpg")
+          f.flush
+          result = @handler.send(:resolve_image_data, { "file_paths" => [f.path] })
+          assert_equal "image/jpeg", result.first["media_type"]
+        end
+      end
+
+      test "read_single_local_file returns nil for non-existent path" do
+        result = @handler.send(:read_single_local_file, "/nonexistent/path/image.png")
+        assert_nil result
+      end
+
+      test "resolve_image_data combines image_data with file_paths" do
+        Tempfile.create(["extra", ".png"]) do |f|
+          f.write("extra png")
+          f.flush
+          explicit = [{ "filename" => "a.png", "base64_data" => "abc" }]
+          result = @handler.send(:resolve_image_data, { "image_data" => explicit, "file_paths" => [f.path] })
+          assert_equal 2, result.size
+          assert_equal "a.png", result.first["filename"]
+          assert_equal File.basename(f.path), result.last["filename"]
+        end
       end
 
       test "download_single_file returns nil when info request fails" do
