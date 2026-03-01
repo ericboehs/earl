@@ -229,6 +229,24 @@ module Earl
         end
       end
 
+      test "run skips confirmation when pearl_skip_approval is true" do
+        config = build_mock_config(pearl_skip_approval: true)
+        handler = Earl::Mcp::PearlHandler.new(
+          config: config, api_client: @api, tmux_store: @tmux_store, tmux_adapter: @tmux
+        )
+        with_agents_dir do |agents_dir|
+          create_agent_profile(agents_dir, "code", skills: true)
+          stub_singleton(handler, :resolve_pearl_bin) { File.join(agents_dir, "..", "bin", "pearl") }
+
+          result = handler.call("manage_pearl_agents", {
+                                  "action" => "run", "agent" => "code", "prompt" => "fix tests"
+                                })
+          text = result[:content].first[:text]
+          assert_includes text, "Spawned PEARL agent"
+          assert_equal 1, @tmux.created_windows.size
+        end
+      end
+
       test "run persists session info with full target name" do
         with_agents_dir do |agents_dir|
           create_agent_profile(agents_dir, "code", skills: true)
@@ -1581,9 +1599,10 @@ module Earl
         def delete(_path) = nil
       end
 
-      def build_mock_config(allowed_users: [])
+      def build_mock_config(allowed_users: [], pearl_skip_approval: false)
         config = Object.new
         users = allowed_users
+        skip = pearl_skip_approval
         stub_singleton(config, :platform_channel_id) { "channel-123" }
         stub_singleton(config, :platform_thread_id) { "thread-123" }
         stub_singleton(config, :platform_bot_id) { "bot-123" }
@@ -1591,6 +1610,7 @@ module Earl
         stub_singleton(config, :websocket_url) { "wss://mm.example.com/api/v4/websocket" }
         stub_singleton(config, :platform_token) { "mock-token" }
         stub_singleton(config, :allowed_users) { users }
+        stub_singleton(config, :pearl_skip_approval) { skip }
         config
       end
 

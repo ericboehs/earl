@@ -50,7 +50,8 @@ module Earl
       {
         "PLATFORM_URL" => url, "PLATFORM_TOKEN" => token,
         "PLATFORM_CHANNEL_ID" => channel_id, "PLATFORM_THREAD_ID" => thread_id,
-        "PLATFORM_BOT_ID" => bot_id, "ALLOWED_USERS" => allowed_users.join(",")
+        "PLATFORM_BOT_ID" => bot_id, "ALLOWED_USERS" => allowed_users.join(","),
+        "PEARL_SKIP_APPROVAL" => ENV.fetch("PEARL_SKIP_APPROVAL", "false")
       }
     end
 

@@ -5,7 +5,7 @@ module Earl
     # Reads MCP permission server configuration from environment variables,
     # set by the parent EARL process when spawning Claude with --permission-prompt-tool.
     class Config
-      attr_reader :allowed_users, :permission_timeout_ms
+      attr_reader :allowed_users, :permission_timeout_ms, :pearl_skip_approval
 
       # Groups platform connection fields into a single struct.
       PlatformConnection = Data.define(:url, :token, :channel_id, :thread_id, :bot_id)
@@ -20,6 +20,7 @@ module Earl
         )
         @allowed_users = ENV.fetch("ALLOWED_USERS", "").split(",").map(&:strip)
         @permission_timeout_ms = ENV.fetch("PERMISSION_TIMEOUT_MS", "86400000").to_i
+        @pearl_skip_approval = ENV.fetch("PEARL_SKIP_APPROVAL", "false").downcase == "true"
       end
 
       def platform_url = @platform.url

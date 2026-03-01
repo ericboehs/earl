@@ -208,7 +208,8 @@ module Earl
         end
 
         def execute_run(request)
-          case request_run_confirmation(request)
+          result = @config.pearl_skip_approval ? :approved : request_run_confirmation(request)
+          case result
           when :approved then create_pearl_session(request)
           when :error then text_content("Error: run confirmation failed (could not post or connect to Mattermost)")
           else text_content("Run denied by user.")
