@@ -38,6 +38,19 @@ exe/earl restart   # dev
 earl restart       # prod
 ```
 
+### CLI Subcommands
+
+```bash
+# Heartbeat management
+earl heartbeat list
+earl heartbeat create --name NAME --prompt PROMPT [--cron CRON] [--channel CH] [--interval N] [--working-dir DIR] [--permission-mode MODE] [--persistent] [--timeout N] [--once] [--enabled]
+earl heartbeat update --name NAME [same optional flags]
+earl heartbeat delete --name NAME
+
+# Thread transcripts
+earl thread POST_ID
+```
+
 Requires env vars (see `<config_root>/env` or `.envrc`):
 - `EARL_ENV` — Environment: `production` (default) or `development`
 - `MATTERMOST_URL` — Mattermost server URL
@@ -92,6 +105,10 @@ bin/
 lib/
   earl.rb                       # Module root, requires, shared logger, env/config_root
   earl/
+    cli.rb                      # CLI dispatcher (heartbeat, thread subcommands)
+    cli/
+      heartbeat.rb              # `earl heartbeat` CLI handler (list/create/update/delete)
+      thread.rb                 # `earl thread POST_ID` CLI handler
     version.rb                  # Earl::VERSION
     config.rb                   # ENV-based configuration
     logging.rb                  # Shared logging mixin
@@ -201,8 +218,9 @@ User posts in channel
 - **Session persistence**: sessions are saved to `~/.config/earl/sessions.json` and resumed on restart
 - **Shutdown**: SIGINT/SIGTERM triggers graceful shutdown: stops background services, pauses all sessions, then exits.
 - **Restart**: `!restart` (Mattermost), `SIGHUP` (signal), or `earl restart` (CLI). In prod, runs `git pull --ff-only` first (non-fatal on failure). Pauses sessions, then `Kernel.exec` replaces the process in-place. Sessions resume on boot. PID file at `<config_root>/earl.pid` enables CLI restart.
-- **Memory**: Persistent facts stored as markdown in `~/.config/earl/memory/`. Injected into Claude sessions via `--append-system-prompt`. Claude can save/search via MCP tools.
-- **Heartbeats**: Scheduled tasks (cron/interval/one-shot via `run_at`) that spawn Claude sessions, posting results to configured channels. One-off tasks (`once: true`) auto-disable after execution. Config auto-reloads on file change. Claude can manage schedules via the `manage_heartbeat` MCP tool.
+- **Memory**: Persistent facts stored as markdown in `~/.config/earl/memory/`. Injected into Claude sessions via `--append-system-prompt`. Claude can manage memory files directly via Read/Write tools.
+- **Heartbeats**: Scheduled tasks (cron/interval/one-shot via `run_at`) that spawn Claude sessions, posting results to configured channels. One-off tasks (`once: true`) auto-disable after execution. Config auto-reloads on file change. Claude can manage schedules via `earl heartbeat` CLI subcommands.
+- **CLI subcommands**: `earl heartbeat list|create|update|delete` and `earl thread POST_ID` provide simple CLI tools for heartbeat management and thread transcript fetching. These replaced the former `manage_heartbeat`, `get_thread_content`, `save_memory`, and `search_memory` MCP tools.
 - **Tmux MCP tool**: `manage_tmux_sessions` tool exposes tmux session control to spawned Claude sessions. Actions: list, capture, status, approve, deny, send_input, spawn (requires Mattermost confirmation), kill.
 - **Tmux Session Supervisor**: Mattermost becomes a control plane for all running Claude sessions (both EARL-managed and standalone tmux-based). `!sessions` lists all tmux panes running Claude with per-pane status. Detection uses `list_all_panes` + `claude_on_tty?` (ps-based TTY check). `!session <name> approve/deny` remotely handles Claude CLI permission dialogs. `!session <name> status` shows AI-summarized state. `!spawn "prompt"` creates new Claude sessions in tmux. TmuxMonitor runs a background poller that detects questions and permission prompts in tmux panes and forwards them to Mattermost for reaction-based handling.
 - **Thread context**: When a Claude session is first created for a thread that already has messages (e.g., from `!` commands and EARL replies), the Mattermost thread transcript (up to 20 posts) is prepended so Claude has context for follow-up messages.

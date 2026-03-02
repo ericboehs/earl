@@ -17,14 +17,7 @@ config = Earl::Mcp::Config.new
 api_config = config.to_api_config
 api_client = Earl::Mattermost::ApiClient.new(api_config)
 
-store = Earl::Memory::Store.new
 approval_handler = Earl::Mcp::ApprovalHandler.new(config: config, api_client: api_client)
-memory_handler = Earl::Mcp::MemoryHandler.new(
-  store: store, username: ENV.fetch("EARL_CURRENT_USERNAME", nil)
-)
-heartbeat_handler = Earl::Mcp::HeartbeatHandler.new(
-  default_channel_id: ENV.fetch("PLATFORM_CHANNEL_ID", nil)
-)
 tmux_store = Earl::TmuxSessionStore.new
 tmux_handler = Earl::Mcp::TmuxHandler.new(
   config: config, api_client: api_client, tmux_store: tmux_store
@@ -35,9 +28,8 @@ pearl_handler = Earl::Mcp::PearlHandler.new(
 github_pat_handler = Earl::Mcp::GithubPatHandler.new(
   config: config, api_client: api_client
 )
-mattermost_handler = Earl::Mcp::MattermostHandler.new(api_client: api_client)
 
-server = Earl::Mcp::Server.new(handlers: [approval_handler, memory_handler, heartbeat_handler, tmux_handler,
-                                          pearl_handler, github_pat_handler, mattermost_handler])
+server = Earl::Mcp::Server.new(handlers: [approval_handler, tmux_handler,
+                                          pearl_handler, github_pat_handler])
 
 server.run

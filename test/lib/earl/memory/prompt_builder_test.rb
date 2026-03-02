@@ -54,15 +54,14 @@ module Earl
         assert_includes prompt, "Likes Ruby"
       end
 
-      test "build includes save_memory and search_memory instructions" do
+      test "build includes CLI tool instructions" do
         File.write(File.join(@tmp_dir, "SOUL.md"), "I am EARL.")
         store = Earl::Memory::Store.new(dir: @tmp_dir)
         builder = Earl::Memory::PromptBuilder.new(store: store)
 
         prompt = builder.build
-        assert_includes prompt, "save_memory"
-        assert_includes prompt, "search_memory"
-        assert_includes prompt, "Save important facts"
+        assert_includes prompt, "earl heartbeat"
+        assert_includes prompt, "earl thread POST_ID"
       end
 
       test "build combines all sections" do

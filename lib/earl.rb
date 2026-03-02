@@ -55,6 +55,7 @@ require_relative "earl/runner/message_handling"
 require_relative "earl/runner/reaction_handling"
 require_relative "earl/runner/response_lifecycle"
 require_relative "earl/runner/idle_management"
+require_relative "earl/cli"
 require_relative "earl/runner"
 
 # Top-level module for EARL (Eric's Automated Response Line), a Mattermost bot
