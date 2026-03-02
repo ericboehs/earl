@@ -15,8 +15,9 @@ module Earl
         return nil if body.empty?
 
         "<earl-memory>\n#{body}\n</earl-memory>\n\n" \
-          "You have persistent memory via save_memory and search_memory tools.\n" \
-          "Save important facts you learn. Search when you need to recall something."
+          "You have CLI tools for heartbeats and thread transcripts.\n" \
+          "Heartbeats: `earl heartbeat list|create|update|delete`\n" \
+          "Thread transcripts: `earl thread POST_ID`"
       end
 
       private
