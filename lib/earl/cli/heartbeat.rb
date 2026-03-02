@@ -15,6 +15,7 @@ module Earl
       ACTIONS = %w[list create update delete].freeze
       BOOLEAN_FLAGS = %w[persistent once enabled].freeze
       INTEGER_FLAGS = %w[interval run_at timeout].freeze
+      SCHEDULE_FLAGS = %w[cron interval run_at once].freeze
 
       def self.run(argv)
         new.run(argv)
@@ -51,13 +52,11 @@ module Earl
 
       def handle_create(flags)
         name = require_flag(flags, "name")
+        require_flag(flags, "prompt")
+        require_schedule(flags)
         data = load_yaml
         heartbeats = (data["heartbeats"] ||= {})
-
-        if heartbeats.key?(name)
-          warn "Error: heartbeat '#{name}' already exists"
-          exit 1
-        end
+        abort "Error: heartbeat '#{name}' already exists" if heartbeats.key?(name)
 
         heartbeats[name] = build_entry(flags)
         save_yaml(data)
@@ -100,11 +99,14 @@ module Earl
 
       def require_flag(flags, key)
         value = flags.fetch(key, "")
-        if value.to_s.empty?
-          warn "Error: --#{key} is required"
-          exit 1
-        end
+        abort "Error: --#{key} is required" if value.to_s.empty?
         value
+      end
+
+      def require_schedule(flags)
+        return if SCHEDULE_FLAGS.any? { |key| flags.key?(key) }
+
+        abort "Error: a schedule is required (--cron, --interval, --run-at, or --once)"
       end
 
       # Parses --flag value pairs from ARGV into a hash.

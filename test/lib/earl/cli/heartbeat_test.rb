@@ -57,7 +57,9 @@ module Earl
       test "create with duplicate name exits with error" do
         write_heartbeats("existing" => { "schedule" => {}, "channel_id" => "ch", "prompt" => "p" })
 
-        error = assert_raises(SystemExit) { run_cli("create", "--name", "existing", "--prompt", "hi") }
+        error = assert_raises(SystemExit) do
+          run_cli("create", "--name", "existing", "--prompt", "hi", "--cron", "0 0 * * *")
+        end
         assert_equal 1, error.status
       end
 
@@ -135,7 +137,17 @@ module Earl
       # --- missing required flags ---
 
       test "create without --name exits with error" do
-        error = assert_raises(SystemExit) { run_cli("create", "--prompt", "hi") }
+        error = assert_raises(SystemExit) { run_cli("create", "--prompt", "hi", "--cron", "0 0 * * *") }
+        assert_equal 1, error.status
+      end
+
+      test "create without --prompt exits with error" do
+        error = assert_raises(SystemExit) { run_cli("create", "--name", "beat", "--cron", "0 0 * * *") }
+        assert_equal 1, error.status
+      end
+
+      test "create without schedule exits with error" do
+        error = assert_raises(SystemExit) { run_cli("create", "--name", "beat", "--prompt", "hi") }
         assert_equal 1, error.status
       end
 
@@ -150,15 +162,15 @@ module Earl
       end
 
       test "flag parser maps --channel alias to channel_id" do
-        run_cli("create", "--name", "beat", "--prompt", "hi", "--channel", "ch-alias")
+        run_cli("create", "--name", "beat", "--prompt", "hi", "--channel", "ch-alias", "--cron", "0 0 * * *")
 
         data = YAML.safe_load_file(@config_path)
         assert_equal "ch-alias", data["heartbeats"]["beat"]["channel_id"]
       end
 
       test "flag parser normalizes hyphens to underscores" do
-        run_cli("create", "--name", "beat", "--prompt", "hi", "--working-dir", "/tmp/test",
-                "--permission-mode", "strict")
+        run_cli("create", "--name", "beat", "--prompt", "hi", "--cron", "0 0 * * *",
+                "--working-dir", "/tmp/test", "--permission-mode", "strict")
 
         data = YAML.safe_load_file(@config_path)
         entry = data["heartbeats"]["beat"]
