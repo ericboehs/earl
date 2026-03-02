@@ -6,7 +6,7 @@ require "fileutils"
 module Earl
   module Cli
     # CLI handler for `earl heartbeat` subcommands.
-    # Reuses YamlPersistence, EntryBuilder, and Formatting from HeartbeatHandler.
+    # Reuses YamlPersistence, EntryBuilder, and Formatting from Mcp::HeartbeatHandler.
     class Heartbeat
       include Mcp::HeartbeatHandler::YamlPersistence
       include Mcp::HeartbeatHandler::EntryBuilder
@@ -109,10 +109,9 @@ module Earl
 
       # Parses --flag value pairs from ARGV into a hash.
       # Boolean flags (--persistent, --once, --enabled) are bare when no value follows.
-      # Hyphenated flags are normalized to underscores; short aliases are expanded.
+      # Hyphenated flags are normalized to underscores; explicit aliases are also expanded.
       module FlagParser
-        ALIASES = { "channel" => "channel_id", "working-dir" => "working_dir",
-                    "permission-mode" => "permission_mode" }.freeze
+        ALIASES = { "channel" => "channel_id" }.freeze
 
         def self.parse(argv)
           tokens = argv.dup
@@ -125,28 +124,43 @@ module Earl
           key = extract_key(tokens)
           return unless key
 
-          flags[key] = bare_boolean?(key, tokens) || coerce_value(key, tokens.shift)
+          if bare_boolean?(key, tokens)
+            flags[key] = true
+          else
+            abort "Error: --#{key} requires a value" if value_missing?(tokens)
+            flags[key] = coerce_value(key, tokens.shift)
+          end
         end
 
         def self.extract_key(tokens)
           token = tokens.shift
           return unless token.start_with?("--")
 
-          raw = token.delete_prefix("--")
+          raw = token.delete_prefix("--").tr("-", "_")
           ALIASES.fetch(raw, raw)
+        end
+
+        def self.value_missing?(remaining)
+          remaining.empty? || remaining.first.start_with?("--")
         end
 
         def self.bare_boolean?(key, remaining)
           return false unless BOOLEAN_FLAGS.include?(key)
 
-          remaining.empty? || remaining.first.start_with?("--")
+          value_missing?(remaining) || !%w[true false].include?(remaining.first)
         end
 
         def self.coerce_value(key, value)
-          return value.to_i if INTEGER_FLAGS.include?(key)
+          return coerce_integer(key, value) if INTEGER_FLAGS.include?(key)
           return value == "true" if BOOLEAN_FLAGS.include?(key)
 
           value
+        end
+
+        def self.coerce_integer(key, value)
+          abort "Error: --#{key} requires an integer, got '#{value}'" unless value.match?(/\A-?\d+\z/)
+
+          value.to_i
         end
       end
     end

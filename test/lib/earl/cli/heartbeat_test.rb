@@ -156,6 +156,33 @@ module Earl
         assert_equal "ch-alias", data["heartbeats"]["beat"]["channel_id"]
       end
 
+      test "flag parser normalizes hyphens to underscores" do
+        run_cli("create", "--name", "beat", "--prompt", "hi", "--working-dir", "/tmp/test",
+                "--permission-mode", "strict")
+
+        data = YAML.safe_load_file(@config_path)
+        entry = data["heartbeats"]["beat"]
+        assert_equal "/tmp/test", entry["working_dir"]
+        assert_equal "strict", entry["permission_mode"]
+      end
+
+      test "flag parser aborts on non-integer for integer flag" do
+        error = assert_raises(SystemExit) { run_cli("create", "--name", "beat", "--interval", "abc") }
+        assert_equal 1, error.status
+      end
+
+      test "flag parser aborts when non-boolean flag has no value" do
+        error = assert_raises(SystemExit) { run_cli("create", "--name", "--prompt", "hi") }
+        assert_equal 1, error.status
+      end
+
+      test "create with --enabled false stores false" do
+        run_cli("create", "--name", "beat", "--prompt", "hi", "--cron", "0 0 * * *", "--enabled", "false")
+
+        data = YAML.safe_load_file(@config_path)
+        assert_equal false, data["heartbeats"]["beat"]["enabled"]
+      end
+
       # --- invalid action ---
 
       test "unknown action exits with error" do

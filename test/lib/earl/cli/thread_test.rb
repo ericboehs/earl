@@ -68,12 +68,39 @@ module Earl
 
       # --- thread fetch HTTP failure ---
 
-      test "run aborts when thread fetch returns HTTP error" do
+      test "run aborts with HTTP status when thread fetch fails" do
         stub_post_response("post1", root_id: "")
         stub_failed_response("/posts/post1/thread")
 
-        error = assert_raises(SystemExit) { capture_io { @handler.run(["post1"]) } }
-        assert_equal 1, error.status
+        _stdout, stderr = capture_io do
+          assert_raises(SystemExit) { @handler.run(["post1"]) }
+        end
+        assert_includes stderr, "HTTP 404"
+        @api.verify
+      end
+
+      # --- JSON parse errors ---
+
+      test "run warns and aborts when post response has invalid JSON" do
+        response = build_success_response("not valid json")
+        @api.expect(:get, response, ["/posts/bad_json"])
+
+        _stdout, stderr = capture_io do
+          assert_raises(SystemExit) { @handler.run(["bad_json"]) }
+        end
+        assert_includes stderr, "failed to parse response"
+        @api.verify
+      end
+
+      test "run warns when thread response has invalid JSON" do
+        stub_post_response("post1", root_id: "")
+        response = build_success_response("not valid json")
+        @api.expect(:get, response, ["/posts/post1/thread"])
+
+        _stdout, stderr = capture_io do
+          assert_raises(SystemExit) { @handler.run(["post1"]) }
+        end
+        assert_includes stderr, "failed to parse thread response"
         @api.verify
       end
 
