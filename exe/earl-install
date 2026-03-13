@@ -38,6 +38,13 @@ for CONFIG_DIR in "$PROD_CONFIG_DIR" "$DEV_CONFIG_DIR"; do
       echo "  [$ENV_LABEL] Synced commands to $CLAUDE_HOME/.claude/commands/"
   fi
 
+  # Always sync plugin from repo template
+  PLUGIN_SRC="$EARL_DIR/config/earl-plugin"
+  if [ -d "$PLUGIN_SRC" ]; then
+    rsync -a --delete "$PLUGIN_SRC/" "$CONFIG_DIR/plugin/" && \
+      echo "  [$ENV_LABEL] Synced plugin to $CONFIG_DIR/plugin/"
+  fi
+
   # Create env file template (if not present)
   ENV_FILE="$CONFIG_DIR/env"
   if [ ! -f "$ENV_FILE" ]; then

@@ -194,7 +194,7 @@ module Earl
 
       def cli_args
         ["claude", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-         *model_args, *session_args, *permission_args, *system_prompt_args]
+         *model_args, *session_args, *permission_args, *plugin_args, *system_prompt_args]
       end
 
       def model_args
@@ -216,6 +216,11 @@ module Earl
         else
           ["--permission-prompt-tool", "mcp__earl__permission_prompt", *args]
         end
+      end
+
+      def plugin_args
+        plugin_dir = File.join(Earl.config_root, "plugin")
+        Dir.exist?(plugin_dir) ? ["--plugin-dir", plugin_dir] : []
       end
 
       def system_prompt_args

@@ -25,8 +25,11 @@ when "claude"
     exit 1
   end
   caller_dir = Dir.pwd
+  plugin_dir = File.join(Earl.config_root, "plugin")
   Dir.chdir(dir)
-  cmd = ["claude", "--add-dir", caller_dir, *ARGV.drop(1)]
+  cmd = ["claude", "--add-dir", caller_dir]
+  cmd.push("--plugin-dir", plugin_dir) if Dir.exist?(plugin_dir)
+  cmd.concat(ARGV.drop(1))
   begin
     Kernel.exec(*cmd)
   rescue Errno::ENOENT
