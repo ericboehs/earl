@@ -73,6 +73,10 @@ module Earl
       parse_post_response(@api.get("/users/#{user_id}"))
     end
 
+    def get_post(post_id:)
+      parse_post_response(@api.get("/posts/#{post_id}"))
+    end
+
     def get_channel(channel_id:)
       parse_post_response(@api.get("/channels/#{channel_id}"))
     end

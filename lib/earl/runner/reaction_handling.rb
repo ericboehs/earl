@@ -2,8 +2,11 @@
 
 module Earl
   class Runner
-    # Emoji reaction handling: routes reactions to question handler or tmux monitor.
+    # Emoji reaction handling: routes reactions to question handler, tmux monitor, or Claude session.
     module ReactionHandling
+      # Bundles reaction event data that travels together through routing.
+      ReactionEvent = Data.define(:post_id, :emoji_name)
+
       private
 
       def setup_reaction_handler
@@ -15,17 +18,38 @@ module Earl
       def handle_reaction(user_id:, post_id:, emoji_name:)
         return unless allowed_reactor?(user_id)
 
-        result = @services.question_handler.handle_reaction(post_id: post_id, emoji_name: emoji_name)
-        if result
-          thread_id = @responses.question_threads[result[:tool_use_id]]
-          return unless thread_id
+        event = ReactionEvent.new(post_id: post_id, emoji_name: emoji_name)
+        return if handle_question_reaction(event)
+        return if @services.tmux_monitor.handle_reaction(post_id: post_id, emoji_name: emoji_name)
 
-          session = @services.session_manager.get(thread_id)
-          session&.send_message(result[:answer_text])
-          return
-        end
+        forward_reaction_to_session(event)
+      end
 
-        @services.tmux_monitor.handle_reaction(post_id: post_id, emoji_name: emoji_name)
+      def handle_question_reaction(event)
+        result = @services.question_handler.handle_reaction(post_id: event.post_id, emoji_name: event.emoji_name)
+        return unless result
+
+        thread_id = @responses.question_threads[result[:tool_use_id]]
+        return unless thread_id
+
+        session = @services.session_manager.get(thread_id)
+        session&.send_message(result[:answer_text])
+      end
+
+      def forward_reaction_to_session(event)
+        post = @services.mattermost.get_post(post_id: event.post_id)
+        return if post.empty?
+
+        user_id, root_id, post_id, channel_id = post.values_at("user_id", "root_id", "id", "channel_id")
+        return unless user_id == @services.config.bot_id
+
+        thread_id = root_id.to_s.empty? ? post_id : root_id
+        return unless @services.session_manager.get(thread_id)
+
+        msg = UserMessage.new(thread_id: thread_id,
+                              text: "[The user reacted with :#{event.emoji_name}: to your message]",
+                              channel_id: channel_id, sender_name: nil)
+        enqueue_message(msg)
       end
 
       def allowed_reactor?(user_id)

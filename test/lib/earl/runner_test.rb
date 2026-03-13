@@ -582,9 +582,10 @@ module Earl
     test "handle_reaction does nothing when question handler returns nil" do
       runner = Earl::Runner.new
 
-      # Mock get_user to return a valid allowed username
+      # Mock get_user and get_post to avoid real HTTP calls
       mm = runner.instance_variable_get(:@services).mattermost
       stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_post) { |post_id:| {} }
 
       # No pending questions, so reaction handling returns nil
       assert_nothing_raised do
@@ -769,6 +770,7 @@ module Earl
 
       mm = runner.instance_variable_get(:@services).mattermost
       stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_post) { |post_id:| {} }
 
       assert_nothing_raised do
         runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
@@ -782,6 +784,7 @@ module Earl
 
       mm = runner.instance_variable_get(:@services).mattermost
       stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_post) { |post_id:| {} }
 
       # @question_threads is empty, so find_thread_for_question returns nil
       assert_nothing_raised do
@@ -1002,6 +1005,7 @@ module Earl
 
       mm = runner.instance_variable_get(:@services).mattermost
       stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_post) { |post_id:| {} }
 
       # session_manager.get returns nil
       manager = runner.instance_variable_get(:@services).session_manager
@@ -1054,9 +1058,93 @@ module Earl
       handler = runner.instance_variable_get(:@services).question_handler
       stub_singleton(handler, :handle_reaction) { |**_args| nil }
 
+      mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mm, :get_post) { |post_id:| {} }
+
       # Should not need get_user when allowlist is empty
       assert_nothing_raised do
         runner.send(:handle_reaction, user_id: "user-1", post_id: "post-1", emoji_name: "one")
+      end
+    end
+
+    test "forward_reaction_to_session enqueues message when post belongs to bot" do
+      runner = Earl::Runner.new
+      handler = runner.instance_variable_get(:@services).question_handler
+      stub_singleton(handler, :handle_reaction) { |**_args| nil }
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_post) do |post_id:|
+        { "id" => post_id, "user_id" => "bot-123", "root_id" => "thread-12345678", "channel_id" => "ch-1" }
+      end
+
+      mock_session = Object.new
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      stub_singleton(mm, :send_typing) { |**_args| }
+      stub_singleton(mm, :create_post) { |**_args| { "id" => "reply-1" } }
+      stub_singleton(mm, :update_post) { |**_args| }
+
+      assert_nothing_raised do
+        runner.send(:handle_reaction, user_id: "user-1", post_id: "earl-post-1", emoji_name: "thumbsup")
+      end
+    end
+
+    test "forward_reaction_to_session skips when post not from bot" do
+      runner = Earl::Runner.new
+      handler = runner.instance_variable_get(:@services).question_handler
+      stub_singleton(handler, :handle_reaction) { |**_args| nil }
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_post) do |post_id:|
+        { "id" => post_id, "user_id" => "other-user", "root_id" => "thread-12345678", "channel_id" => "ch-1" }
+      end
+
+      assert_nothing_raised do
+        runner.send(:handle_reaction, user_id: "user-1", post_id: "some-post", emoji_name: "thumbsup")
+      end
+    end
+
+    test "forward_reaction_to_session skips when get_post returns empty" do
+      runner = Earl::Runner.new
+      handler = runner.instance_variable_get(:@services).question_handler
+      stub_singleton(handler, :handle_reaction) { |**_args| nil }
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_post) { |post_id:| {} }
+
+      assert_nothing_raised do
+        runner.send(:handle_reaction, user_id: "user-1", post_id: "unknown-post", emoji_name: "thumbsup")
+      end
+    end
+
+    test "forward_reaction_to_session skips when session is nil" do
+      runner = Earl::Runner.new
+      handler = runner.instance_variable_get(:@services).question_handler
+      stub_singleton(handler, :handle_reaction) { |**_args| nil }
+
+      mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mm, :get_user) { |user_id:| { "username" => "alice" } }
+      stub_singleton(mm, :get_post) do |post_id:|
+        { "id" => post_id, "user_id" => "bot-123", "root_id" => "thread-12345678", "channel_id" => "ch-1" }
+      end
+
+      manager = runner.instance_variable_get(:@services).session_manager
+      stub_singleton(manager, :get) { |_id| nil }
+
+      assert_nothing_raised do
+        runner.send(:handle_reaction, user_id: "user-1", post_id: "earl-post-1", emoji_name: "thumbsup")
       end
     end
 
