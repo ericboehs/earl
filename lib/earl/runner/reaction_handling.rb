@@ -37,19 +37,25 @@ module Earl
       end
 
       def forward_reaction_to_session(event)
-        post = @services.mattermost.get_post(post_id: event.post_id)
-        return if post.empty?
-
-        user_id, root_id, post_id, channel_id = post.values_at("user_id", "root_id", "id", "channel_id")
-        return unless user_id == @services.config.bot_id
-
-        thread_id = root_id.to_s.empty? ? post_id : root_id
+        thread_id, channel_id = resolve_bot_post(event.post_id)
+        return unless thread_id
         return unless @services.session_manager.get(thread_id)
 
-        msg = UserMessage.new(thread_id: thread_id,
-                              text: "[The user reacted with :#{event.emoji_name}: to your message]",
-                              channel_id: channel_id, sender_name: nil)
+        emoji = event.emoji_name
+        log(:info, "Forwarding :#{emoji}: reaction to thread #{thread_id[0..7]}")
+        msg = UserMessage.new(thread_id: thread_id, channel_id: channel_id, sender_name: nil,
+                              text: "[The user reacted with :#{emoji}: to your message]")
         enqueue_message(msg)
+      end
+
+      def resolve_bot_post(post_id)
+        post = @services.mattermost.get_post(post_id: post_id)
+        return if post.empty?
+
+        user_id, root_id, pid, channel_id = post.values_at("user_id", "root_id", "id", "channel_id")
+        return unless user_id == @services.config.bot_id
+
+        [root_id.to_s.empty? ? pid : root_id, channel_id]
       end
 
       def allowed_reactor?(user_id)
