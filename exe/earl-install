@@ -31,6 +31,13 @@ for CONFIG_DIR in "$PROD_CONFIG_DIR" "$DEV_CONFIG_DIR"; do
     echo "  [$ENV_LABEL] Claude project config already exists (skipping)"
   fi
 
+  # Always sync commands from repo template
+  if [ -d "$CLAUDE_SRC/commands" ]; then
+    mkdir -p "$CLAUDE_HOME/.claude/commands"
+    cp "$CLAUDE_SRC/commands/"*.md "$CLAUDE_HOME/.claude/commands/" 2>/dev/null && \
+      echo "  [$ENV_LABEL] Synced commands to $CLAUDE_HOME/.claude/commands/"
+  fi
+
   # Create env file template (if not present)
   ENV_FILE="$CONFIG_DIR/env"
   if [ ! -f "$ENV_FILE" ]; then
