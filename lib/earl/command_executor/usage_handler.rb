@@ -34,7 +34,7 @@ module Earl
       end
 
       def fetch_usage_data
-        output, status = Open3.capture2(USAGE_SCRIPT, "--json", err: File::NULL)
+        output, status = Open3.capture2(Constants::USAGE_SCRIPT, "--json", err: File::NULL)
         return nil unless status.success?
 
         JSON.parse(output)
@@ -90,7 +90,7 @@ module Earl
       end
 
       def fetch_context_data(session_id)
-        output, status = Open3.capture2(CONTEXT_SCRIPT, session_id, "--json", err: File::NULL) # nosemgrep
+        output, status = Open3.capture2(Constants::CONTEXT_SCRIPT, session_id, "--json", err: File::NULL) # nosemgrep
         return nil unless status.success?
 
         JSON.parse(output)
