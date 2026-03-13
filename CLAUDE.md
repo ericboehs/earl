@@ -49,6 +49,11 @@ earl heartbeat delete --name NAME
 
 # Thread transcripts
 earl thread POST_ID
+
+# Start a Claude Code session with EARL's project config
+# Stays in your current directory, adds --add-dir for file access
+earl claude                  # basic session
+earl claude --resume         # pass any claude flags through
 ```
 
 Requires env vars (see `<config_root>/env` or `.envrc`):

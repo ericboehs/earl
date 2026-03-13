@@ -19,6 +19,9 @@
 # Ignore git worktrees
 /.worktrees
 
+# Ignore local slash commands (personal, not committed)
+/config/earl-claude-home/.claude/commands/
+
 # Ignore built gems
 /*.gem
 /pkg/
