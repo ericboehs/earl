@@ -51,6 +51,8 @@ module Earl
     # Returns nil for all other commands (handled inline).
     def execute(command, thread_id:, channel_id:)
       cmd_name = command.name
+      return { passthrough: "/loop #{command.args.first}" } if cmd_name == :loop_create
+
       slash = PASSTHROUGH_COMMANDS[cmd_name]
       return { passthrough: slash } if slash
 

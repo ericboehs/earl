@@ -30,6 +30,7 @@ module Earl
         | `!restart` | Restart EARL (pulls latest code in prod) |
         | `!spawn "prompt" [--name N] [--dir D]` | Spawn Claude in a new tmux session |
         | `!loop` | List active scheduled tasks (cron/loops) |
+        | `!loop <interval> <prompt>` | Create a recurring loop (e.g. `!loop 1h run /checkin`) |
       HELP
 
       PASSTHROUGH_COMMANDS = {

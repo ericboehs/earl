@@ -33,6 +33,7 @@ module Earl
       /\A!update\z/i => :update,
       /\A!restart\z/i => :restart,
       /\A!spawn\s+"([^"]+)"(.*)\z/i => :spawn,
+      /\A!loop\s+(.+)\z/i => :loop_create,
       /\A!loop\z/i => :loop
     }.freeze
 
