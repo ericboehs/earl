@@ -32,7 +32,8 @@ module Earl
       /\A!session\s+(\S+)\z/i => :session_show,
       /\A!update\z/i => :update,
       /\A!restart\z/i => :restart,
-      /\A!spawn\s+"([^"]+)"(.*)\z/i => :spawn
+      /\A!spawn\s+"([^"]+)"(.*)\z/i => :spawn,
+      /\A!loop\z/i => :loop
     }.freeze
 
     def self.command?(text)

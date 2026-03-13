@@ -14,6 +14,7 @@ module Earl
       private
 
       def prepare_response(session, thread_id, channel_id)
+        @responses.thread_channels[thread_id] = channel_id
         response = StreamingResponse.new(thread_id: thread_id, mattermost: @services.mattermost, channel_id: channel_id)
         @responses.active_responses[thread_id] = response
         response.start_typing
@@ -32,8 +33,10 @@ module Earl
       end
 
       def handle_response_complete(thread_id)
+        manager = @services.session_manager
+        manager.touch(thread_id)
         response = @responses.active_responses.delete(thread_id)
-        session = @services.session_manager.get(thread_id)
+        session = manager.get(thread_id)
         followup_sent = complete_response(thread_id, session, response)
 
         # Skip queue release when a follow-up is streaming — its own
@@ -73,6 +76,18 @@ module Earl
       def log_processing_error(thread_id, error)
         log(:error, "Error processing message for thread #{thread_id[0..7]}: #{error.message}")
         log(:error, error.backtrace&.first(5)&.join("\n"))
+      end
+
+      def ensure_active_response(thread_id)
+        responses = @responses.active_responses
+        existing = responses[thread_id]
+        return existing if existing
+
+        log(:info, "Autonomous output for thread #{thread_id[0..7]} — creating new response")
+        channel_id = @responses.thread_channels[thread_id]
+        response = StreamingResponse.new(thread_id: thread_id, mattermost: @services.mattermost, channel_id: channel_id)
+        responses[thread_id] = response
+        response
       end
 
       def stop_active_response(thread_id)

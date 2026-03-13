@@ -4,21 +4,27 @@ module Earl
   class Runner
     # Wires Claude session callbacks to streaming response handlers.
     module CallbackWiring
+      # Bundles the session+thread_id pair that all callback wiring methods need.
+      CallbackContext = Data.define(:session, :thread_id)
+
       private
 
       def wire_all_callbacks(bundle)
+        session, _response, thread_id = bundle.deconstruct
+        ctx = CallbackContext.new(session: session, thread_id: thread_id)
         last_tool = []
-        wire_text_callback(bundle, last_tool)
-        wire_tool_use_callback(bundle, last_tool)
-        wire_tool_result_callback(bundle)
-        wire_system_callback(bundle)
-        bundle.session.on_complete { |_| handle_response_complete(bundle.thread_id) }
+        wire_text_callback(ctx, last_tool)
+        wire_tool_use_callback(ctx, last_tool)
+        wire_tool_result_callback(ctx)
+        wire_system_callback(ctx)
+        ctx.session.on_complete { |_| handle_response_complete(thread_id) }
       end
 
-      def wire_text_callback(bundle, last_tool)
+      def wire_text_callback(ctx, last_tool)
         detector = output_detector
-        response = bundle.response
-        bundle.session.on_text do |text|
+        thread_id = ctx.thread_id
+        ctx.session.on_text do |text|
+          response = ensure_active_response(thread_id)
           tool_name = last_tool.pop
           refs = detect_images(detector, text, tool_name)
           log(:info, "wire_text_callback: tool=#{tool_name} refs=#{refs.size} text=#{text[0..60]}") unless refs.empty?
@@ -26,30 +32,30 @@ module Earl
         end
       end
 
-      def wire_tool_use_callback(bundle, last_tool)
-        session, _response, thread_id = bundle.deconstruct
-        resp_channel_id, on_tool = extract_tool_use_context(bundle.response)
-        session.on_tool_use do |tool_use|
+      def wire_tool_use_callback(ctx, last_tool)
+        thread_id = ctx.thread_id
+        ctx.session.on_tool_use do |tool_use|
+          response = ensure_active_response(thread_id)
           last_tool.replace([tool_use[:name]])
-          on_tool.call(tool_use)
-          handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: resp_channel_id)
+          response.on_tool_use(tool_use)
+          handle_tool_use(thread_id: thread_id, tool_use: tool_use, channel_id: response.channel_id)
         end
       end
 
-      def extract_tool_use_context(response)
-        [response.channel_id, response.method(:on_tool_use)]
+      def wire_system_callback(ctx)
+        session, thread_id = ctx.deconstruct
+        session.on_system do |event|
+          response = ensure_active_response(thread_id)
+          response.on_text(event[:message])
+        end
       end
 
-      def wire_system_callback(bundle)
-        response = bundle.response
-        bundle.session.on_system { |event| response.on_text(event[:message]) }
-      end
-
-      def wire_tool_result_callback(bundle)
+      def wire_tool_result_callback(ctx)
         detector = output_detector
-        session, response, _thread_id = bundle.deconstruct
+        session, thread_id = ctx.deconstruct
         work_dir = session.working_dir
         session.on_tool_result do |tool_result|
+          response = ensure_active_response(thread_id)
           refs = detect_inline(detector, tool_result, work_dir)
           response.add_image_refs(refs) unless refs.empty?
         end

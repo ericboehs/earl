@@ -29,9 +29,14 @@ module Earl
         | `!update` | Pull latest code + bundle install, then restart |
         | `!restart` | Restart EARL (pulls latest code in prod) |
         | `!spawn "prompt" [--name N] [--dir D]` | Spawn Claude in a new tmux session |
+        | `!loop` | List active scheduled tasks (cron/loops) |
       HELP
 
-      PASSTHROUGH_COMMANDS = { compact: "/compact" }.freeze
+      PASSTHROUGH_COMMANDS = {
+        compact: "/compact",
+        loop: "Use the CronList tool to list all active scheduled tasks. " \
+              "Show each task's ID, schedule, prompt, and time until next fire in a table."
+      }.freeze
 
       DISPATCH = {
         help: :handle_help, stats: :handle_stats, stop: :handle_stop,

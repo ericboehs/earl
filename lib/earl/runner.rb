@@ -25,7 +25,7 @@ module Earl
                           :tmux_store, :tmux_monitor, keyword_init: true)
 
     # Groups per-thread response tracking state.
-    ResponseState = Struct.new(:question_threads, :active_responses, keyword_init: true)
+    ResponseState = Struct.new(:question_threads, :active_responses, :thread_channels, keyword_init: true)
 
     IDLE_CHECK_INTERVAL = 300 # 5 minutes
     IDLE_TIMEOUT = 1800 # 30 minutes
@@ -35,7 +35,7 @@ module Earl
       wire_circular_deps
       @app_state = AppState.new(shutting_down: false, pending_restart: false, pending_update: false,
                                 shutdown_thread: nil, message_queue: MessageQueue.new)
-      @responses = ResponseState.new(question_threads: {}, active_responses: {})
+      @responses = ResponseState.new(question_threads: {}, active_responses: {}, thread_channels: {})
 
       configure_channels
     end
