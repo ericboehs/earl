@@ -454,8 +454,21 @@ module Earl
         end
         @stats.total_input_tokens = totals[:input]
         @stats.total_output_tokens = totals[:output]
-        context = primary_data["contextWindow"]
-        @stats.context_window = context if context
+        @stats.context_window = effective_context_window(model_id, primary_data["contextWindow"])
+      end
+
+      def effective_context_window(model_id, reported)
+        [reported.to_i, parse_context_suffix(model_id)].max
+      end
+
+      def parse_context_suffix(model_id)
+        return 0 unless model_id
+
+        match = model_id.match(/\[(\d+)([km])\]\z/i)
+        return 0 unless match
+
+        value = match[1].to_i
+        match[2].downcase == "m" ? value * 1_000_000 : value * 1_000
       end
 
       def format_result_log

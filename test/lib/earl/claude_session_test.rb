@@ -250,6 +250,49 @@ module Earl
       assert_equal "claude-sonnet-4-20250514", session.stats.model_id
     end
 
+    test "effective_context_window uses extended context from model ID suffix" do
+      session = Earl::ClaudeSession.new
+      session.on_complete { |_sess| }
+
+      event = {
+        "type" => "result", "subtype" => "success",
+        "modelUsage" => {
+          "claude-opus-4-6[1m]" => {
+            "inputTokens" => 500_000, "outputTokens" => 1000,
+            "contextWindow" => 200_000
+          }
+        }
+      }
+      session.send(:handle_event, event)
+
+      assert_equal 1_000_000, session.stats.context_window
+      assert_equal "claude-opus-4-6[1m]", session.stats.model_id
+    end
+
+    test "effective_context_window keeps reported value when no suffix" do
+      session = Earl::ClaudeSession.new
+      session.on_complete { |_sess| }
+
+      event = {
+        "type" => "result", "subtype" => "success",
+        "modelUsage" => {
+          "claude-sonnet-4-20250514" => {
+            "inputTokens" => 1000, "outputTokens" => 500,
+            "contextWindow" => 200_000
+          }
+        }
+      }
+      session.send(:handle_event, event)
+
+      assert_equal 200_000, session.stats.context_window
+    end
+
+    test "parse_context_suffix handles k suffix" do
+      session = Earl::ClaudeSession.new
+
+      assert_equal 200_000, session.send(:parse_context_suffix, "claude-sonnet-4[200k]")
+    end
+
     test "stats context_percent calculates correctly" do
       session = Earl::ClaudeSession.new
       session.on_complete { |_sess| }
