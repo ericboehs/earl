@@ -32,6 +32,7 @@ module Earl
 
         log(:info, "Stopping idle session for thread #{thread_id[0..7]} (idle #{(idle_seconds / 60).round}min)")
         @services.session_manager.stop_session(thread_id)
+        @app_state.message_queue.release(thread_id)
       end
 
       def seconds_since_activity(last_activity_at)

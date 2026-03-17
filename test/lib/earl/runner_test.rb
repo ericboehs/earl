@@ -943,8 +943,9 @@ module Earl
       assert_not stopped
     end
 
-    test "stop_if_idle stops idle sessions" do
+    test "stop_if_idle stops idle sessions and releases message queue" do
       runner = Earl::Runner.new
+      thread_id = "thread-12345678"
       persisted = Earl::SessionStore::PersistedSession.new(
         is_paused: false,
         last_activity_at: (Time.now - 7200).iso8601
@@ -954,8 +955,12 @@ module Earl
       manager = runner.instance_variable_get(:@services).session_manager
       stub_singleton(manager, :stop_session) { |_id| stopped = true }
 
-      runner.send(:stop_if_idle, "thread-12345678", persisted)
+      queue = runner.instance_variable_get(:@app_state).message_queue
+      queue.try_claim(thread_id)
+
+      runner.send(:stop_if_idle, thread_id, persisted)
       assert stopped
+      assert queue.try_claim(thread_id), "message queue claim should be released after idle kill"
     end
 
     test "stop_if_idle handles nil last_activity_at gracefully" do
