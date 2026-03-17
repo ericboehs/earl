@@ -4,15 +4,24 @@ module Earl
   class SessionManager
     # Persistence query and stats methods extracted to reduce class method count.
     module Persistence
-      # Returns the Claude session ID for a thread, checking active sessions
-      # first, then falling back to the persisted session store.
-      def claude_session_id_for(thread_id)
+      # Returns [session_id, working_dir] for a thread, checking active
+      # sessions first, then falling back to the persisted session store.
+      SessionInfo = Data.define(:session_id, :working_dir)
+
+      def session_info_for(thread_id)
         @mutex.synchronize do
           session = @sessions[thread_id]
-          return session.session_id if session
+          return SessionInfo.new(session_id: session.session_id, working_dir: session.working_dir) if session
 
-          persisted_session_for(thread_id)&.claude_session_id
+          persisted = persisted_session_for(thread_id)
+          return nil unless persisted&.claude_session_id
+
+          SessionInfo.new(session_id: persisted.claude_session_id, working_dir: persisted.working_dir)
         end
+      end
+
+      def claude_session_id_for(thread_id)
+        session_info_for(thread_id)&.session_id
       end
 
       # Returns the persisted session data for a thread from the session store.

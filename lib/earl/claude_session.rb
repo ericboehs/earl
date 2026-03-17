@@ -458,7 +458,8 @@ module Earl
       end
 
       def effective_context_window(model_id, reported)
-        [reported.to_i, parse_context_suffix(model_id)].max
+        result = [reported.to_i, parse_context_suffix(model_id)].max
+        result.positive? ? result : nil
       end
 
       def parse_context_suffix(model_id)

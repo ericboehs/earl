@@ -3,17 +3,24 @@
 # Resumes an existing session, runs /context, captures output, exits.
 #
 # Usage:
-#   bin/claude-context <session-id>          # Human-readable output
-#   bin/claude-context <session-id> --json   # JSON output for programmatic use
+#   bin/claude-context <session-id>                      # Human-readable output
+#   bin/claude-context <session-id> --json               # JSON output
+#   bin/claude-context <session-id> --json --dir /path   # With working dir
 #
 # Requires: tmux, claude CLI
 set -euo pipefail
 
-SESSION_ID="${1:?Usage: $0 <session-id> [--json]}"
+SESSION_ID="${1:?Usage: $0 <session-id> [--json] [--dir DIR]}"
+shift
 JSON_MODE=false
-if [[ "${2:-}" == "--json" ]]; then
-  JSON_MODE=true
-fi
+WORK_DIR=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) JSON_MODE=true; shift ;;
+    --dir) WORK_DIR="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
 
 TMUX_SESSION="earl-ctx-$$"
 TIMEOUT=30
@@ -22,25 +29,37 @@ cleanup() { tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true; }
 trap cleanup EXIT
 
 # Resume the Claude session in detached tmux (wide to avoid text wrapping)
-tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 80 "CLAUDECODE= claude --resume $SESSION_ID --fork-session 2>&1; sleep 30"
+CD_CMD=""
+if [[ -n "$WORK_DIR" ]]; then
+  CD_CMD="cd '$WORK_DIR' && "
+fi
+tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 80 "${CD_CMD}CLAUDECODE= claude --resume $SESSION_ID --fork-session 2>&1; sleep 30"
 
-# Wait for the session to be ready (prompt indicators)
+# Wait for the session to be ready (❯ prompt or error)
 for _ in $(seq 1 "$TIMEOUT"); do
   sleep 1
-  if tmux capture-pane -t "$TMUX_SESSION" -p -S -20 2>/dev/null | grep -q 'PR #\|Try \|Welcome\|INSERT'; then
+  PANE=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -20 2>/dev/null || echo "")
+  if echo "$PANE" | grep -q '❯\|No conversation found'; then
     break
   fi
 done
 
-# Extra settle time after prompt appears
-sleep 5
+# Bail early if session not found
+if echo "$PANE" | grep -q 'No conversation found'; then
+  if [[ "$JSON_MODE" == true ]]; then
+    echo '{"error": "Session not found"}'
+  else
+    echo "Session not found: $SESSION_ID"
+  fi
+  exit 1
+fi
 
-# Clear any pending input and send /context
-# NOTE: Do NOT send Escape — Claude TUI uses vim-style modes and Escape
-# switches from INSERT to NORMAL mode, where "/" starts a search.
-# First Enter triggers autocomplete menu, second Enter selects /context
+# Extra settle time after prompt appears
+sleep 3
+
+# Send /context command
 tmux send-keys -t "$TMUX_SESSION" C-u
-sleep 0.5
+sleep 0.3
 tmux send-keys -t "$TMUX_SESSION" '/context' Enter
 sleep 2
 tmux send-keys -t "$TMUX_SESSION" Enter
@@ -51,42 +70,46 @@ OUTPUT=$(tmux capture-pane -t "$TMUX_SESSION" -p -S -200 2>/dev/null)
 
 # Exit Claude cleanly
 tmux send-keys -t "$TMUX_SESSION" C-u
-sleep 0.5
+sleep 0.3
 tmux send-keys -t "$TMUX_SESSION" '/exit' Enter
 sleep 1
 
 # /context output uses unicode icons (⛁ ⛶ ⛝) as prefixes for each category line.
-# We anchor our greps on these icons to avoid matching conversation history that may
-# contain similar text (e.g., diffs of this very script).
 #
-# Example lines:
-#   ⛁ System prompt: 3k tokens (1.5%)
-#   ⛶ Free space: 133k (66.7%)
-#   ⛝ Autocompact buffer: 33k tokens (16.5%)
+# Current format (v2.1+):
+#   claude-opus-4-6[1m] · 31k/1000k tokens
+#    (3%)
+#   ⛁ System prompt: 5.5k tokens (0.5%)
+#   ⛶ Free space: 940k (94.0%)
+#   ⛝ Autocompact buffer: 33k tokens (3.3%)
 
-# Parse the context summary line: "claude-opus-4-6 · 34k/200k tokens (17%)"
-# The · is a UTF-8 middle dot (U+00B7), match with [^a-z]*
-# Take the LAST match in case scrollback has older /context outputs
-summary_line=$(echo "$OUTPUT" | grep -o '[a-z0-9-]* [^a-z]* [0-9.]*k*/[0-9.]*k* tokens ([0-9.]*%)' | tail -1 || echo "")
+# Parse the summary line: "model · Nk/Nk tokens" (percentage may be on next line)
+# Model names may contain brackets like [1m] or version suffixes
+summary_line=$(echo "$OUTPUT" | grep -o '[a-z0-9._-]*\[[0-9]*[km]\] · [0-9.]*k*/[0-9.]*k* tokens' | tail -1 || echo "")
+if [[ -z "$summary_line" ]]; then
+  # Fallback: model without bracket suffix
+  summary_line=$(echo "$OUTPUT" | grep -o '[a-z0-9._-]* · [0-9.]*k*/[0-9.]*k* tokens' | tail -1 || echo "")
+fi
 
 if [[ -z "$summary_line" ]]; then
   if [[ "$JSON_MODE" == true ]]; then
     echo '{"error": "Could not parse context data"}'
   else
-    echo "⚠️  Could not parse context data."
+    echo "Could not parse context data."
     echo "Raw output (last 30 lines):"
     echo "$OUTPUT" | tail -30
   fi
   exit 1
 fi
 
-model=$(echo "$summary_line" | sed 's/ [^a-z].*//')
+model=$(echo "$summary_line" | sed 's/ ·.*//')
 used_tokens=$(echo "$summary_line" | grep -o '[0-9.]*k*/' | sed 's/\///')
 total_tokens=$(echo "$summary_line" | grep -o '/[0-9.]*k* tokens' | sed 's|^/||' | sed 's/ tokens//')
-percent=$(echo "$summary_line" | grep -o '([0-9.]*%)' | tr -d '()')
+
+# Percentage may be on the same line or nearby — find closest "(N%)" after the summary
+percent=$(echo "$OUTPUT" | grep -A2 'tokens$' | grep -o '([0-9.]*%)' | head -1 | tr -d '()' || echo "")
 
 # Helper: extract token count from a /context category line.
-# Anchors on unicode icons (⛁ ⛶ ⛝) to avoid matching conversation history.
 parse_tokens() {
   echo "$OUTPUT" | grep "[⛁⛶⛝] $1" | tail -1 | grep -o '[0-9.]*k* tokens' | sed 's/ tokens//' || echo ""
 }
@@ -114,7 +137,7 @@ memory_files_pct=$(parse_pct 'Memory files:')
 skills_pct=$(parse_pct 'Skills:')
 messages_pct=$(parse_pct 'Messages:')
 free_space_pct=$(parse_pct 'Free space:')
-autocompact_pct=$(echo "$OUTPUT" | grep '[⛁⛶⛝] Autocompact buffer:' | tail -1 | grep -o '([0-9.]*%)' | tr -d '()' || echo "")
+autocompact_pct=$(echo "$OUTPUT" | grep -A1 '[⛁⛶⛝] Autocompact buffer:' | tail -1 | grep -o '([0-9.]*%)' | tr -d '()' || echo "")
 
 if [[ "$JSON_MODE" == true ]]; then
   # Helper to output a JSON string or null
@@ -139,7 +162,7 @@ if [[ "$JSON_MODE" == true ]]; then
 }
 JSON
 else
-  echo "📊 Claude Context Usage"
+  echo "Context Usage"
   echo ""
   echo "  Model:    $model"
   echo "  Context:  $used_tokens / $total_tokens tokens ($percent)"

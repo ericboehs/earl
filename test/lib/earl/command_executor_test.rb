@@ -509,9 +509,10 @@ module Earl
       posted = []
       executor = build_executor(posted: posted, session: nil)
 
-      # Override claude_session_id_for to simulate a persisted (closed) session
+      # Override session_info_for to simulate a persisted (closed) session
       manager = executor.instance_variable_get(:@deps).session_manager
-      stub_singleton(manager, :claude_session_id_for) { |_id| "persisted-abc-123" }
+      info = Earl::SessionManager::SessionInfo.new(session_id: "persisted-abc-123", working_dir: nil)
+      stub_singleton(manager, :session_info_for) { |_id| info }
 
       context_json = {
         "model" => "claude-opus-4-6",
@@ -1554,11 +1555,12 @@ module Earl
 
     test "fetch_context_data returns parsed JSON on success" do
       executor = build_executor
+      info = Earl::SessionManager::SessionInfo.new(session_id: "session-123", working_dir: "/tmp")
       mock_status = Object.new
       stub_singleton(mock_status, :success?) { true }
       stub_singleton(Open3, :capture2) { |*| ['{"model":"opus"}', mock_status] }
 
-      result = executor.send(:fetch_context_data, "session-123")
+      result = executor.send(:fetch_context_data, info)
       assert_equal "opus", result["model"]
     ensure
       Open3.singleton_class.undef_method(:capture2)
@@ -1566,11 +1568,12 @@ module Earl
 
     test "fetch_context_data returns nil on failure" do
       executor = build_executor
+      info = Earl::SessionManager::SessionInfo.new(session_id: "session-123", working_dir: "/tmp")
       mock_status = Object.new
       stub_singleton(mock_status, :success?) { false }
       stub_singleton(Open3, :capture2) { |*| ["", mock_status] }
 
-      assert_nil executor.send(:fetch_context_data, "session-123")
+      assert_nil executor.send(:fetch_context_data, info)
     ensure
       Open3.singleton_class.undef_method(:capture2)
     end
@@ -1579,20 +1582,25 @@ module Earl
       MockTmuxAdapter.new
     end
 
-    def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set, tmux_store: nil,
-                       tmux_adapter: nil, runner: nil)
-      config = Earl::Config.new
-
+    def build_mock_session_manager(session:, stopped:)
       mock_manager = Object.new
       stub_singleton(mock_manager, :get) { |_id| session }
       sess = session
       stub_singleton(mock_manager, :claude_session_id_for) do |_id|
         sess.respond_to?(:session_id) ? sess.session_id : nil
       end
+      stub_singleton(mock_manager, :session_info_for) do |_id|
+        sid = sess.respond_to?(:session_id) ? sess.session_id : nil
+        sid ? Earl::SessionManager::SessionInfo.new(session_id: sid, working_dir: nil) : nil
+      end
       stub_singleton(mock_manager, :persisted_session_for) { |_id| nil }
       stoppd = stopped
       stub_singleton(mock_manager, :stop_session) { |thread_id| stoppd << thread_id }
+      mock_manager
+    end
 
+    def build_executor(posted: [], session: nil, stopped: [], heartbeat_scheduler: :not_set, tmux_store: nil,
+                       tmux_adapter: nil, runner: nil)
       pstd = posted
       mock_mm = Object.new
       stub_singleton(mock_mm, :create_post) do |channel_id:, message:, root_id:|
@@ -1601,9 +1609,9 @@ module Earl
       end
 
       opts = {
-        session_manager: mock_manager,
+        session_manager: build_mock_session_manager(session: session, stopped: stopped),
         mattermost: mock_mm,
-        config: config
+        config: Earl::Config.new
       }
       opts[:heartbeat_scheduler] = heartbeat_scheduler unless heartbeat_scheduler == :not_set
       opts[:tmux_store] = tmux_store[:store] if tmux_store

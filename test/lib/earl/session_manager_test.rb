@@ -569,6 +569,7 @@ module Earl
       stub_singleton(session, :alive?) { alive }
       stub_singleton(session, :kill) { on_kill&.call }
       stub_singleton(session, :session_id) { "fake-session-id" }
+      stub_singleton(session, :working_dir) { nil }
       mock_stats = Object.new
       stub_singleton(mock_stats, :total_cost) { 0.0 }
       stub_singleton(mock_stats, :total_input_tokens) { 0 }

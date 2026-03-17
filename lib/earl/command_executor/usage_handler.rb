@@ -16,10 +16,6 @@ module Earl
 
       def handle_usage(ctx)
         reply(ctx, ":hourglass: Fetching usage data (takes ~15s)...")
-        run_usage_fetch(ctx)
-      end
-
-      def run_usage_fetch(ctx)
         Thread.new { usage_fetch_body(ctx) }
       end
 
@@ -65,22 +61,18 @@ module Earl
       end
 
       def handle_context(ctx)
-        sid = @deps.session_manager.claude_session_id_for(ctx.thread_id)
-        unless sid
+        info = @deps.session_manager.session_info_for(ctx.thread_id)
+        unless info
           reply(ctx, "No session found for this thread.")
           return
         end
 
         reply(ctx, ":hourglass: Fetching context data (takes ~20s)...")
-        run_context_fetch(ctx, sid)
+        Thread.new { context_fetch_body(ctx, info) }
       end
 
-      def run_context_fetch(ctx, sid)
-        Thread.new { context_fetch_body(ctx, sid) }
-      end
-
-      def context_fetch_body(ctx, sid)
-        data = fetch_context_data(sid)
+      def context_fetch_body(ctx, info)
+        data = fetch_context_data(info)
         message = data ? format_context(data) : ":x: Failed to fetch context data."
         reply(ctx, message)
       rescue StandardError => error
@@ -89,8 +81,11 @@ module Earl
         reply(ctx, ":x: Error fetching context: #{msg}")
       end
 
-      def fetch_context_data(session_id)
-        output, status = Open3.capture2(Constants::CONTEXT_SCRIPT, session_id, "--json", err: File::NULL) # nosemgrep
+      def fetch_context_data(info)
+        working_dir = info.working_dir || Earl.claude_home
+        output, status = Open3.capture2( # nosemgrep
+          Constants::CONTEXT_SCRIPT, info.session_id, "--json", "--dir", working_dir, err: File::NULL
+        )
         return nil unless status.success?
 
         JSON.parse(output)
