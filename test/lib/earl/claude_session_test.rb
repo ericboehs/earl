@@ -616,6 +616,29 @@ module Earl
       assert_not called
     end
 
+    test "read_stdout fires on_exit callback when stream ends" do
+      session = Earl::ClaudeSession.new
+      exited = false
+      session.on_exit { exited = true }
+
+      stdout = StringIO.new("")
+      session.send(:read_stdout, stdout)
+
+      assert exited
+    end
+
+    test "read_stdout fires on_exit even after IOError" do
+      session = Earl::ClaudeSession.new
+      exited = false
+      session.on_exit { exited = true }
+
+      stdout = Object.new
+      stub_singleton(stdout, :each_line) { raise IOError }
+      session.send(:read_stdout, stdout)
+
+      assert exited
+    end
+
     test "read_stderr logs lines" do
       session = Earl::ClaudeSession.new
       stderr = StringIO.new("some debug output\n")

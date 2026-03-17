@@ -33,7 +33,8 @@ module Earl
       end
     end
     # Holds text-streaming, tool-use, and completion callback procs.
-    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_tool_result, :on_system, keyword_init: true)
+    Callbacks = Struct.new(:on_text, :on_complete, :on_tool_use, :on_tool_result, :on_system, :on_exit,
+                           keyword_init: true)
     # Bundles MCP server env with permission mode to avoid boolean parameters.
     McpConfig = Data.define(:env, :skip_permissions)
 
@@ -73,6 +74,7 @@ module Earl
     def on_tool_use(&block) = @runtime.callbacks.on_tool_use = block
     def on_system(&block) = @runtime.callbacks.on_system = block
     def on_tool_result(&block) = @runtime.callbacks.on_tool_result = block
+    def on_exit(&block) = @runtime.callbacks.on_exit = block
 
     def send_message(content)
       return warn_dead_session unless alive?
@@ -304,6 +306,8 @@ module Earl
         end
       rescue IOError
         log(:debug, "Claude stdout stream closed (session #{short_id})")
+      ensure
+        @runtime.callbacks.on_exit&.call
       end
 
       def process_line(line)

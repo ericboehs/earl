@@ -92,6 +92,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
       stub_singleton(mock_session, :total_cost) { 0.05 }
@@ -161,6 +162,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
 
@@ -227,6 +229,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
       stub_singleton(mock_session, :total_cost) { 0.0 }
@@ -269,6 +272,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
 
@@ -353,6 +357,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |text| sent_messages << text }
       stub_singleton(mock_session, :total_cost) { 0.0 }
@@ -415,6 +420,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
       stub_singleton(mock_session, :total_cost) { 0.0 }
@@ -515,6 +521,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&block| on_tool_use_callback = block }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
 
@@ -543,6 +550,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&block| on_tool_use_callback = block }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
 
@@ -631,6 +639,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
       stub_singleton(mock_session, :stats) { stats }
@@ -675,6 +684,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
       stub_singleton(mock_session, :stats) { stats }
@@ -802,6 +812,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&block| on_tool_use_callback = block }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
 
@@ -876,6 +887,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| false } # Dead session
       stub_singleton(mock_session, :stats) do
@@ -1090,6 +1102,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
 
       mock_manager = build_mock_manager(mock_session)
@@ -2049,6 +2062,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |_text| true }
       stub_singleton(mock_session, :stats) do
@@ -2086,6 +2100,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&_block| }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&block| on_tool_result_block = block }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { "/tmp" }
       stub_singleton(mock_session, :send_message) { |_text| true }
       stub_singleton(mock_session, :stats) do
@@ -2142,6 +2157,7 @@ module Earl
       stub_singleton(mock_session, :on_complete) { |&block| on_complete_cb = block }
       stub_singleton(mock_session, :on_tool_use) { |&_block| }
       stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) do |text|
         sent_messages << text
@@ -2184,6 +2200,7 @@ module Earl
       stub_singleton(mock, :on_complete) { |&_block| }
       stub_singleton(mock, :on_tool_use) { |&_block| }
       stub_singleton(mock, :on_tool_result) { |&_block| }
+      stub_singleton(mock, :on_exit) { |&_block| }
       stub_singleton(mock, :working_dir) { nil }
       stub_singleton(mock, :send_message) { |text| on_send&.call(text) }
       stub_singleton(mock, :total_cost) { 0.0 }

@@ -17,6 +17,7 @@ module Earl
         wire_tool_use_callback(ctx, last_tool)
         wire_tool_result_callback(ctx)
         wire_system_callback(ctx)
+        wire_exit_callback(ctx)
         ctx.session.on_complete { |_| handle_response_complete(thread_id) }
       end
 
@@ -58,6 +59,16 @@ module Earl
           response = ensure_active_response(thread_id)
           refs = detect_inline(detector, tool_result, work_dir)
           response.add_image_refs(refs) unless refs.empty?
+        end
+      end
+
+      def wire_exit_callback(ctx)
+        thread_id = ctx.thread_id
+        ctx.session.on_exit do
+          log(:debug, "Session #{thread_id[0..7]} reader exited — releasing message queue claim")
+          @app_state.message_queue.release(thread_id)
+          response = @responses.active_responses.delete(thread_id)
+          response&.stop_typing
         end
       end
 
