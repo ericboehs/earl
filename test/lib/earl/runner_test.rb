@@ -965,6 +965,7 @@ module Earl
 
       suspended = false
       manager = runner.instance_variable_get(:@services).session_manager
+      stub_singleton(manager, :get) { |_id| Object.new }
       stub_singleton(manager, :suspend_session) { |_id| suspended = true }
 
       queue = runner.instance_variable_get(:@app_state).message_queue
@@ -973,6 +974,22 @@ module Earl
       runner.send(:stop_if_idle, thread_id, persisted)
       assert suspended
       assert queue.try_claim(thread_id), "message queue claim should be released after idle suspend"
+    end
+
+    test "stop_if_idle skips already-suspended sessions with no active process" do
+      runner = Earl::Runner.new
+      persisted = Earl::SessionStore::PersistedSession.new(
+        is_paused: false,
+        last_activity_at: (Time.now - 7200).iso8601
+      )
+
+      suspended = false
+      manager = runner.instance_variable_get(:@services).session_manager
+      stub_singleton(manager, :get) { |_id| nil }
+      stub_singleton(manager, :suspend_session) { |_id| suspended = true }
+
+      runner.send(:stop_if_idle, "thread-12345678", persisted)
+      assert_not suspended
     end
 
     test "stop_if_idle handles nil last_activity_at gracefully" do

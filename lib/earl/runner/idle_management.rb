@@ -26,12 +26,15 @@ module Earl
       def stop_if_idle(thread_id, persisted)
         return if persisted.is_paused
 
+        manager = @services.session_manager
+        return unless manager.get(thread_id)
+
         idle_seconds = seconds_since_activity(persisted.last_activity_at)
         return unless idle_seconds
         return unless idle_seconds > IDLE_TIMEOUT
 
         log(:info, "Suspending idle session for thread #{thread_id[0..7]} (idle #{(idle_seconds / 60).round}min)")
-        @services.session_manager.suspend_session(thread_id)
+        manager.suspend_session(thread_id)
         @app_state.message_queue.release(thread_id)
       end
 
