@@ -11,11 +11,20 @@ module Earl
     end
 
     def check!
-      return unless File.exist?(path)
+      existing_pid = read_pid
+      return unless existing_pid
 
-      existing_pid = File.read(path).strip.to_i
-      return unless existing_pid.positive?
+      verify_not_running!(existing_pid)
+    end
 
+    def read_pid
+      return nil unless File.exist?(path)
+
+      pid = File.read(path).strip.to_i
+      pid.positive? && pid != Process.pid ? pid : nil
+    end
+
+    def verify_not_running!(existing_pid)
       Process.kill(0, existing_pid)
       abort "EARL is already running (pid #{existing_pid}). Aborting."
     rescue Errno::ESRCH

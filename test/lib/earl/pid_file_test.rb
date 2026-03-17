@@ -39,12 +39,20 @@ module Earl
     end
 
     test "check! aborts with message when process is alive" do
-      File.write(PidFile.path, Process.pid.to_s)
+      # Use parent PID which is always alive and owned by us
+      ppid = Process.ppid
+      File.write(PidFile.path, ppid.to_s)
       _out, err = capture_io do
         error = assert_raises(SystemExit) { PidFile.check! }
         assert_equal 1, error.status
       end
-      assert_includes err, "already running (pid #{Process.pid})"
+      assert_includes err, "already running (pid #{ppid})"
+    end
+
+    test "check! skips when PID file contains own PID (exec restart)" do
+      File.write(PidFile.path, Process.pid.to_s)
+      assert_nothing_raised { PidFile.check! }
+      assert File.exist?(PidFile.path)
     end
 
     test "check! aborts with message for EPERM" do
