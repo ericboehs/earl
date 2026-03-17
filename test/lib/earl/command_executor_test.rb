@@ -1529,6 +1529,52 @@ module Earl
       assert(posted.any? { |p| p[:message].include?("Error fetching context") })
     end
 
+    test "fetch_usage_data returns parsed JSON on success" do
+      executor = build_executor
+      mock_status = Object.new
+      stub_singleton(mock_status, :success?) { true }
+      stub_singleton(Open3, :capture2) { |*| ['{"session":{"percent_used":50}}', mock_status] }
+
+      result = executor.send(:fetch_usage_data)
+      assert_equal 50, result.dig("session", "percent_used")
+    ensure
+      Open3.singleton_class.undef_method(:capture2)
+    end
+
+    test "fetch_usage_data returns nil on failure" do
+      executor = build_executor
+      mock_status = Object.new
+      stub_singleton(mock_status, :success?) { false }
+      stub_singleton(Open3, :capture2) { |*| ["", mock_status] }
+
+      assert_nil executor.send(:fetch_usage_data)
+    ensure
+      Open3.singleton_class.undef_method(:capture2)
+    end
+
+    test "fetch_context_data returns parsed JSON on success" do
+      executor = build_executor
+      mock_status = Object.new
+      stub_singleton(mock_status, :success?) { true }
+      stub_singleton(Open3, :capture2) { |*| ['{"model":"opus"}', mock_status] }
+
+      result = executor.send(:fetch_context_data, "session-123")
+      assert_equal "opus", result["model"]
+    ensure
+      Open3.singleton_class.undef_method(:capture2)
+    end
+
+    test "fetch_context_data returns nil on failure" do
+      executor = build_executor
+      mock_status = Object.new
+      stub_singleton(mock_status, :success?) { false }
+      stub_singleton(Open3, :capture2) { |*| ["", mock_status] }
+
+      assert_nil executor.send(:fetch_context_data, "session-123")
+    ensure
+      Open3.singleton_class.undef_method(:capture2)
+    end
+
     def build_mock_tmux_adapter
       MockTmuxAdapter.new
     end
