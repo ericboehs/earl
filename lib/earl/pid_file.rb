@@ -19,7 +19,8 @@ module Earl
       Process.kill(0, existing_pid)
       abort "EARL is already running (pid #{existing_pid}). Aborting."
     rescue Errno::ESRCH
-      Earl.logger.warn "Removing stale PID file (pid #{existing_pid} not found)"
+      FileUtils.rm_f(path)
+      Earl.logger.warn "Removed stale PID file (pid #{existing_pid} not found)"
     rescue Errno::EPERM
       abort "EARL is already running (pid #{existing_pid}, owned by another user). Aborting."
     end

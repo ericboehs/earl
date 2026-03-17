@@ -35,20 +35,28 @@ module Earl
     test "check! removes stale PID file and continues" do
       File.write(PidFile.path, "999999999")
       assert_nothing_raised { PidFile.check! }
+      assert_not File.exist?(PidFile.path)
     end
 
-    test "check! aborts when process is alive" do
+    test "check! aborts with message when process is alive" do
       File.write(PidFile.path, Process.pid.to_s)
-      error = assert_raises(SystemExit) { capture_io { PidFile.check! } }
-      assert_equal 1, error.status
+      _out, err = capture_io do
+        error = assert_raises(SystemExit) { PidFile.check! }
+        assert_equal 1, error.status
+      end
+      assert_includes err, "already running (pid #{Process.pid})"
     end
 
-    test "check! aborts with EPERM" do
+    test "check! aborts with message for EPERM" do
       File.write(PidFile.path, "42")
       original_kill = Process.method(:kill)
       stub_singleton(Process, :kill) { |*| raise Errno::EPERM }
-      error = assert_raises(SystemExit) { capture_io { PidFile.check! } }
-      assert_equal 1, error.status
+      _out, err = capture_io do
+        error = assert_raises(SystemExit) { PidFile.check! }
+        assert_equal 1, error.status
+      end
+      assert_includes err, "already running (pid 42"
+      assert_includes err, "another user"
     ensure
       stub_singleton(Process, :kill) { |*args| original_kill.call(*args) }
     end

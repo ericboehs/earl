@@ -77,6 +77,9 @@ when "restart"
     warn "Process #{pid} not found — removing stale PID file"
     File.delete(Earl::PidFile.path)
     exit 1
+  rescue Errno::EPERM
+    warn "Cannot signal process #{pid} — owned by another user"
+    exit 1
   end
   exit 0
 when "update"
