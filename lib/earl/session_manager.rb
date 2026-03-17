@@ -55,6 +55,13 @@ module Earl
       end
     end
 
+    def suspend_session(thread_id)
+      @mutex.synchronize do
+        session = @sessions.delete(thread_id)
+        session&.kill
+      end
+    end
+
     def stop_all
       @mutex.synchronize do
         log(:info, "Stopping #{@sessions.size} session(s)...")

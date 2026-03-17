@@ -30,8 +30,8 @@ module Earl
         return unless idle_seconds
         return unless idle_seconds > IDLE_TIMEOUT
 
-        log(:info, "Stopping idle session for thread #{thread_id[0..7]} (idle #{(idle_seconds / 60).round}min)")
-        @services.session_manager.stop_session(thread_id)
+        log(:info, "Suspending idle session for thread #{thread_id[0..7]} (idle #{(idle_seconds / 60).round}min)")
+        @services.session_manager.suspend_session(thread_id)
         @app_state.message_queue.release(thread_id)
       end
 
