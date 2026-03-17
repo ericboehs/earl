@@ -93,7 +93,7 @@ module Earl
       def stop_active_response(thread_id)
         response = @responses.active_responses.delete(thread_id)
         response&.stop_typing
-        @app_state.message_queue.dequeue(thread_id)
+        @app_state.message_queue.release(thread_id)
       end
 
       def cleanup_failed_send(thread_id)
