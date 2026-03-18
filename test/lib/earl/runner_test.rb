@@ -388,6 +388,46 @@ module Earl
       assert_equal ["second"], injected_messages
     end
 
+    test "enqueue_message queues when message has file attachments even if session alive" do
+      runner = Earl::Runner.new
+
+      injected_messages = []
+      stats = mock_stats
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :inject_message) { |text| injected_messages << text }
+      stub_singleton(mock_session, :alive?) { true }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
+
+      # First message claims the thread
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "first", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Second message has attachments — should be queued, not injected
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "with image",
+                                                channel_id: nil, sender_name: nil, file_ids: %w[file-1]))
+
+      assert_empty injected_messages
+    end
+
     test "enqueue_message queues when thread is busy and session is dead" do
       runner = Earl::Runner.new
 
