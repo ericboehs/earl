@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "message_injection"
+
 module Earl
   class Runner
     # Message routing: receives user messages, dispatches commands or enqueues for Claude.
@@ -8,12 +10,8 @@ module Earl
 
       def setup_message_handler
         @services.mattermost.on_message do |**params|
-          receive_message(params) if allowed_user?(params[:sender_name])
+          handle_incoming_message(build_user_message(params)) if allowed_user?(params[:sender_name])
         end
-      end
-
-      def receive_message(params)
-        handle_incoming_message(build_user_message(params))
       end
 
       def build_user_message(params)
@@ -50,9 +48,11 @@ module Earl
         if queue.try_claim(thread_id)
           process_message(msg)
         else
-          queue.enqueue(thread_id, msg)
+          inject_or_enqueue(msg)
         end
       end
+
+      include MessageInjection
 
       def process_message(msg)
         sent = false
@@ -76,8 +76,8 @@ module Earl
       end
 
       def build_contextual_text(thread_id, text)
-        ThreadContextBuilder.new(mattermost: @services.mattermost, content_builder: content_builder)
-                            .build(thread_id, text)
+        builder = ThreadContextBuilder.new(mattermost: @services.mattermost, content_builder: content_builder)
+        builder.build(thread_id, text)
       end
 
       # Image content assembly: attaches and merges image blocks with text.

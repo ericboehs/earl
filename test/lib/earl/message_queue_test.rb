@@ -122,6 +122,35 @@ module Earl
       assert @queue.try_claim("thread-1")
     end
 
+    test "inject increments pending turns counter" do
+      @queue.inject("thread-1")
+      assert_equal :has_pending_turns, @queue.complete_turn("thread-1")
+    end
+
+    test "complete_turn decrements pending turns and returns has_pending_turns when turns remain" do
+      @queue.inject("thread-1")
+      @queue.inject("thread-1")
+      assert_equal :has_pending_turns, @queue.complete_turn("thread-1")
+      assert_equal :has_pending_turns, @queue.complete_turn("thread-1")
+    end
+
+    test "complete_turn returns no_pending_turns when counter is zero" do
+      assert_equal :no_pending_turns, @queue.complete_turn("thread-1")
+    end
+
+    test "complete_turn transitions from has_pending to no_pending" do
+      @queue.inject("thread-1")
+      assert_equal :has_pending_turns, @queue.complete_turn("thread-1")
+      assert_equal :no_pending_turns, @queue.complete_turn("thread-1")
+    end
+
+    test "release clears pending turns" do
+      @queue.try_claim("thread-1")
+      @queue.inject("thread-1")
+      @queue.release("thread-1")
+      assert_equal :no_pending_turns, @queue.complete_turn("thread-1")
+    end
+
     test "enqueue and dequeue preserves UserMessage objects" do
       @queue.try_claim("thread-1")
       msg = Earl::Runner::UserMessage.new(

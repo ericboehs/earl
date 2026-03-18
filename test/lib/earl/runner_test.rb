@@ -345,7 +345,50 @@ module Earl
       assert_equal "Hi Earl", sent_text
     end
 
-    test "enqueue_message queues messages when thread is busy" do
+    test "enqueue_message injects message when thread is busy and session alive" do
+      runner = Earl::Runner.new
+
+      on_complete_callback = nil
+      sent_messages = []
+      injected_messages = []
+      stats = mock_stats
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |text| sent_messages << text }
+      stub_singleton(mock_session, :inject_message) { |text| injected_messages << text }
+      stub_singleton(mock_session, :alive?) { true }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
+
+      # First message starts processing normally
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "first", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Second message should be injected (session is alive)
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "second", channel_id: nil,
+                                                sender_name: nil))
+
+      assert_equal ["first"], sent_messages
+      assert_equal ["second"], injected_messages
+    end
+
+    test "enqueue_message queues when thread is busy and session is dead" do
       runner = Earl::Runner.new
 
       on_complete_callback = nil
@@ -360,6 +403,7 @@ module Earl
       stub_singleton(mock_session, :on_exit) { |&_block| }
       stub_singleton(mock_session, :working_dir) { nil }
       stub_singleton(mock_session, :send_message) { |text| sent_messages << text }
+      stub_singleton(mock_session, :alive?) { false }
       stub_singleton(mock_session, :total_cost) { 0.0 }
       stub_singleton(mock_session, :stats) { stats }
 
@@ -376,7 +420,7 @@ module Earl
                                                 sender_name: nil))
       sleep 0.05
 
-      # Second message should be queued (thread is busy)
+      # Second message should be queued (session is dead)
       runner.send(:enqueue_message,
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "second", channel_id: nil,
                                                 sender_name: nil))
@@ -444,6 +488,52 @@ module Earl
       message_queue = runner.instance_variable_get(:@app_state).message_queue
       processing = message_queue.instance_variable_get(:@processing_threads)
       assert_not processing.include?("thread-12345678")
+    end
+
+    test "handle_response_complete skips queue drain when pending injected turns remain" do
+      runner = Earl::Runner.new
+
+      on_complete_callback = nil
+      stats = mock_stats
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :inject_message) { |_text| true }
+      stub_singleton(mock_session, :alive?) { true }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
+
+      # First message claims the thread
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "first", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Inject a message while busy
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "injected", channel_id: nil,
+                                                sender_name: nil))
+
+      # Complete first response — should NOT drain queue (pending turn remains)
+      message_queue = runner.instance_variable_get(:@app_state).message_queue
+      on_complete_callback.call(mock_session)
+
+      # Thread should still be claimed (not released by dequeue)
+      processing = message_queue.instance_variable_get(:@processing_threads)
+      assert processing.include?("thread-12345678")
     end
 
     test "message handler ignores non-allowed users" do

@@ -38,10 +38,18 @@ module Earl
         response = @responses.active_responses.delete(thread_id)
         session = manager.get(thread_id)
         followup_sent = complete_response(thread_id, session, response)
+        return if followup_sent
 
-        # Skip queue release when a follow-up is streaming — its own
-        # on_complete callback will call handle_response_complete again.
-        process_next_queued(thread_id) unless followup_sent
+        drain_or_wait_for_pending(thread_id)
+      end
+
+      def drain_or_wait_for_pending(thread_id)
+        case @app_state.message_queue.complete_turn(thread_id)
+        when :has_pending_turns
+          log(:debug, "Pending injected turns remain for thread #{thread_id[0..7]} — skipping queue drain")
+        when :no_pending_turns
+          process_next_queued(thread_id)
+        end
       end
 
       def complete_response(thread_id, session, response)
