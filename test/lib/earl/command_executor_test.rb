@@ -3,6 +3,7 @@
 require "test_helper"
 
 module Earl
+  # Tests for the CommandExecutor bang-command dispatch logic.
   class CommandExecutorTest < Minitest::Test
     setup do
       Earl.logger = Logger.new(File::NULL)
@@ -851,6 +852,20 @@ module Earl
       assert_includes posted.first[:message], "cleaned up"
     end
 
+    test "!session <name> kill cleans up non-nil store when NotFound" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.kill_session_error = Earl::Tmux::NotFound.new("not found")
+      tmux_store = build_watch_store
+      executor = build_executor(posted: posted, tmux_adapter: tmux, tmux_store: tmux_store)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :session_kill, args: ["dev"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "not found"
+      assert_includes tmux_store[:deleted], "dev"
+    end
+
     test "!session <name> nudge sends nudge message" do
       posted = []
       tmux = build_mock_tmux_adapter
@@ -1587,6 +1602,221 @@ module Earl
       Open3.singleton_class.undef_method(:capture2)
     end
 
+    # -- Watch/unwatch commands --
+
+    test "!watch registers pane in tmux store" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.session_exists_result = true
+      tmux.list_all_panes_result = [
+        { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+          command: "2.1.42", path: "/home/user/earl", pid: 100, tty: "/dev/ttys001" }
+      ]
+      tmux.claude_on_tty_results = { "/dev/ttys001" => true }
+      tmux_store = build_watch_store
+      executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :watch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_equal 1, tmux_store[:saved].size
+      saved = tmux_store[:saved].first
+      assert_equal "code:1.0", saved.name
+      assert_equal "channel-1", saved.channel_id
+      assert_equal "/home/user/earl", saved.working_dir
+      assert_includes posted.first[:message], "Now watching"
+    end
+
+    test "!watch uses ctx.thread_id for alerts" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.session_exists_result = true
+      tmux.list_all_panes_result = [
+        { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+          command: "2.1.42", path: "/home/user/earl", pid: 100, tty: "/dev/ttys001" }
+      ]
+      tmux.claude_on_tty_results = { "/dev/ttys001" => true }
+      tmux_store = build_watch_store
+      executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :watch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      saved = tmux_store[:saved].first
+      assert_equal "thread-1", saved.thread_id
+    end
+
+    test "!watch rejects already watched pane" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      existing_info = Earl::TmuxSessionStore::TmuxSessionInfo.new(name: "code:1.0")
+      tmux_store = build_watch_store(existing: { "code:1.0" => existing_info })
+      executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :watch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_empty tmux_store[:saved]
+      assert_includes posted.first[:message], "already being watched"
+    end
+
+    test "!watch rejects pane not found in list_all_panes" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.list_all_panes_result = []
+      tmux_store = build_watch_store
+      executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :watch, args: ["gone:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "not found"
+    end
+
+    test "!watch rejects pane without Claude" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.session_exists_result = true
+      tmux.list_all_panes_result = [
+        { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+          command: "bash", path: "/home/user", pid: 100, tty: "/dev/ttys001" }
+      ]
+      tmux.claude_on_tty_results = { "/dev/ttys001" => false }
+      tmux_store = build_watch_store
+      executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :watch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "No Claude session detected"
+    end
+
+    test "!watch rejects when tmux_store is nil" do
+      posted = []
+      executor = build_executor(posted: posted, tmux_store: nil)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :watch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "not configured"
+    end
+
+    test "!watch rejects empty target" do
+      posted = []
+      executor = build_executor(posted: posted)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :watch, args: [""])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "Usage"
+    end
+
+    test "!unwatch removes pane from store" do
+      posted = []
+      existing_info = Earl::TmuxSessionStore::TmuxSessionInfo.new(name: "code:1.0")
+      tmux_store = build_watch_store(existing: { "code:1.0" => existing_info })
+      executor = build_executor(posted: posted, tmux_store: tmux_store)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :unwatch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes tmux_store[:deleted], "code:1.0"
+      assert_includes posted.first[:message], "Stopped watching"
+    end
+
+    test "!unwatch rejects unwatched pane" do
+      posted = []
+      tmux_store = build_watch_store
+      executor = build_executor(posted: posted, tmux_store: tmux_store)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :unwatch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "not being watched"
+    end
+
+    test "!unwatch rejects when tmux_store is nil" do
+      posted = []
+      executor = build_executor(posted: posted, tmux_store: nil)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :unwatch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "not configured"
+    end
+
+    test "!unwatch rejects empty target" do
+      posted = []
+      executor = build_executor(posted: posted)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :unwatch, args: [""])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "Usage"
+    end
+
+    test "!sessions shows watched indicator for watched pane" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.available_result = true
+      tmux.list_all_panes_result = [
+        { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+          command: "2.1.42", path: "/home/user/earl", pid: 100, tty: "/dev/ttys001" }
+      ]
+      tmux.claude_on_tty_results = { "/dev/ttys001" => true }
+      tmux.capture_pane_result = "working on stuff\n"
+      existing_info = Earl::TmuxSessionStore::TmuxSessionInfo.new(name: "code:1.0")
+      tmux_store = build_watch_store(existing: { "code:1.0" => existing_info })
+      executor = build_executor(posted: posted, tmux_adapter: tmux, tmux_store: tmux_store)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], ":eyes:"
+    end
+
+    test "!watch rejects pane missing from list_all_panes" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.list_all_panes_result = []
+      tmux_store = build_watch_store
+      executor = build_executor(posted: posted, tmux_store: tmux_store, tmux_adapter: tmux)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :watch, args: ["code:1.0"])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "not found"
+    end
+
+    test "!sessions shows no watched indicator when tmux_store is nil" do
+      posted = []
+      tmux = build_mock_tmux_adapter
+      tmux.available_result = true
+      tmux.list_all_panes_result = [
+        { target: "code:1.0", session: "code", window: 1, pane_index: 0,
+          command: "2.1.42", path: "/home/user/earl", pid: 100, tty: "/dev/ttys001" }
+      ]
+      tmux.claude_on_tty_results = { "/dev/ttys001" => true }
+      tmux.capture_pane_result = "working on stuff\n"
+      executor = build_executor(posted: posted, tmux_adapter: tmux, tmux_store: nil)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :sessions, args: [])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_not_includes posted.first[:message], ":eyes:"
+    end
+
+    test "!help includes watch commands" do
+      posted = []
+      executor = build_executor(posted: posted)
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :help, args: [])
+      executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_includes posted.first[:message], "!watch"
+      assert_includes posted.first[:message], "!unwatch"
+    end
+
     def build_mock_tmux_adapter
       MockTmuxAdapter.new
     end
@@ -1637,6 +1867,19 @@ module Earl
       dlt = tracker[:deleted]
       stub_singleton(store, :save) { |info| svd << info }
       stub_singleton(store, :delete) { |name| dlt << name }
+      tracker[:store] = store
+      tracker
+    end
+
+    def build_watch_store(existing: {})
+      tracker = { saved: [], deleted: [], existing: existing }
+      store = Object.new
+      svd = tracker[:saved]
+      dlt = tracker[:deleted]
+      ext = tracker[:existing]
+      stub_singleton(store, :save) { |info| svd << info }
+      stub_singleton(store, :delete) { |name| dlt << name }
+      stub_singleton(store, :get) { |name| ext[name] }
       tracker[:store] = store
       tracker
     end

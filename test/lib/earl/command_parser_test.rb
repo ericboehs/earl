@@ -3,6 +3,7 @@
 require "test_helper"
 
 module Earl
+  # Tests for the CommandParser bang-command parsing logic.
   class CommandParserTest < Minitest::Test
     test "command? returns true for ! prefixed text" do
       assert Earl::CommandParser.command?("!help")
@@ -219,6 +220,39 @@ module Earl
 
       cmd = Earl::CommandParser.parse("!SPAWN \"hello\"")
       assert_equal :spawn, cmd.name
+    end
+
+    # -- Watch/unwatch commands --
+
+    test "parse recognizes !watch with pane target" do
+      cmd = Earl::CommandParser.parse("!watch code:1.0")
+      assert_equal :watch, cmd.name
+      assert_equal ["code:1.0"], cmd.args
+    end
+
+    test "parse recognizes !watch with session name" do
+      cmd = Earl::CommandParser.parse("!watch my-session")
+      assert_equal :watch, cmd.name
+      assert_equal ["my-session"], cmd.args
+    end
+
+    test "parse recognizes !unwatch with pane target" do
+      cmd = Earl::CommandParser.parse("!unwatch code:1.0")
+      assert_equal :unwatch, cmd.name
+      assert_equal ["code:1.0"], cmd.args
+    end
+
+    test "parse returns nil for bare !watch and !unwatch" do
+      assert_nil Earl::CommandParser.parse("!watch")
+      assert_nil Earl::CommandParser.parse("!unwatch")
+    end
+
+    test "watch commands are case insensitive" do
+      cmd = Earl::CommandParser.parse("!WATCH code:1.0")
+      assert_equal :watch, cmd.name
+
+      cmd = Earl::CommandParser.parse("!Unwatch code:1.0")
+      assert_equal :unwatch, cmd.name
     end
   end
 end

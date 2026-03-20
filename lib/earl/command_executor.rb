@@ -7,6 +7,7 @@ require_relative "command_executor/constants"
 require_relative "command_executor/lifecycle_handler"
 require_relative "command_executor/session_handler"
 require_relative "command_executor/spawn_handler"
+require_relative "command_executor/watch_handler"
 require_relative "command_executor/stats_formatter"
 require_relative "command_executor/usage_handler"
 require_relative "command_executor/heartbeat_display"
@@ -21,6 +22,7 @@ module Earl
     include LifecycleHandler
     include SessionHandler
     include SpawnHandler
+    include WatchHandler
     include StatsFormatter
     include UsageHandler
     include HeartbeatDisplay
