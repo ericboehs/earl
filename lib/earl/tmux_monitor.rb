@@ -191,7 +191,8 @@ module Earl
       # Returns true if alertable state change detected, false otherwise.
       # Detects new completions even when state stays :completed via output hash.
       def transition(name, state, output = nil)
-        ensure_tracking(name).try_transition(state, output&.hash) || should_retrigger?(name, state)
+        fingerprint = state == :completed ? OutputAnalyzer.extract_last_response(output)&.hash : output&.hash
+        ensure_tracking(name).try_transition(state, fingerprint) || should_retrigger?(name, state)
       end
 
       def stalled?(name, output)
