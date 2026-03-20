@@ -33,6 +33,11 @@ module Earl
         | `!unwatch <pane>` | Stop watching a tmux pane |
         | `!loop` | List active scheduled tasks (cron/loops) |
         | `!loop <interval> <prompt>` | Create a recurring loop (e.g. `!loop 1h run /checkin`) |
+        | | |
+        | **Emoji Reactions** | **React on any EARL post** |
+        | :octagonal_sign: | Stop session (same as `!stop`) |
+        | :skull: | Force kill session (same as `!kill`) |
+        | :warning: | Send SIGINT (same as `!escape`) |
       HELP
 
       PASSTHROUGH_COMMANDS = {

@@ -7,6 +7,13 @@ module Earl
       # Bundles reaction event data that travels together through routing.
       ReactionEvent = Data.define(:post_id, :emoji_name)
 
+      # Emoji reactions that control session lifecycle instead of being forwarded.
+      SESSION_CONTROL_EMOJIS = {
+        "octagonal_sign" => :stop,
+        "skull" => :kill,
+        "warning" => :escape
+      }.freeze
+
       private
 
       def setup_reaction_handler
@@ -21,6 +28,7 @@ module Earl
         event = ReactionEvent.new(post_id: post_id, emoji_name: emoji_name)
         return if handle_question_reaction(event)
         return if @services.tmux_monitor.handle_reaction(post_id: post_id, emoji_name: emoji_name)
+        return if handle_session_control_reaction(event)
 
         forward_reaction_to_session(event)
       end
@@ -34,6 +42,49 @@ module Earl
 
         session = @services.session_manager.get(thread_id)
         session&.send_message(result[:answer_text])
+      end
+
+      def handle_session_control_reaction(event)
+        action = SESSION_CONTROL_EMOJIS[event.emoji_name]
+        return unless action
+
+        thread_id, = resolve_bot_post(event.post_id)
+        return unless thread_id
+
+        execute_session_control(action, thread_id)
+        true
+      end
+
+      def execute_session_control(action, thread_id)
+        thread_tag = thread_id[0..7]
+        acted = send(:"reaction_#{action}", thread_id)
+        log(:info, "Session #{action} via :#{SESSION_CONTROL_EMOJIS.key(action)}: on thread #{thread_tag}") if acted
+      rescue Errno::ESRCH
+        log(:info, "Process already exited for thread #{thread_tag}")
+        @services.session_manager.stop_session(thread_id) if action == :kill
+      end
+
+      def reaction_stop(thread_id)
+        @services.session_manager.stop_session(thread_id)
+      end
+
+      def reaction_kill(thread_id)
+        session = @services.session_manager.get(thread_id)
+        signal_and_stop_session("KILL", session, thread_id)
+      end
+
+      def reaction_escape(thread_id)
+        session = @services.session_manager.get(thread_id)
+        return unless session&.process_pid
+
+        Process.kill("INT", session.process_pid)
+      end
+
+      def signal_and_stop_session(signal, session, thread_id)
+        return unless session&.process_pid
+
+        Process.kill(signal, session.process_pid)
+        @services.session_manager.stop_session(thread_id)
       end
 
       def forward_reaction_to_session(event)
