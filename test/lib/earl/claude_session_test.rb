@@ -549,6 +549,43 @@ module Earl
       end
     end
 
+    test "inject_message writes JSON to stdin without resetting stats" do
+      session = Earl::ClaudeSession.new(session_id: "test-session")
+      session.stats.turn_input_tokens = 500
+      session.stats.message_sent_at = Time.now - 5
+
+      stdin, stdout, stderr, wait_thread = Open3.popen3("cat")
+      process_state = session.instance_variable_get(:@runtime).process_state
+      process_state.stdin = stdin
+      process_state.process = wait_thread
+
+      result = session.inject_message("Follow-up")
+      stdin.close
+
+      written = stdout.read
+      parsed = JSON.parse(written.strip)
+
+      assert_equal true, result
+      assert_equal "Follow-up", parsed.dig("message", "content")
+      assert_equal 500, session.stats.turn_input_tokens
+    ensure
+      [stdin, stdout, stderr].each do |io|
+        io&.close
+      rescue StandardError
+        nil
+      end
+      begin
+        wait_thread&.value
+      rescue StandardError
+        nil
+      end
+    end
+
+    test "inject_message returns false when not alive" do
+      session = Earl::ClaudeSession.new
+      assert_equal false, session.inject_message("hello")
+    end
+
     test "kill handles already-dead process gracefully" do
       session = Earl::ClaudeSession.new
 

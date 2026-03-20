@@ -474,6 +474,53 @@ module Earl
       assert_equal %w[first second], sent_messages
     end
 
+    test "enqueue_message queues when thread is busy and session is nil" do
+      runner = Earl::Runner.new
+
+      sent_messages = []
+      stats = mock_stats
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |text| sent_messages << text }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
+
+      # Manager returns session for first get (existing session), then nil for inject check
+      get_count = 0
+      mock_manager = Object.new
+      stub_singleton(mock_manager, :get_or_create) { |*_args, **_kwargs| mock_session }
+      stub_singleton(mock_manager, :get) do |_id|
+        get_count += 1
+        get_count <= 1 ? mock_session : nil
+      end
+      stub_singleton(mock_manager, :touch) { |_id| }
+      stub_singleton(mock_manager, :save_stats) { |_id| }
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
+
+      # First message claims thread
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "first", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Second message — session_manager.get returns nil, should enqueue
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "second", channel_id: nil,
+                                                sender_name: nil))
+
+      assert_equal ["first"], sent_messages
+    end
+
     test "enqueue_message processes immediately for new thread" do
       runner = Earl::Runner.new
 

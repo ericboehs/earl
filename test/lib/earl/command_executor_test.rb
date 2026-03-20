@@ -1212,6 +1212,15 @@ module Earl
       assert_equal({ passthrough: "/compact" }, result)
     end
 
+    test "!loop returns passthrough with args" do
+      executor = build_executor
+
+      command = Earl::CommandParser::ParsedCommand.new(name: :loop_create, args: ["5m", "/heartbeats"])
+      result = executor.execute(command, thread_id: "thread-1", channel_id: "channel-1")
+
+      assert_equal({ passthrough: "/loop 5m" }, result)
+    end
+
     test "execute returns nil for non-passthrough commands" do
       posted = []
       executor = build_executor(posted: posted)
