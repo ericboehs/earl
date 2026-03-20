@@ -77,18 +77,28 @@ module Earl
     def on_exit(&block) = @runtime.callbacks.on_exit = block
 
     def send_message(content)
+      return false unless write_message(content, "Sent")
+
+      @stats.begin_turn
+      true
+    end
+
+    def inject_message(content)
+      write_message(content, "Injected")
+    end
+
+    private
+
+    def write_message(content, verb)
       return warn_dead_session unless alive?
 
       write_to_stdin(content)
-      @stats.begin_turn
-      log(:debug, "Sent message to Claude #{short_id}: #{content_preview(content)}")
+      log(:debug, "#{verb} message to Claude #{short_id}: #{content_preview(content)}")
       true
     rescue IOError, Errno::EPIPE => error
       log(:error, "Failed to write to Claude #{short_id}: #{error.message}")
       false
     end
-
-    private
 
     def warn_dead_session
       log(:warn, "Cannot send message to dead session #{short_id} — process not running")
