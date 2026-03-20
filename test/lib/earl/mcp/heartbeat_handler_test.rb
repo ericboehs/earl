@@ -395,6 +395,72 @@ module Earl
         assert_equal "ch-999", defs.first.channel_id
       end
 
+      # --- model field ---
+
+      test "create with model persists to YAML" do
+        @handler.call("manage_heartbeat", {
+                        "action" => "create",
+                        "name" => "model_beat",
+                        "cron" => "0 9 * * 1-5",
+                        "prompt" => "Test with model",
+                        "channel_id" => "ch-123",
+                        "model" => "haiku"
+                      })
+
+        data = YAML.safe_load_file(@config_path)
+        assert_equal "haiku", data["heartbeats"]["model_beat"]["model"]
+      end
+
+      test "create with model round-trips through HeartbeatConfig" do
+        @handler.call("manage_heartbeat", {
+                        "action" => "create",
+                        "name" => "model_roundtrip",
+                        "cron" => "0 9 * * 1-5",
+                        "prompt" => "Test model round-trip",
+                        "channel_id" => "ch-123",
+                        "model" => "haiku"
+                      })
+
+        config = Earl::HeartbeatConfig.new(path: @config_path)
+        defs = config.definitions
+        assert_equal "haiku", defs.first.model
+      end
+
+      test "update model field" do
+        @handler.call("manage_heartbeat", {
+                        "action" => "create",
+                        "name" => "update_model",
+                        "cron" => "0 9 * * 1-5",
+                        "prompt" => "Test",
+                        "channel_id" => "ch-123",
+                        "model" => "haiku"
+                      })
+
+        @handler.call("manage_heartbeat", {
+                        "action" => "update",
+                        "name" => "update_model",
+                        "model" => "sonnet"
+                      })
+
+        data = YAML.safe_load_file(@config_path)
+        assert_equal "sonnet", data["heartbeats"]["update_model"]["model"]
+      end
+
+      test "list shows model badge" do
+        @handler.call("manage_heartbeat", {
+                        "action" => "create",
+                        "name" => "badge_beat",
+                        "cron" => "0 9 * * 1-5",
+                        "prompt" => "Test",
+                        "channel_id" => "ch-123",
+                        "model" => "haiku"
+                      })
+
+        result = @handler.call("manage_heartbeat", { "action" => "list" })
+        text = result[:content].first[:text]
+        assert_includes text, "haiku"
+      end
+
       # --- once flag ---
 
       test "create with once true stores in YAML" do

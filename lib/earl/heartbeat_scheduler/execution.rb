@@ -54,6 +54,7 @@ module Earl
         persistent = definition.persistent
         apply_resume_opts(session_opts, state) if persistent
         session = ClaudeSession.new(**session_opts)
+        apply_model(session, definition)
         @mutex.synchronize { state.session_id = session.session_id } if persistent
         session
       end
@@ -62,6 +63,11 @@ module Earl
         auto, channel_id, working_dir = definition.base_session_opts.values_at(:auto_permission, :channel_id,
                                                                                :working_dir)
         { working_dir: working_dir, permission_config: auto ? nil : heartbeat_mcp_config(channel_id) }
+      end
+
+      def apply_model(session, definition)
+        model = definition.model.to_s.strip
+        session.options.model = model unless model.empty?
       end
 
       def apply_resume_opts(opts, state)

@@ -30,10 +30,13 @@ module Earl
       assert_equal false, defs[0].persistent
       assert_equal 300, defs[0].timeout
 
+      assert_nil defs[0].model
+
       assert_equal "repo_health", defs[1].name
       assert_equal 604_800, defs[1].interval
       assert_nil defs[1].cron
       assert_equal :interactive, defs[1].permission_mode
+      assert_equal "haiku", defs[1].model
     end
 
     test "returns empty array for missing file" do

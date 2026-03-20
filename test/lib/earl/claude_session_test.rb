@@ -427,6 +427,52 @@ module Earl
       ENV["EARL_MODEL"] = original if original
     end
 
+    test "model_args prefers options.model over EARL_MODEL env var" do
+      original = ENV.fetch("EARL_MODEL", nil)
+      ENV["EARL_MODEL"] = "sonnet"
+
+      session = Earl::ClaudeSession.new
+      session.options.model = "haiku"
+      args = session.send(:model_args)
+
+      assert_equal ["--model", "haiku"], args
+    ensure
+      if original
+        ENV["EARL_MODEL"] = original
+      else
+        ENV.delete("EARL_MODEL")
+      end
+    end
+
+    test "model_args falls back to EARL_MODEL when options.model is nil" do
+      original = ENV.fetch("EARL_MODEL", nil)
+      ENV["EARL_MODEL"] = "sonnet"
+
+      session = Earl::ClaudeSession.new
+      args = session.send(:model_args)
+
+      assert_equal ["--model", "sonnet"], args
+    ensure
+      if original
+        ENV["EARL_MODEL"] = original
+      else
+        ENV.delete("EARL_MODEL")
+      end
+    end
+
+    test "model_args treats whitespace-only model as unset" do
+      original = ENV.fetch("EARL_MODEL", nil)
+      ENV.delete("EARL_MODEL")
+
+      session = Earl::ClaudeSession.new
+      session.options.model = "  "
+      args = session.send(:model_args)
+
+      assert_empty args
+    ensure
+      ENV["EARL_MODEL"] = original if original
+    end
+
     test "handle_event handles unknown event types" do
       session = Earl::ClaudeSession.new
 
