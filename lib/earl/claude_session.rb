@@ -211,7 +211,7 @@ module Earl
 
       def model_args
         model = @options.model || ENV.fetch("EARL_MODEL", nil)
-        model ? ["--model", model] : []
+        model && !model.strip.empty? ? ["--model", model] : []
       end
 
       def session_args

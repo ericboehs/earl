@@ -185,19 +185,20 @@ module Earl
         private
 
         def format_heartbeat(name, config)
-          schedule, enabled, once, description = extract_display_fields(config, name)
+          schedule, enabled, badge_str, description = extract_display_fields(config, name)
           schedule_str = format_schedule(schedule)
           enabled_str = enabled ? "enabled" : "disabled"
-          badges = [once ? "once" : nil, config["model"]].compact.join(", ")
-          badge_str = badges.empty? ? "" : ", #{badges}"
           "- **#{name}** (#{enabled_str}#{badge_str}, #{schedule_str})\n  #{description}"
         end
 
         def extract_display_fields(config, name)
+          once = config.fetch("once", false)
+          model = config["model"].to_s.strip
+          badges = [once ? "once" : nil, model.empty? ? nil : model].compact.join(", ")
           [
             config["schedule"] || {},
             config.fetch("enabled", true),
-            config.fetch("once", false),
+            badges.empty? ? "" : ", #{badges}",
             config["description"] || name
           ]
         end

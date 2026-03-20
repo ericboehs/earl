@@ -460,6 +460,19 @@ module Earl
       end
     end
 
+    test "model_args treats whitespace-only model as unset" do
+      original = ENV.fetch("EARL_MODEL", nil)
+      ENV.delete("EARL_MODEL")
+
+      session = Earl::ClaudeSession.new
+      session.options.model = "  "
+      args = session.send(:model_args)
+
+      assert_empty args
+    ensure
+      ENV["EARL_MODEL"] = original if original
+    end
+
     test "handle_event handles unknown event types" do
       session = Earl::ClaudeSession.new
 

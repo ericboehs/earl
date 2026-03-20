@@ -66,8 +66,8 @@ module Earl
       end
 
       def apply_model(session, definition)
-        model = definition.model
-        session.options.model = model if model.is_a?(String) && !model.empty?
+        model = definition.model.to_s.strip
+        session.options.model = model unless model.empty?
       end
 
       def apply_resume_opts(opts, state)
