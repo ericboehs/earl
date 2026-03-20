@@ -1589,7 +1589,7 @@ module Earl
       end
     end
 
-    test "skull reaction handles ESRCH when process already exited" do
+    test "skull reaction handles ESRCH and still cleans up session" do
       runner = Earl::Runner.new
       handler = runner.instance_variable_get(:@services).question_handler
       stub_singleton(handler, :handle_reaction) { |**_args| nil }
@@ -1601,15 +1601,20 @@ module Earl
       end
 
       mock_session = Object.new
-      stub_singleton(mock_session, :process_pid) { 999_999_999 }
+      stub_singleton(mock_session, :process_pid) { 12_345 }
 
+      stop_called = false
       manager = runner.instance_variable_get(:@services).session_manager
       stub_singleton(manager, :get) { |_id| mock_session }
-      stub_singleton(manager, :stop_session) { |_id| }
+      stub_singleton(manager, :stop_session) { |_id| stop_called = true }
 
-      assert_nothing_raised do
-        runner.send(:handle_reaction, user_id: "user-1", post_id: "earl-post-1", emoji_name: "skull")
+      Process.stub(:kill, ->(_sig, _pid) { raise Errno::ESRCH }) do
+        assert_nothing_raised do
+          runner.send(:handle_reaction, user_id: "user-1", post_id: "earl-post-1", emoji_name: "skull")
+        end
       end
+
+      assert stop_called, "Expected stop_session to be called on ESRCH for kill action"
     end
 
     test "shutdown kills idle_checker_thread when present" do

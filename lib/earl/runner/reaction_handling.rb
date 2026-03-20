@@ -52,14 +52,16 @@ module Earl
         return unless thread_id
 
         execute_session_control(action, thread_id)
+        true
       end
 
       def execute_session_control(action, thread_id)
         thread_tag = thread_id[0..7]
-        send(:"reaction_#{action}", thread_id)
-        log(:info, "Session #{action} via :#{SESSION_CONTROL_EMOJIS.key(action)}: on thread #{thread_tag}")
+        acted = send(:"reaction_#{action}", thread_id)
+        log(:info, "Session #{action} via :#{SESSION_CONTROL_EMOJIS.key(action)}: on thread #{thread_tag}") if acted
       rescue Errno::ESRCH
         log(:info, "Process already exited for thread #{thread_tag}")
+        @services.session_manager.stop_session(thread_id) if action == :kill
       end
 
       def reaction_stop(thread_id)
