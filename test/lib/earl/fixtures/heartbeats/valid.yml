@@ -21,3 +21,4 @@ heartbeats:
     permission_mode: interactive
     timeout: 600
     enabled: true
+    model: haiku

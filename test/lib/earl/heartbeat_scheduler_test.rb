@@ -537,6 +537,29 @@ module Earl
       assert_equal "existing-session-id", session.session_id
     end
 
+    test "build_heartbeat_session sets model from definition" do
+      scheduler = build_scheduler
+      definition = build_definition(persistent: false)
+      definition.model = "haiku"
+      state = Earl::HeartbeatScheduler::HeartbeatState.new(
+        definition: definition, running: false, run_count: 0
+      )
+
+      session = scheduler.send(:build_heartbeat_session, definition, state)
+      assert_equal "haiku", session.options.model
+    end
+
+    test "build_heartbeat_session leaves model nil when not configured" do
+      scheduler = build_scheduler
+      definition = build_definition(persistent: false)
+      state = Earl::HeartbeatScheduler::HeartbeatState.new(
+        definition: definition, running: false, run_count: 0
+      )
+
+      session = scheduler.send(:build_heartbeat_session, definition, state)
+      assert_nil session.options.model
+    end
+
     test "compute_next_run with future run_at returns that time" do
       scheduler = build_scheduler
       future_ts = (Time.now + 3600).to_i

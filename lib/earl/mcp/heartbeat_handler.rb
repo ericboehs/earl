@@ -19,7 +19,7 @@ module Earl
 
       VALID_ACTIONS = %w[list create update delete].freeze
       MUTABLE_FIELDS = %w[description cron interval run_at channel_id working_dir
-                          prompt permission_mode persistent timeout enabled once].freeze
+                          prompt permission_mode persistent timeout enabled once model].freeze
 
       def initialize(default_channel_id: nil, config_path: self.class.config_path)
         @default_channel_id = default_channel_id
@@ -132,7 +132,7 @@ module Earl
 
       # Entry building: constructs and merges heartbeat configuration hashes.
       module EntryBuilder
-        OPTIONAL_STRING_KEYS = %w[working_dir prompt permission_mode timeout].freeze
+        OPTIONAL_STRING_KEYS = %w[working_dir prompt permission_mode timeout model].freeze
         SCHEDULE_KEYS = %w[cron interval run_at].freeze
 
         private
@@ -188,8 +188,9 @@ module Earl
           schedule, enabled, once, description = extract_display_fields(config, name)
           schedule_str = format_schedule(schedule)
           enabled_str = enabled ? "enabled" : "disabled"
-          once_badge = once ? ", once" : ""
-          "- **#{name}** (#{enabled_str}#{once_badge}, #{schedule_str})\n  #{description}"
+          badges = [once ? "once" : nil, config["model"]].compact.join(", ")
+          badge_str = badges.empty? ? "" : ", #{badges}"
+          "- **#{name}** (#{enabled_str}#{badge_str}, #{schedule_str})\n  #{description}"
         end
 
         def extract_display_fields(config, name)
@@ -292,14 +293,12 @@ module Earl
 
         def behavior_properties
           {
-            persistent: { type: "boolean", description: "Whether to reuse the same Claude session across runs" },
-            timeout: { type: "integer", description: "Maximum seconds to wait for completion (default: 600)" },
+            model: { type: "string", description: "Claude model to use (e.g. haiku, sonnet, opus)" },
+            persistent: { type: "boolean", description: "Reuse the same Claude session across runs" },
+            timeout: { type: "integer", description: "Max seconds to wait for completion (default: 600)" },
             enabled: { type: "boolean", description: "Whether the heartbeat is active (default: true)" },
-            once: {
-              type: "boolean",
-              description: "Run once then auto-disable. Combine with run_at for scheduled one-shots, " \
-                           "or omit schedule to fire immediately."
-            }
+            once: { type: "boolean",
+                    description: "Run once then auto-disable. Combine with run_at for one-shots." }
           }
         end
       end

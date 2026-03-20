@@ -39,7 +39,8 @@ module Earl
     McpConfig = Data.define(:env, :skip_permissions)
 
     # Groups session launch options to keep instance variable count low.
-    Options = Struct.new(:permission_config, :resume, :working_dir, :username, :mcp_config_path, keyword_init: true)
+    Options = Struct.new(:permission_config, :resume, :working_dir, :username, :mcp_config_path, :model,
+                         keyword_init: true)
     # Groups mutable runtime state: subprocess, callbacks, and mutex.
     RuntimeState = Struct.new(:process_state, :callbacks, :mutex, keyword_init: true)
 
@@ -54,19 +55,18 @@ module Earl
       end
     end
 
-    def initialize(session_id: SecureRandom.uuid, permission_config: nil, mode: :new, working_dir: nil, username: nil)
+    def initialize(session_id: SecureRandom.uuid, permission_config: nil, mode: :new,
+                   working_dir: nil, username: nil)
       @session_id = session_id
-      @options = Options.new(
-        permission_config: permission_config, resume: mode == :resume,
-        working_dir: working_dir, username: username
-      )
+      @options = Options.new(permission_config: permission_config, resume: mode == :resume,
+                             working_dir: working_dir, username: username)
       @runtime = RuntimeState.new(
         process_state: ProcessState.new, callbacks: Callbacks.new, mutex: Mutex.new
       )
       @stats = default_stats
     end
 
-    attr_reader :session_id, :stats
+    attr_reader :session_id, :stats, :options
 
     def working_dir = @options.working_dir
     def on_text(&block) = @runtime.callbacks.on_text = block
@@ -210,7 +210,7 @@ module Earl
       end
 
       def model_args
-        model = ENV.fetch("EARL_MODEL", nil)
+        model = @options.model || ENV.fetch("EARL_MODEL", nil)
         model ? ["--model", model] : []
       end
 

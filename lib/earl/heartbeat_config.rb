@@ -16,23 +16,24 @@ module Earl
     # A single heartbeat definition with schedule, prompt, and execution options.
     HeartbeatDefinition = Struct.new(
       :name, :description, :cron, :interval, :run_at, :channel_id, :working_dir,
-      :prompt, :permission_mode, :persistent, :timeout, :enabled, :once,
+      :prompt, :permission_mode, :persistent, :timeout, :enabled, :once, :model,
       keyword_init: true
     ) do
       def self.from_config(name, config, working_dir_resolver)
+        new(name: name, description: config["description"] || name,
+            **extract_schedule(config), **extract_options(config, working_dir_resolver))
+      end
+
+      def self.extract_schedule(config)
         schedule = config["schedule"] || {}
-        new(
-          name: name, description: config["description"] || name,
-          cron: schedule["cron"], interval: schedule["interval"], run_at: schedule["run_at"],
-          **extract_options(config, working_dir_resolver)
-        )
+        { cron: schedule["cron"], interval: schedule["interval"], run_at: schedule["run_at"] }
       end
 
       def self.extract_options(config, working_dir_resolver)
         {
           channel_id: config["channel_id"],
           working_dir: working_dir_resolver.call(config["working_dir"]),
-          prompt: config["prompt"],
+          prompt: config["prompt"], model: config["model"],
           permission_mode: (config["permission_mode"] || "interactive").to_sym,
           persistent: config.fetch("persistent", false),
           timeout: config.fetch("timeout", 600),
