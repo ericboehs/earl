@@ -100,7 +100,7 @@ module Earl
       return unless output
 
       state = OutputAnalyzer.detect(output, name, @poll_state)
-      return unless @poll_state.transition(name, state)
+      return unless @poll_state.transition(name, state, output)
 
       dispatch_state_alert(state, name: name, output: output, info: info)
     end
@@ -146,8 +146,10 @@ module Earl
     # Encapsulates mutable poll tracking state: last-seen states, output hashes
     # for stall detection, and pending user interactions.
     class PollState
-      # Tracks per-session poll state: last detected state, output hash for stall detection.
-      TrackingEntry = Struct.new(:last_state, :output_hash, :stall_count, keyword_init: true) do
+      # Tracks per-session poll state: last detected state, output hash for stall detection,
+      # and completion hash for detecting new completions between polls.
+      TrackingEntry = Struct.new(:last_state, :output_hash, :stall_count, :completion_hash,
+                                 keyword_init: true) do
         def update_stall(current_hash, threshold)
           if output_hash == current_hash
             self.stall_count += 1
@@ -157,6 +159,19 @@ module Earl
             self.stall_count = 1
             false
           end
+        end
+
+        # Checks if state or output changed; records and returns true if so.
+        def try_transition(state, output_hash)
+          return false unless last_state != state || completion_changed?(output_hash)
+
+          self.last_state = state
+          self.completion_hash = output_hash if state == :completed
+          true
+        end
+
+        def completion_changed?(current_output_hash)
+          last_state == :completed && completion_hash != current_output_hash
         end
       end
 
@@ -173,15 +188,10 @@ module Earl
         @mutex.synchronize { @pending_interactions[post_id] }
       end
 
-      # Returns true if state changed (and records the new state), false otherwise.
-      def transition(name, state)
-        tracking = ensure_tracking(name)
-        last_state = tracking.last_state
-        changed = last_state != state || should_retrigger?(name, state)
-        return false unless changed
-
-        tracking.last_state = state
-        true
+      # Returns true if alertable state change detected, false otherwise.
+      # Detects new completions even when state stays :completed via output hash.
+      def transition(name, state, output = nil)
+        ensure_tracking(name).try_transition(state, output&.hash) || should_retrigger?(name, state)
       end
 
       def stalled?(name, output)

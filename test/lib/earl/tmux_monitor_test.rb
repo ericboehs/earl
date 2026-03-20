@@ -55,6 +55,34 @@ module Earl
       assert_equal :completed, call_detect_state(output)
     end
 
+    test "detect_state detects Claude Code idle prompt with decoration lines below" do
+      lines = [
+        "⏺ Done with the task.", "",
+        "────────────────────────────────────────",
+        "❯",
+        "────────────────────────────────────────",
+        "  e14:earl main opus 30k/1M at 00:56:39 CDT",
+        "", "", ""
+      ]
+      assert_equal :completed, call_detect_state(lines.join("\n"))
+    end
+
+    test "detect_state detects Claude Code idle prompt with non-breaking spaces" do
+      lines = [
+        "⏺ Done.", "",
+        "────────────────────────────",
+        "❯\u00A0       ",
+        "────────────────────────────",
+        "  e14:earl main opus 30k/1M", "", ""
+      ]
+      assert_equal :completed, call_detect_state(lines.join("\n"))
+    end
+
+    test "detect_state does not false-positive on ❯ in user input line" do
+      output = "some output\n❯ running a command\nstill going\n"
+      assert_equal :running, call_detect_state(output)
+    end
+
     test "detect_state does not false-positive on dollar amounts like $0.05" do
       output = "Processing...\nCost: $0.05\nStill running\n"
       assert_equal :running, call_detect_state(output)
@@ -831,13 +859,59 @@ module Earl
       assert_nothing_raised { call_poll_sessions }
     end
 
+    test "completed_message includes extracted response" do
+      output = "❯ hello\n\n⏺ Hi there, how can I help?\n\n────────\n❯\n────────\nstatus\n\n"
+      ctx = Earl::TmuxMonitor::AlertDispatcher::AlertContext.new(name: "test", output: output)
+      msg = @monitor.send(:completed_message, ctx)
+      assert_includes msg, "idle"
+      assert_includes msg, "Hi there, how can I help?"
+    end
+
+    test "completed_message without extractable response" do
+      output = "just some output\n❯\n\n"
+      ctx = Earl::TmuxMonitor::AlertDispatcher::AlertContext.new(name: "test", output: output)
+      msg = @monitor.send(:completed_message, ctx)
+      assert_includes msg, "idle"
+      assert_not_includes msg, ">"
+    end
+
+    test "completed_message truncates long response" do
+      long_text = "word " * 200
+      output = "❯ ask\n\n⏺ #{long_text}\n\n────────\n❯\n────────\nstatus\n\n"
+      ctx = Earl::TmuxMonitor::AlertDispatcher::AlertContext.new(name: "test", output: output)
+      msg = @monitor.send(:completed_message, ctx)
+      assert_includes msg, "..."
+      assert msg.length < 600
+    end
+
+    test "extract_last_response returns nil when no idle prompt" do
+      assert_nil Earl::TmuxMonitor::OutputAnalyzer.extract_last_response("no prompt here\n")
+    end
+
+    test "extract_last_response returns nil when no user input before idle" do
+      assert_nil Earl::TmuxMonitor::OutputAnalyzer.extract_last_response("some output\n❯\n")
+    end
+
+    test "extract_last_response extracts text between input and idle prompt" do
+      output = "❯ hello\n\n⏺ Hi there!\n\n────────\n❯\n"
+      result = Earl::TmuxMonitor::OutputAnalyzer.extract_last_response(output)
+      assert_equal "Hi there!", result
+    end
+
+    test "extract_last_response strips separator lines" do
+      output = "❯ test\n⏺ response\n────────────────\n❯\n"
+      result = Earl::TmuxMonitor::OutputAnalyzer.extract_last_response(output)
+      assert_equal "response", result
+    end
+
     test "error_message includes last 10 lines of output" do
       output = (1..15).map { |i| "line #{i}\n" }.join
       info = build_info(name: "err-test")
       @tmux_store.save(info)
       @tmux_store.get("err-test")
 
-      msg = @monitor.send(:error_message, "err-test", output)
+      ctx = Earl::TmuxMonitor::AlertDispatcher::AlertContext.new(name: "err-test", output: output)
+      msg = @monitor.send(:error_message, ctx)
       assert_includes msg, ":x:"
       assert_includes msg, "err-test"
       assert_includes msg, "line 15"
@@ -845,7 +919,8 @@ module Earl
     end
 
     test "error_message handles empty output" do
-      msg = @monitor.send(:error_message, "empty-sess", "")
+      ctx = Earl::TmuxMonitor::AlertDispatcher::AlertContext.new(name: "empty-sess", output: "")
+      msg = @monitor.send(:error_message, ctx)
       assert_includes msg, ":x:"
       assert_includes msg, "empty-sess"
     end

@@ -29,6 +29,8 @@ module Earl
         | `!update` | Pull latest code + bundle install, then restart |
         | `!restart` | Restart EARL (pulls latest code in prod) |
         | `!spawn "prompt" [--name N] [--dir D]` | Spawn Claude in a new tmux session |
+        | `!watch <pane>` | Watch a tmux pane (e.g. `code:1.0`) for monitoring |
+        | `!unwatch <pane>` | Stop watching a tmux pane |
         | `!loop` | List active scheduled tasks (cron/loops) |
         | `!loop <interval> <prompt>` | Create a recurring loop (e.g. `!loop 1h run /checkin`) |
       HELP
@@ -49,7 +51,7 @@ module Earl
         session_nudge: :handle_session_nudge, session_approve: :handle_session_approve,
         session_deny: :handle_session_deny, session_input: :handle_session_input,
         update: :handle_update, restart: :handle_restart,
-        spawn: :handle_spawn
+        spawn: :handle_spawn, watch: :handle_watch, unwatch: :handle_unwatch
       }.freeze
 
       USAGE_SCRIPT = File.expand_path("../../../bin/claude-usage", __dir__)

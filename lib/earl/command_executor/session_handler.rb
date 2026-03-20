@@ -38,7 +38,8 @@ module Earl
         project = File.basename(path)
         status = detect_pane_status(target)
         label = PANE_STATUS_LABELS.fetch(status, "\u{1F7E1} Idle")
-        "| `#{target}` | #{project} | #{label} |"
+        watched = @deps.tmux_store&.get(target) ? " :eyes:" : ""
+        "| `#{target}` | #{project} | #{label}#{watched} |"
       end
 
       def detect_pane_status(target)

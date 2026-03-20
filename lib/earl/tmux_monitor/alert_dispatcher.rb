@@ -6,6 +6,9 @@ module Earl
     # to Mattermost. Interactive states (questions, permissions) are delegated
     # to the appropriate forwarder instead.
     module AlertDispatcher
+      # Bundles session identity and captured output for alert message building.
+      AlertContext = Data.define(:name, :output)
+
       private
 
       def dispatch_state_alert(state, **context)
@@ -15,23 +18,30 @@ module Earl
         if forwarder
           forwarder.forward(name, output, info)
         else
-          msg = passive_alert_message(state, name, output)
+          msg = passive_alert_message(state, AlertContext.new(name: name, output: output))
           post_alert(info, msg) if msg
         end
       end
 
-      def passive_alert_message(state, name, output)
-        { errored: error_message(name, output),
-          completed: completed_message(name),
-          stalled: stalled_message(name) }[state]
+      def passive_alert_message(state, ctx)
+        { errored: error_message(ctx),
+          completed: completed_message(ctx),
+          stalled: stalled_message(ctx.name) }[state]
       end
 
-      def error_message(name, output)
-        ":x: Session `#{name}` encountered an error:\n```\n#{output.lines.last(10)&.join}\n```"
+      def error_message(ctx)
+        ":x: Session `#{ctx.name}` encountered an error:\n```\n#{ctx.output.lines.last(10)&.join}\n```"
       end
 
-      def completed_message(name)
-        ":white_check_mark: Session `#{name}` appears to have completed (shell prompt detected)."
+      def completed_message(ctx)
+        name, output = ctx.deconstruct_keys(%i[name output]).values_at(:name, :output)
+        response = OutputAnalyzer.extract_last_response(output)
+        base = ":white_check_mark: `#{name}` idle"
+        response ? "#{base}\n> #{truncate_response(response)}" : base
+      end
+
+      def truncate_response(text, max = 500)
+        text.length > max ? "#{text[0...max]}..." : text
       end
 
       def stalled_message(name)
