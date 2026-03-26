@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "message_injection"
+require_relative "queue_consolidation"
 
 module Earl
   class Runner
@@ -133,17 +134,7 @@ module Earl
         @services.command_executor.working_dir_for(thread_id) || @services.config.channels[channel_id] || Dir.pwd
       end
 
-      def process_next_queued(thread_id)
-        queued = @app_state.message_queue.dequeue(thread_id)
-        return unless queued
-
-        msg = if queued.is_a?(UserMessage)
-                queued
-              else
-                UserMessage.new(thread_id: thread_id, text: queued, channel_id: nil, sender_name: nil)
-              end
-        process_message(msg)
-      end
+      include QueueConsolidation
 
       def allowed_user?(username)
         allowed = @services.config.allowed_users

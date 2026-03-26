@@ -51,16 +51,22 @@ module Earl
       end
     end
 
+    def pending_turns?(thread_id)
+      @mutex.synchronize { @pending_turns[thread_id].positive? }
+    end
+
+    def dequeue_all(thread_id)
+      @mutex.synchronize do
+        msgs = @pending_messages.delete(thread_id) || []
+        @processing_threads.delete(thread_id) if msgs.empty?
+        msgs
+      end
+    end
+
     def complete_turn(thread_id)
       @mutex.synchronize do
-        count = @pending_turns[thread_id]
-        if count.positive?
-          @pending_turns[thread_id] = count - 1
-          :has_pending_turns
-        else
-          @pending_turns.delete(thread_id)
-          :no_pending_turns
-        end
+        @pending_turns.delete(thread_id)
+        :no_pending_turns
       end
     end
 

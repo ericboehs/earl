@@ -10,7 +10,8 @@ module Earl
         thread_id = msg.thread_id
         queue = @app_state.message_queue
         session = @services.session_manager.get(thread_id)
-        if session&.alive? && msg.file_ids.empty? && session.inject_message(msg.text)
+        if session&.alive? && msg.file_ids.empty? && !queue.pending_turns?(thread_id) &&
+           session.inject_message(msg.text)
           queue.inject(thread_id)
           log(:info, "Injected message into active session for thread #{thread_id[0..7]}")
         else

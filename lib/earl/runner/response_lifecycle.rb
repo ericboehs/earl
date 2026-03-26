@@ -44,12 +44,8 @@ module Earl
       end
 
       def drain_or_wait_for_pending(thread_id)
-        case @app_state.message_queue.complete_turn(thread_id)
-        when :has_pending_turns
-          log(:debug, "Pending injected turns remain for thread #{thread_id[0..7]} — skipping queue drain")
-        when :no_pending_turns
-          process_next_queued(thread_id)
-        end
+        @app_state.message_queue.complete_turn(thread_id)
+        process_next_queued(thread_id)
       end
 
       def complete_response(thread_id, session, response)
@@ -95,6 +91,7 @@ module Earl
         channel_id = @responses.thread_channels[thread_id]
         response = StreamingResponse.new(thread_id: thread_id, mattermost: @services.mattermost, channel_id: channel_id)
         responses[thread_id] = response
+        response.start_typing if channel_id
         response
       end
 
