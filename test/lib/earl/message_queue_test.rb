@@ -3,6 +3,7 @@
 require "test_helper"
 
 module Earl
+  # Tests for thread-safe message queue: claiming, enqueueing, injection, and consolidation.
   class MessageQueueTest < Minitest::Test
     setup do
       Earl.logger = Logger.new(File::NULL)
@@ -122,26 +123,15 @@ module Earl
       assert @queue.try_claim("thread-1")
     end
 
-    test "inject increments pending turns counter" do
-      @queue.inject("thread-1")
-      assert_equal :has_pending_turns, @queue.complete_turn("thread-1")
-    end
-
-    test "complete_turn decrements pending turns and returns has_pending_turns when turns remain" do
-      @queue.inject("thread-1")
-      @queue.inject("thread-1")
-      assert_equal :has_pending_turns, @queue.complete_turn("thread-1")
-      assert_equal :has_pending_turns, @queue.complete_turn("thread-1")
-    end
-
-    test "complete_turn returns no_pending_turns when counter is zero" do
+    test "complete_turn always returns no_pending_turns" do
       assert_equal :no_pending_turns, @queue.complete_turn("thread-1")
     end
 
-    test "complete_turn transitions from has_pending to no_pending" do
+    test "complete_turn clears pending turns after inject" do
       @queue.inject("thread-1")
-      assert_equal :has_pending_turns, @queue.complete_turn("thread-1")
-      assert_equal :no_pending_turns, @queue.complete_turn("thread-1")
+      assert @queue.pending_turns?("thread-1")
+      @queue.complete_turn("thread-1")
+      assert_not @queue.pending_turns?("thread-1")
     end
 
     test "release clears pending turns" do
@@ -149,6 +139,52 @@ module Earl
       @queue.inject("thread-1")
       @queue.release("thread-1")
       assert_equal :no_pending_turns, @queue.complete_turn("thread-1")
+    end
+
+    test "pending_turns? returns false when no turns are pending" do
+      assert_not @queue.pending_turns?("thread-1")
+    end
+
+    test "pending_turns? returns true after inject" do
+      @queue.inject("thread-1")
+      assert @queue.pending_turns?("thread-1")
+    end
+
+    test "pending_turns? returns false after inject and complete_turn" do
+      @queue.inject("thread-1")
+      @queue.complete_turn("thread-1")
+      assert_not @queue.pending_turns?("thread-1")
+    end
+
+    test "dequeue_all returns all pending messages and keeps claim" do
+      @queue.try_claim("thread-1")
+      @queue.enqueue("thread-1", "msg-1")
+      @queue.enqueue("thread-1", "msg-2")
+      @queue.enqueue("thread-1", "msg-3")
+
+      result = @queue.dequeue_all("thread-1")
+      assert_equal %w[msg-1 msg-2 msg-3], result
+      # Claim should still be held (messages were present)
+      assert_not @queue.try_claim("thread-1")
+    end
+
+    test "dequeue_all returns empty array and releases claim when no messages" do
+      @queue.try_claim("thread-1")
+
+      result = @queue.dequeue_all("thread-1")
+      assert_equal [], result
+      # Claim should be released
+      assert @queue.try_claim("thread-1")
+    end
+
+    test "dequeue_all clears the queue" do
+      @queue.try_claim("thread-1")
+      @queue.enqueue("thread-1", "msg-1")
+
+      @queue.dequeue_all("thread-1")
+      # Subsequent dequeue_all should be empty
+      result = @queue.dequeue_all("thread-1")
+      assert_equal [], result
     end
 
     test "enqueue and dequeue preserves UserMessage objects" do

@@ -577,7 +577,7 @@ module Earl
       assert_not processing.include?("thread-12345678")
     end
 
-    test "handle_response_complete skips queue drain when pending injected turns remain" do
+    test "handle_response_complete drains queue after single injection completes" do
       runner = Earl::Runner.new
 
       on_complete_callback = nil
@@ -614,13 +614,143 @@ module Earl
                   Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "injected", channel_id: nil,
                                                 sender_name: nil))
 
-      # Complete first response — should NOT drain queue (pending turn remains)
+      # Complete first response — should drain queue (injection may have been folded into turn)
       message_queue = runner.instance_variable_get(:@app_state).message_queue
       on_complete_callback.call(mock_session)
 
-      # Thread should still be claimed (not released by dequeue)
+      # Thread should be released (empty queue drained)
       processing = message_queue.instance_variable_get(:@processing_threads)
-      assert processing.include?("thread-12345678")
+      assert_not processing.include?("thread-12345678")
+    end
+
+    test "enqueue_message enqueues instead of injecting when pending turns exist" do
+      runner = Earl::Runner.new
+
+      injected_messages = []
+      stats = mock_stats
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&_block| }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) { |_text| true }
+      stub_singleton(mock_session, :inject_message) do |text|
+        injected_messages << text
+        true
+      end
+      stub_singleton(mock_session, :alive?) { true }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
+
+      # First message claims the thread
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "first", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Second message injects (no pending turns yet)
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "second", channel_id: nil,
+                                                sender_name: nil))
+      assert_equal ["second"], injected_messages
+
+      # Third message should enqueue (pending turn already exists)
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "third", channel_id: nil,
+                                                sender_name: nil))
+      assert_equal ["second"], injected_messages, "third message should not be injected"
+
+      # Verify third message was queued
+      queue = runner.instance_variable_get(:@app_state).message_queue
+      pending = queue.instance_variable_get(:@pending_messages)["thread-12345678"]
+      assert_equal 1, pending.size
+    end
+
+    test "process_next_queued consolidates multiple queued messages" do
+      runner = Earl::Runner.new
+
+      sent_messages = []
+      on_complete_callback = nil
+      stats = mock_stats
+      mock_session = Object.new
+      stub_singleton(mock_session, :on_text) { |&_block| }
+      stub_singleton(mock_session, :on_system) { |&_block| }
+      stub_singleton(mock_session, :on_complete) { |&block| on_complete_callback = block }
+      stub_singleton(mock_session, :on_tool_use) { |&_block| }
+      stub_singleton(mock_session, :on_tool_result) { |&_block| }
+      stub_singleton(mock_session, :on_exit) { |&_block| }
+      stub_singleton(mock_session, :working_dir) { nil }
+      stub_singleton(mock_session, :send_message) do |text|
+        sent_messages << text
+        true
+      end
+      stub_singleton(mock_session, :inject_message) { |_text| true }
+      stub_singleton(mock_session, :alive?) { true }
+      stub_singleton(mock_session, :total_cost) { 0.0 }
+      stub_singleton(mock_session, :stats) { stats }
+
+      mock_manager = build_mock_manager(mock_session)
+      runner.instance_variable_get(:@services).session_manager = mock_manager
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      stub_singleton(mock_mm, :send_typing) { |**_args| }
+      stub_singleton(mock_mm, :create_post) { |**_args| { "id" => "notif-1" } }
+
+      # First message claims thread
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "first", channel_id: nil,
+                                                sender_name: nil))
+      sleep 0.05
+
+      # Inject second message, then enqueue third and fourth
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "second", channel_id: nil,
+                                                sender_name: nil))
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "third", channel_id: nil,
+                                                sender_name: nil))
+      runner.send(:enqueue_message,
+                  Earl::Runner::UserMessage.new(thread_id: "thread-12345678", text: "fourth", channel_id: nil,
+                                                sender_name: nil))
+
+      # Complete first turn
+      on_complete_callback.call(mock_session)
+      # Complete injected turn — triggers process_next_queued
+      on_complete_callback.call(mock_session)
+      sleep 0.05
+
+      # Third and fourth should be consolidated into one message
+      consolidated = sent_messages.last
+      assert_includes consolidated, "third"
+      assert_includes consolidated, "fourth"
+    end
+
+    test "ensure_active_response calls start_typing on new response" do
+      runner = Earl::Runner.new
+
+      mock_mm = runner.instance_variable_get(:@services).mattermost
+      typing_calls = []
+      stub_singleton(mock_mm, :send_typing) { |**args| typing_calls << args }
+
+      responses = runner.instance_variable_get(:@responses)
+      responses.thread_channels["thread-12345678"] = "channel-456"
+
+      response = runner.send(:ensure_active_response, "thread-12345678")
+      sleep 0.05
+
+      assert_not_nil response
+      assert_operator typing_calls.size, :>=, 1
+      response.stop_typing
     end
 
     test "message handler ignores non-allowed users" do
