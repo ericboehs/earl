@@ -45,29 +45,51 @@ for CONFIG_DIR in "$PROD_CONFIG_DIR" "$DEV_CONFIG_DIR"; do
       echo "  [$ENV_LABEL] Synced plugin to $CONFIG_DIR/plugin/"
   fi
 
-  # Create env file template (if not present)
+  # Create env file (non-secret config for reference/override)
   ENV_FILE="$CONFIG_DIR/env"
   if [ ! -f "$ENV_FILE" ]; then
     cat > "$ENV_FILE" <<'ENVTEMPLATE'
-# EARL environment variables — fill in and restart the agent
-MATTERMOST_URL=https://your-mattermost-server.example.com
-MATTERMOST_BOT_TOKEN=your-bot-token
-MATTERMOST_BOT_ID=your-bot-user-id
-EARL_CHANNEL_ID=your-channel-id
-EARL_ALLOWED_USERS=your-username
+# EARL environment variables (non-secret config)
+# Secrets are managed by fnox (keychain/1password) — see fnox.toml
+# MATTERMOST_URL=https://your-mattermost-server.example.com
+# MATTERMOST_BOT_ID=your-bot-user-id
+# EARL_CHANNEL_ID=your-channel-id
+# EARL_ALLOWED_USERS=your-username
 # EARL_CHANNELS=chan1:/path1,chan2:/path2
 # EARL_SKIP_PERMISSIONS=true
 # EARL_DEBUG=1
 ENVTEMPLATE
     chmod 600 "$ENV_FILE"
-    echo "  [$ENV_LABEL] Created $ENV_FILE — fill in your secrets."
-    NEEDS_ENV=true
+    echo "  [$ENV_LABEL] Created $ENV_FILE"
   fi
 done
 
+# Create fnox.toml template (if not present in repo)
+FNOX_FILE="$EARL_DIR/fnox.toml"
+if [ ! -f "$FNOX_FILE" ]; then
+  cat > "$FNOX_FILE" <<'FNOXTEMPLATE'
+[providers.keychain]
+type = "keychain"
+service = "fnox"
+
+[secrets]
+
+[profiles.development.secrets]
+MATTERMOST_BOT_TOKEN = { provider = "keychain", value = "EARL_DEV_MATTERMOST_BOT_TOKEN" }
+
+[profiles.production.secrets]
+MATTERMOST_BOT_TOKEN = { provider = "keychain", value = "EARL_PROD_MATTERMOST_BOT_TOKEN" }
+FNOXTEMPLATE
+  echo ""
+  echo "  Created $FNOX_FILE — set secrets with:"
+  echo "    echo 'your-dev-token' | fnox set MATTERMOST_BOT_TOKEN -p keychain -k EARL_DEV_MATTERMOST_BOT_TOKEN -P development"
+  echo "    echo 'your-prod-token' | fnox set MATTERMOST_BOT_TOKEN -p keychain -k EARL_PROD_MATTERMOST_BOT_TOKEN -P production"
+  NEEDS_ENV=true
+fi
+
 if [ "$NEEDS_ENV" = true ]; then
   echo ""
-  echo "  One or more env files need secrets filled in. Do that, then re-run this script."
+  echo "  Set your bot tokens in fnox (see above), then re-run this script."
   echo ""
   exit 0
 fi
@@ -101,6 +123,12 @@ if ! (cd "$PROD_INSTALL_DIR" && bundle install --quiet); then
   exit 1
 fi
 
+# Copy fnox.toml to prod install (gitignored, needs manual sync)
+if [ -f "$EARL_DIR/fnox.toml" ]; then
+  cp "$EARL_DIR/fnox.toml" "$PROD_INSTALL_DIR/fnox.toml"
+  echo "  [prod] Synced fnox.toml to $PROD_INSTALL_DIR/"
+fi
+
 # Create ~/bin/earl wrapper
 mkdir -p "$(dirname "$PROD_BIN")"
 cat > "$PROD_BIN" <<WRAPPER
@@ -115,26 +143,22 @@ export PATH="\$HOME/bin:\$HOME/.local/share/mise/shims:\$HOME/.local/bin:/opt/ho
 export LANG="en_US.UTF-8"
 export LC_ALL="en_US.UTF-8"
 
-# Load EARL environment variables
-ENV_FILE="$PROD_CONFIG_DIR/env"
-if [ ! -f "\$ENV_FILE" ]; then
-  echo "FATAL: Environment file not found: \$ENV_FILE" >&2
-  echo "  Run 'earl-install' to create it, then fill in your secrets." >&2
-  exit 1
-fi
-set -a
-# shellcheck source=/dev/null
-source "\$ENV_FILE"
-# Load shared env vars (API keys, tokens)
-# shellcheck source=/dev/null
-[ -f "\$HOME/.zshrc.local" ] && source "\$HOME/.zshrc.local"
-set +a
+# Non-secret EARL configuration
+export GIT_MASTER_BRANCH=main
+export MATTERMOST_URL=http://10.0.1.3:8065
+export MATTERMOST_BOT_ID=x1pomjhc9f8xjx7nwj1o6s33gc
+export EARL_CHANNEL_ID=bt36n3e7qj837qoi1mmho54xhh
+export EARL_ALLOWED_USERS=eric
+export EARL_SKIP_PERMISSIONS=true
+export PEARL_SKIP_APPROVAL=true
 
 # Ensure Claude home dir exists
 mkdir -p "$PROD_CONFIG_DIR/claude-home"
 
 cd "$PROD_INSTALL_DIR"
-exec ruby exe/earl "\$@"
+# Secrets (MATTERMOST_BOT_TOKEN, MATTERMOST_ERIC_TOKEN, SANDBOX_GITHUB_TOKEN)
+# loaded from fnox.toml via keychain/1password
+exec fnox exec -P production -- ruby exe/earl "\$@"
 WRAPPER
 chmod +x "$PROD_BIN"
 echo "  [prod] Created $PROD_BIN"
