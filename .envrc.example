@@ -1,3 +1,3 @@
-# Load secrets from fnox (keychain + 1Password)
-# Cached by direnv — only prompts when .envrc changes or `direnv reload`
-eval "$(fnox export -P development)"
+# Non-secret env vars and fnox secrets are managed by mise.toml
+# If not using mise, load secrets manually:
+# eval "$(fnox export -P development)"
