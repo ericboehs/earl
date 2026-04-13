@@ -30,19 +30,6 @@ module Earl
                            ))
       end
 
-      def resume_session(thread_id, persisted)
-        short_id = thread_id[0..7]
-        log(:info, "Resuming session for thread #{short_id}")
-        params = SpawnParams.new(
-          session_id: persisted.claude_session_id, thread_id: thread_id,
-          channel_id: persisted.channel_id, working_dir: persisted.working_dir, username: nil
-        )
-        session = spawn_claude_session(params)
-        @mutex.synchronize { @sessions[thread_id] = session }
-      rescue StandardError => error
-        log(:warn, "Startup resume failed for thread #{short_id}: #{error.message}")
-      end
-
       def create_session(ctx)
         thread_id, short_id, session_config = ctx.deconstruct
         channel_id, working_dir, username = session_config.deconstruct

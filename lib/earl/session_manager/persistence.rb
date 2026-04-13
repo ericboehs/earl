@@ -44,13 +44,6 @@ module Earl
 
       private
 
-      def recent_sessions(all_sessions)
-        all_sessions
-          .select { |_, persisted| persisted.claude_session_id }
-          .sort_by { |_, persisted| persisted.last_activity_at || "" }
-          .last(RESTORE_LIMIT)
-      end
-
       def mark_all_stale_as_paused
         @session_store.load.each do |thread_id, persisted|
           next if persisted.is_paused
