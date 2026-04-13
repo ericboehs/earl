@@ -211,6 +211,48 @@ module Earl
       stub_singleton(Earl::ClaudeSession, :new) { |**args| original_new.call(**args) } if original_new
     end
 
+    test "restore_all only resumes the most recent sessions up to RESTORE_LIMIT" do
+      store = Object.new
+      marked_paused = []
+      base_time = Time.new(2026, 1, 1)
+
+      # Create 7 sessions with staggered last_activity_at
+      loaded_data = (1..7).each_with_object({}) do |num, hash|
+        hash["thread-#{format("%08d", num)}"] = Earl::SessionStore::PersistedSession.new(
+          claude_session_id: "sess-#{num}",
+          channel_id: "channel-1",
+          working_dir: "/tmp",
+          started_at: base_time.iso8601,
+          last_activity_at: (base_time + (num * 60)).iso8601,
+          is_paused: false,
+          message_count: 0
+        )
+      end
+      stub_singleton(store, :load) { loaded_data }
+      stub_singleton(store, :mark_paused) { |thread_id| marked_paused << thread_id }
+
+      config = Earl::Config.new
+      manager = Earl::SessionManager.new(config: config, session_store: store)
+
+      started = []
+      original_new = Earl::ClaudeSession.method(:new)
+      stub_singleton(Earl::ClaudeSession, :new) do |**args|
+        session = Object.new
+        stub_singleton(session, :start) { started << args[:session_id] }
+        stub_singleton(session, :alive?) { true }
+        stub_singleton(session, :session_id) { args[:session_id] }
+        stub_singleton(session, :kill) {}
+        session
+      end
+
+      manager.restore_all
+
+      assert_equal 5, started.size
+      assert_equal %w[sess-3 sess-4 sess-5 sess-6 sess-7], started
+    ensure
+      stub_singleton(Earl::ClaudeSession, :new) { |**args| original_new.call(**args) } if original_new
+    end
+
     test "restore_all skips sessions without claude_session_id" do
       store = Object.new
       stub_singleton(store, :load) do

@@ -10,6 +10,8 @@ module Earl
     include Logging
     include PermissionConfig
 
+    RESTORE_LIMIT = 5
+
     # Bundles session creation parameters that travel together.
     SessionConfig = Data.define(:channel_id, :working_dir, :username)
 
@@ -79,9 +81,8 @@ module Earl
       return unless @session_store
 
       mark_all_stale_as_paused
-      @session_store.load.each do |thread_id, persisted|
-        resume_session(thread_id, persisted) if persisted.claude_session_id
-      end
+      resumable = recent_sessions(@session_store.load)
+      resumable.each { |thread_id, persisted| resume_session(thread_id, persisted) }
     end
 
     def pause_all
