@@ -60,6 +60,7 @@ module Earl
         session = @sessions.delete(thread_id)
         session&.kill
       end
+      @session_store&.mark_paused(thread_id)
     end
 
     def stop_all
@@ -74,11 +75,12 @@ module Earl
       @session_store&.touch(thread_id)
     end
 
-    def resume_all
+    def restore_all
       return unless @session_store
 
+      mark_all_stale_as_paused
       @session_store.load.each do |thread_id, persisted|
-        resume_session(thread_id, persisted) unless persisted.is_paused
+        resume_session(thread_id, persisted) if persisted.claude_session_id
       end
     end
 

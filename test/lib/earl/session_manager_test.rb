@@ -102,6 +102,32 @@ module Earl
       assert_nothing_raised { manager.stop_session("thread-unknown123") }
     end
 
+    test "suspend_session marks session paused in store" do
+      marked_paused = []
+      mock_store = Object.new
+      stub_singleton(mock_store, :save) { |*_args| }
+      stub_singleton(mock_store, :load) { {} }
+      stub_singleton(mock_store, :mark_paused) { |thread_id| marked_paused << thread_id }
+
+      manager = Earl::SessionManager.new(session_store: mock_store)
+      killed = false
+      create_with_fake_session(manager, "thread-abc12345") { killed = true }
+
+      manager.suspend_session("thread-abc12345")
+
+      assert killed
+      assert_nil manager.get("thread-abc12345")
+      assert_equal ["thread-abc12345"], marked_paused
+    end
+
+    test "suspend_session handles missing session_store" do
+      manager = Earl::SessionManager.new
+      create_with_fake_session(manager, "thread-abc12345")
+
+      assert_nothing_raised { manager.suspend_session("thread-abc12345") }
+      assert_nil manager.get("thread-abc12345")
+    end
+
     test "get_or_create with permission config builds permission env" do
       config = Earl::Config.new
       manager = Earl::SessionManager.new(config: config)
@@ -139,14 +165,14 @@ module Earl
       assert_nothing_raised { manager.touch("thread-abc12345") }
     end
 
-    test "resume_all does nothing without session_store" do
+    test "restore_all does nothing without session_store" do
       manager = Earl::SessionManager.new
-      assert_nothing_raised { manager.resume_all }
+      assert_nothing_raised { manager.restore_all }
     end
 
-    test "resume_all resumes non-paused sessions from store" do
-      # Create a store with a persisted session
+    test "restore_all marks stale sessions paused then resumes them" do
       store = Object.new
+      marked_paused = []
       loaded_data = {
         "thread-abc12345" => Earl::SessionStore::PersistedSession.new(
           claude_session_id: "sess-123",
@@ -159,11 +185,11 @@ module Earl
         )
       }
       stub_singleton(store, :load) { loaded_data }
+      stub_singleton(store, :mark_paused) { |thread_id| marked_paused << thread_id }
 
       config = Earl::Config.new
       manager = Earl::SessionManager.new(config: config, session_store: store)
 
-      # Mock ClaudeSession to track creation
       started = []
       original_new = Earl::ClaudeSession.method(:new)
       stub_singleton(Earl::ClaudeSession, :new) do |**args|
@@ -175,8 +201,9 @@ module Earl
         session
       end
 
-      manager.resume_all
+      manager.restore_all
 
+      assert_equal ["thread-abc12345"], marked_paused
       assert_equal 1, started.size
       assert_equal "sess-123", started.first[:session_id]
       assert_equal :resume, started.first[:mode]
@@ -184,25 +211,25 @@ module Earl
       stub_singleton(Earl::ClaudeSession, :new) { |**args| original_new.call(**args) } if original_new
     end
 
-    test "resume_all skips paused sessions" do
+    test "restore_all skips sessions without claude_session_id" do
       store = Object.new
-      loaded_data = {
-        "thread-paused" => Earl::SessionStore::PersistedSession.new(
-          claude_session_id: "sess-456",
+      stub_singleton(store, :load) do
+        { "thread-empty" => Earl::SessionStore::PersistedSession.new(
+          claude_session_id: nil,
           channel_id: "channel-1",
           working_dir: "/tmp",
           started_at: Time.now.iso8601,
           last_activity_at: Time.now.iso8601,
           is_paused: true,
           message_count: 0
-        )
-      }
-      stub_singleton(store, :load) { loaded_data }
+        ) }
+      end
+      stub_singleton(store, :mark_paused) { |_| }
 
       manager = Earl::SessionManager.new(session_store: store)
-      manager.resume_all
+      manager.restore_all
 
-      assert_nil manager.get("thread-paused")
+      assert_nil manager.get("thread-empty")
     end
 
     test "get_or_create resumes from store when session is dead" do
@@ -309,7 +336,7 @@ module Earl
       stub_singleton(Earl::ClaudeSession, :new) { |**args| original_new.call(**args) } if original_new
     end
 
-    test "resume_session handles errors gracefully on startup" do
+    test "restore_all handles resume errors gracefully" do
       store = Object.new
       loaded_data = {
         "thread-abc12345" => Earl::SessionStore::PersistedSession.new(
@@ -323,6 +350,7 @@ module Earl
         )
       }
       stub_singleton(store, :load) { loaded_data }
+      stub_singleton(store, :mark_paused) { |_| }
 
       config = Earl::Config.new
       manager = Earl::SessionManager.new(config: config, session_store: store)
@@ -335,7 +363,7 @@ module Earl
       end
 
       # Should not raise
-      assert_nothing_raised { manager.resume_all }
+      assert_nothing_raised { manager.restore_all }
 
       # Session should not have been stored
       assert_nil manager.get("thread-abc12345")

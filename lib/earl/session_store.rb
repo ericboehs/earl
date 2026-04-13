@@ -52,6 +52,16 @@ module Earl
       end
     end
 
+    def mark_paused(thread_id)
+      @mutex.synchronize do
+        session = cache[thread_id]
+        if session
+          session.is_paused = true
+          write_store(@cache)
+        end
+      end
+    end
+
     private
 
     def cache

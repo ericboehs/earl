@@ -44,6 +44,15 @@ module Earl
 
       private
 
+      def mark_all_stale_as_paused
+        @session_store.load.each do |thread_id, persisted|
+          next if persisted.is_paused
+
+          log(:info, "Marking stale session #{thread_id[0..7]} as paused (no live process)")
+          @session_store.mark_paused(thread_id)
+        end
+      end
+
       def apply_stats_to_persisted(persisted, session)
         stats = session.stats
         persisted.total_cost = stats.total_cost

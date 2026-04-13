@@ -43,7 +43,7 @@ module Earl
     def start
       setup_handlers
       ClaudeSession.cleanup_mcp_configs
-      @services.session_manager.resume_all
+      @services.session_manager.restore_all
       @services.tmux_store.cleanup!
       start_background_services
       @services.mattermost.connect

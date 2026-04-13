@@ -97,6 +97,29 @@ module Earl
       assert_nothing_raised { @store.touch("thread-unknown") }
     end
 
+    test "mark_paused sets is_paused to true" do
+      session = Earl::SessionStore::PersistedSession.new(
+        claude_session_id: "sess-1",
+        channel_id: "channel-1",
+        working_dir: "/tmp",
+        started_at: "2026-01-01T00:00:00Z",
+        last_activity_at: "2026-01-01T00:01:00Z",
+        is_paused: false,
+        message_count: 3
+      )
+      @store.save("thread-1", session)
+
+      @store.mark_paused("thread-1")
+
+      loaded = @store.load
+      assert loaded["thread-1"].is_paused
+      assert_equal 3, loaded["thread-1"].message_count
+    end
+
+    test "mark_paused handles non-existent thread" do
+      assert_nothing_raised { @store.mark_paused("thread-unknown") }
+    end
+
     test "load handles corrupted JSON" do
       File.write(@store_path, "not valid json{{{")
       assert_equal({}, @store.load)
