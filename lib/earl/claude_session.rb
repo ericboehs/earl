@@ -3,6 +3,9 @@
 require_relative "claude_session/stats"
 
 module Earl
+  # Claude binary — direct path, not shim (mise shim hangs when HOME is overridden).
+  CLAUDE_BIN = ENV["EARL_CLAUDE_BIN"] || File.expand_path("~/.local/bin/claude")
+
   # Manages a single Claude CLI subprocess, handling JSON-stream I/O
   # and emitting text/completion callbacks as responses arrive.
   class ClaudeSession
@@ -28,8 +31,9 @@ module Earl
       end
 
       def join_io_threads
-        reader_thread&.join(3)
-        stderr_thread&.join(1)
+        self_thread = Thread.current
+        reader_thread&.join(3) unless reader_thread == self_thread
+        stderr_thread&.join(1) unless stderr_thread == self_thread
       end
     end
     # Holds text-streaming, tool-use, and completion callback procs.
@@ -156,7 +160,7 @@ module Earl
 
       def open_process
         working_dir = @options.working_dir || earl_project_dir
-        env = { "TMUX" => nil, "TMUX_PANE" => nil, "CLAUDECODE" => nil }
+        env = { "HOME" => Earl.claude_home, "TMUX" => nil, "TMUX_PANE" => nil, "CLAUDECODE" => nil }
         Open3.popen3(env, *cli_args, chdir: working_dir)
       end
 
@@ -205,7 +209,7 @@ module Earl
       private
 
       def cli_args
-        ["claude", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        [CLAUDE_BIN, "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
          *model_args, *session_args, *permission_args, *plugin_args, *system_prompt_args]
       end
 

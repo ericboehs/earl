@@ -1244,7 +1244,7 @@ module Earl
     test "open_process uses no chdir when working_dir is nil" do
       session = Earl::ClaudeSession.new(working_dir: nil)
       args = session.send(:cli_args)
-      assert_includes args, "claude"
+      assert_match(/claude\z/, args.first)
     end
 
     test "handle_event result with empty modelUsage hash" do

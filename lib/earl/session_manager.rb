@@ -55,10 +55,13 @@ module Earl
       end
     end
 
-    def suspend_session(thread_id)
+    def suspend_session(thread_id, only_if: nil)
       @mutex.synchronize do
-        session = @sessions.delete(thread_id)
-        session&.kill
+        current = @sessions[thread_id]
+        return if only_if && !current.equal?(only_if)
+
+        @sessions.delete(thread_id)
+        current&.kill
       end
       @session_store&.mark_paused(thread_id)
     end

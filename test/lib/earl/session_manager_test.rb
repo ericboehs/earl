@@ -247,14 +247,12 @@ module Earl
       config = Earl::Config.new
       manager = Earl::SessionManager.new(config: config, session_store: store)
 
-      call_count = 0
       default_stats = mock_session_stats
       preserving_claude_new do
         stub_singleton(Earl::ClaudeSession, :new) do |**args|
-          call_count += 1
           session = Object.new
           stub_singleton(session, :start) {}
-          stub_singleton(session, :alive?) { call_count > 1 }
+          stub_singleton(session, :alive?) { true }
           stub_singleton(session, :session_id) { args[:session_id] || "new-session" }
           stub_singleton(session, :kill) {}
           stub_singleton(session, :stats) { default_stats }

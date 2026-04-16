@@ -64,9 +64,10 @@ module Earl
 
       def wire_exit_callback(ctx)
         thread_id = ctx.thread_id
-        ctx.session.on_exit do
+        session = ctx.session
+        session.on_exit do
           log(:debug, "Session #{thread_id[0..7]} reader exited — marking paused and releasing resources")
-          @services.session_manager.suspend_session(thread_id)
+          @services.session_manager.suspend_session(thread_id, only_if: session)
           @app_state.message_queue.release(thread_id)
           response = @responses.active_responses.delete(thread_id)
           response&.stop_typing

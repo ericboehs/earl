@@ -12,9 +12,13 @@ module Earl
       end
 
       def resume_or_create(ctx, persisted)
-        build_resume_session(ctx, persisted)
+        session = build_resume_session(ctx, persisted)
+        raise "exited immediately" unless session_survived_startup?(session)
+
+        session
       rescue StandardError => error
-        log(:warn, "Resume failed for thread #{ctx.short_id}: #{error.message}, creating new session")
+        log(:warn, "Resume failed for thread #{ctx.short_id}: #{error.message} — starting fresh")
+        @sessions.delete(ctx.thread_id)
         create_session(ctx)
       end
 
@@ -28,6 +32,12 @@ module Earl
                              channel_id: sc_channel || p_chan,
                              working_dir: sc_dir || p_dir, username: sc_user
                            ))
+      end
+
+      def session_survived_startup?(session, timeout: 0.5)
+        wait_thread = session.instance_variable_get(:@runtime)&.process_state&.wait_thread
+        wait_thread&.join(timeout)
+        session.alive?
       end
 
       def create_session(ctx)
