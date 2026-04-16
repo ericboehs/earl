@@ -26,3 +26,4 @@
 # Ignore built gems
 /*.gem
 /pkg/
+/test-results/
