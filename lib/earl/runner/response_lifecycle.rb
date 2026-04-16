@@ -64,7 +64,7 @@ module Earl
         stats = session.stats
         response.on_complete
         log_session_stats(stats, thread_id)
-        @services.session_manager.save_stats(thread_id)
+        @services.session_manager.save_stats(thread_id, last_post_id: response.last_post_id)
       end
 
       def log_missing_completion(thread_id, response)

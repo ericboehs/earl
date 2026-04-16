@@ -29,7 +29,7 @@ module Earl
         @session_store&.load&.dig(thread_id)
       end
 
-      def save_stats(thread_id)
+      def save_stats(thread_id, last_post_id: nil)
         @mutex.synchronize do
           session = @sessions[thread_id]
           return unless session && @session_store
@@ -38,6 +38,7 @@ module Earl
           return unless persisted
 
           apply_stats_to_persisted(persisted, session)
+          persisted.last_post_id = last_post_id if last_post_id
           @session_store.save(thread_id, persisted)
         end
       end

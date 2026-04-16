@@ -31,6 +31,10 @@ module Earl
       @post_state.full_text
     end
 
+    def last_post_id
+      @post_state.reply_post_id
+    end
+
     def start_typing
       @post_state.typing_thread = Thread.new { typing_loop }
     end
@@ -209,9 +213,10 @@ module Earl
       end
 
       def create_notification_post(text)
-        @context.mattermost.create_post(
+        result = @context.mattermost.create_post(
           channel_id: @context.channel_id, message: text, root_id: @context.thread_id
         )
+        @post_state.reply_post_id = result["id"] if result&.dig("id")
       end
     end
 

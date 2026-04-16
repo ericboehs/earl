@@ -2800,7 +2800,7 @@ module Earl
       stub_singleton(mock, :get_or_create) { |*_args, **_kwargs| mock_session }
       stub_singleton(mock, :get) { |_id| mock_session }
       stub_singleton(mock, :touch) { |_id| }
-      stub_singleton(mock, :save_stats) { |_id| }
+      stub_singleton(mock, :save_stats) { |_id, **_kwargs| }
       mock
     end
 
