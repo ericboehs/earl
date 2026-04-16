@@ -21,18 +21,15 @@ module Earl
 
       def compute_from_schedule(schedule, from)
         run_at, cron, interval = schedule
-        if run_at
-          compute_run_at(run_at, from)
-        elsif cron
-          CronParser.new(cron).next_occurrence(from: from)
-        elsif interval
-          from + interval
-        end
+        next_run = compute_run_at(run_at, from) if run_at
+        next_run ||= CronParser.new(cron).next_occurrence(from: from) if cron
+        next_run ||= from + interval if interval
+        next_run
       end
 
       def compute_run_at(run_at, from)
         target = Time.at(run_at)
-        [target, from].max
+        target > from ? target : nil
       end
 
       def disable_heartbeat(name)

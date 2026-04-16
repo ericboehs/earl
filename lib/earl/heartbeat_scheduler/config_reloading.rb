@@ -49,9 +49,22 @@ module Earl
       end
 
       def update_existing_definitions(new_defs)
+        now = Time.now
         new_defs.each do |definition|
-          @states[definition.name]&.update_definition_if_idle(definition)
+          state = @states[definition.name]
+          next unless state
+
+          new_next_run = schedule_changed_next_run(state.definition, definition, now)
+          state.update_definition_if_idle(definition, new_next_run_at: new_next_run)
         end
+      end
+
+      def schedule_changed_next_run(old_def, new_def, now)
+        old_schedule = old_def.to_h.values_at(:run_at, :cron, :interval)
+        new_schedule = new_def.to_h.values_at(:run_at, :cron, :interval)
+        return nil if old_schedule == new_schedule
+
+        compute_next_run(new_def, now)
       end
 
       def config_file_mtime

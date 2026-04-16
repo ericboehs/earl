@@ -492,6 +492,52 @@ module Earl
       assert_equal 2, states["updatable"].run_count # preserved
     end
 
+    test "reload_definitions recalculates next_run_at when schedule changes" do
+      run_at_ts = (Time.now + 30).to_i
+      updated_def = build_definition(name: "updatable", interval: nil, run_at: run_at_ts)
+      hb_config = Object.new
+      stub_singleton(hb_config, :definitions) { [updated_def] }
+      stub_singleton(hb_config, :path) { "/tmp/fake.yml" }
+
+      scheduler = build_scheduler(heartbeat_config: hb_config)
+      scheduler.instance_variable_get(:@control).heartbeat_config_path = "/tmp/fake.yml"
+
+      old_def = build_definition(name: "updatable", interval: 60, run_at: nil)
+      old_next = Time.now + 3600
+      state = Earl::HeartbeatScheduler::HeartbeatState.new(
+        definition: old_def, running: false, run_count: 2,
+        next_run_at: old_next
+      )
+      scheduler.instance_variable_get(:@states)["updatable"] = state
+
+      scheduler.send(:reload_definitions)
+
+      states = scheduler.instance_variable_get(:@states)
+      assert_in_delta Time.at(run_at_ts).to_f, states["updatable"].next_run_at.to_f, 1
+    end
+
+    test "reload_definitions preserves next_run_at when schedule unchanged" do
+      definition = build_definition(name: "stable", interval: 60)
+      hb_config = Object.new
+      stub_singleton(hb_config, :definitions) { [definition] }
+      stub_singleton(hb_config, :path) { "/tmp/fake.yml" }
+
+      scheduler = build_scheduler(heartbeat_config: hb_config)
+      scheduler.instance_variable_get(:@control).heartbeat_config_path = "/tmp/fake.yml"
+
+      old_next = Time.now + 3600
+      state = Earl::HeartbeatScheduler::HeartbeatState.new(
+        definition: build_definition(name: "stable", interval: 60),
+        running: false, run_count: 5, next_run_at: old_next
+      )
+      scheduler.instance_variable_get(:@states)["stable"] = state
+
+      scheduler.send(:reload_definitions)
+
+      states = scheduler.instance_variable_get(:@states)
+      assert_equal old_next, states["stable"].next_run_at
+    end
+
     test "config_file_mtime returns nil for nonexistent file" do
       scheduler = build_scheduler
       scheduler.instance_variable_get(:@control).heartbeat_config_path = "/nonexistent/heartbeats.yml"
@@ -570,14 +616,24 @@ module Earl
       assert_equal Time.at(future_ts), next_run
     end
 
-    test "compute_next_run with past run_at returns from time" do
+    test "compute_next_run with past run_at returns nil" do
       scheduler = build_scheduler
       past_ts = (Time.now - 3600).to_i
       definition = build_definition(run_at: past_ts, interval: nil)
       now = Time.now
 
       next_run = scheduler.send(:compute_next_run, definition, now)
-      assert_equal now, next_run
+      assert_nil next_run
+    end
+
+    test "compute_next_run with past run_at falls through to cron" do
+      scheduler = build_scheduler
+      past_ts = (Time.now - 3600).to_i
+      definition = build_definition(run_at: past_ts, cron: "0 9 * * *", interval: nil)
+      now = Time.now
+
+      next_run = scheduler.send(:compute_next_run, definition, now)
+      assert next_run > now, "Expected cron-based next_run to be in the future"
     end
 
     test "compute_next_run run_at takes priority over cron and interval" do
@@ -711,6 +767,38 @@ module Earl
       state.update_definition_if_idle(new_def)
 
       assert_equal 120, state.definition.interval
+    end
+
+    test "update_definition_if_idle applies new_next_run_at when provided" do
+      build_scheduler
+      original_time = Time.now + 3600
+      definition = build_definition(name: "idle", interval: 60)
+      state = Earl::HeartbeatScheduler::HeartbeatState.new(
+        definition: definition, running: false, run_count: 1,
+        next_run_at: original_time
+      )
+
+      new_def = build_definition(name: "idle", interval: 120)
+      new_time = Time.now + 10
+      state.update_definition_if_idle(new_def, new_next_run_at: new_time)
+
+      assert_equal 120, state.definition.interval
+      assert_equal new_time, state.next_run_at
+    end
+
+    test "update_definition_if_idle preserves next_run_at when new_next_run_at is nil" do
+      build_scheduler
+      original_time = Time.now + 3600
+      definition = build_definition(name: "idle", interval: 60)
+      state = Earl::HeartbeatScheduler::HeartbeatState.new(
+        definition: definition, running: false, run_count: 1,
+        next_run_at: original_time
+      )
+
+      new_def = build_definition(name: "idle", interval: 60)
+      state.update_definition_if_idle(new_def)
+
+      assert_equal original_time, state.next_run_at
     end
 
     test "compute_next_run returns nil when no schedule type is set" do

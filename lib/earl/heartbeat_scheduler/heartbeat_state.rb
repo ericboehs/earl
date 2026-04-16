@@ -17,10 +17,11 @@ module Earl
         }
       end
 
-      def update_definition_if_idle(new_definition)
+      def update_definition_if_idle(new_definition, new_next_run_at: nil)
         return if running
 
         self.definition = new_definition
+        self.next_run_at = new_next_run_at if new_next_run_at
       end
 
       def dispatch(now, &block)
